@@ -15,3 +15,24 @@ https://coinfomania.com/nousresearch-launches-hermes-agent-plugin-hackathon-offe
 | Eligibility, teams | not stated | to confirm |
 
 Likely PR target, not confirmed: `plugin-catalog/<name>.yaml` on `NousResearch/hermes-agent`, the only discovery route for out-of-tree plugins. See `website/docs/developer-guide/plugins/catalog-submission.md` in that repo.
+
+## Catalog entry draft
+
+For the owner to submit, once the pin is final. `sha` and the `image` URL must point at the same commit.
+
+```yaml
+name: hermes-superagent
+repo: https://github.com/AirKyzzZ/hermes-superagent
+sha: <40-char commit>
+requires_hermes: ">=0.22.7"
+version: "0.1.0"
+description: "A resident router that dispatches and never executes, isolated workers that report only to it, team-written trigger rules, and an external watchdog that checks real progress and goal drift."
+maintainer: AirKyzzZ
+tier: community
+category: automation
+docs_url: https://github.com/AirKyzzZ/hermes-superagent#readme
+image: https://raw.githubusercontent.com/AirKyzzZ/hermes-superagent/<40-char commit>/assets/cover.png
+capabilities:
+  provides_tools: [superagent_dispatch, superagent_forward, superagent_status, superagent_report, superagent_tick]
+  provides_hooks: [pre_tool_call, post_tool_call, pre_gateway_dispatch, pre_llm_call]
+```
