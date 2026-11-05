@@ -123,7 +123,7 @@ sequenceDiagram
 ```mermaid
 %%{init: {"theme":"base","layout":"dagre","themeVariables":{"primaryColor":"#1a10b8","primaryTextColor":"#ffffff","primaryBorderColor":"#a9a9cc","lineColor":"#8a8ab8","textColor":"#ffffff","transitionColor":"#8a8ab8","transitionLabelColor":"#ffffff","stateLabelColor":"#ffffff","stateBkg":"#1a10b8","labelBackgroundColor":"#14142a","edgeLabelBackground":"#14142a","specialStateColor":"#8a8ab8","innerEndBackground":"#8a8ab8"}}}%%
 stateDiagram-v2
-    direction LR
+    direction TB
     [*] --> Running
     Running --> Nudged: stuck, alive
     Nudged --> Running: goal restated
