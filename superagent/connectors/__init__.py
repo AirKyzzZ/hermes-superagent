@@ -27,9 +27,13 @@ class Poll:
     items: tuple[SourceItem, ...]
     complete: bool
     cursor: str = ""
+    problems: tuple[str, ...] = ()
 
 
 class Connector(Protocol):
+    @property
+    def timeout(self) -> float: ...
+
     def poll(self, cursor: str) -> Poll: ...
 
     def confirm(self, external_id: str) -> Upstream: ...

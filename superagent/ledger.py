@@ -32,14 +32,14 @@ CREATE TABLE IF NOT EXISTS ledger_schema (version INTEGER NOT NULL);
 CREATE TABLE IF NOT EXISTS sources (
     connector TEXT PRIMARY KEY, cursor TEXT NOT NULL, first_attempt REAL NOT NULL, last_attempt REAL NOT NULL,
     last_ok REAL, failures INTEGER NOT NULL, last_error TEXT NOT NULL, applied_count INTEGER, held_count INTEGER,
-    accept_next INTEGER NOT NULL, last_new REAL
+    accept_next INTEGER NOT NULL, last_new REAL, confirm_error TEXT NOT NULL DEFAULT ''
 );
 CREATE TABLE IF NOT EXISTS source_runs (
     seq INTEGER PRIMARY KEY AUTOINCREMENT, connector TEXT NOT NULL, at REAL NOT NULL, ok INTEGER NOT NULL,
     count INTEGER NOT NULL, new_items INTEGER NOT NULL, held INTEGER NOT NULL, error TEXT NOT NULL
 );
 """
-_MIGRATIONS: tuple[str, ...] = ()
+_MIGRATIONS: tuple[str, ...] = ("ALTER TABLE items ADD COLUMN confirm_attempt REAL",)
 
 
 class ItemState(StrEnum):
@@ -146,6 +146,7 @@ class SourceState:
     held_count: int | None = None
     accept_next: bool = False
     last_new: float | None = None
+    confirm_error: str = ""
 
 
 def item_id(connector: str, external_id: str) -> str:
@@ -201,7 +202,9 @@ class Ledger:
             if row is None:
                 state = ItemState.DONE if source.upstream is Upstream.CLOSED else ItemState.NEW
                 connection.execute(
-                    "INSERT INTO items VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,NULL,NULL,NULL)",
+                    "INSERT INTO items (id, connector, external_id, handle, title, url, due, upstream, updated, "
+                    "excerpt, meta, state, reason, area, first_seen, last_seen, last_changed) "
+                    "VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
                     (
                         identifier,
                         connector,
@@ -349,6 +352,7 @@ class Ledger:
             row["held_count"],
             bool(row["accept_next"]),
             row["last_new"],
+            row["confirm_error"],
         )
 
     def sources(self) -> list[SourceState]:
@@ -361,7 +365,7 @@ class Ledger:
         with self._connect() as connection:
             now = time.time()
             connection.execute(
-                "INSERT INTO sources VALUES (?, '', ?, ?, NULL, 0, '', NULL, NULL, 0, NULL) "
+                "INSERT INTO sources VALUES (?, '', ?, ?, NULL, 0, '', NULL, NULL, 0, NULL, '') "
                 "ON CONFLICT(connector) DO UPDATE SET last_attempt = excluded.last_attempt",
                 (connector, now, now),
             )
@@ -393,6 +397,23 @@ class Ledger:
                 "INSERT INTO source_runs (connector, at, ok, count, new_items, held, error) VALUES (?,?,1,?,?,?,'')",
                 (connector, now, count, new_items, int(held)),
             )
+
+    def vanished(self, connector: str, limit: int) -> list[Item]:
+        with self._connect() as connection:
+            rows = connection.execute(
+                "SELECT * FROM items WHERE connector = ? AND missing_since IS NOT NULL AND state NOT IN (?, ?) "
+                "ORDER BY confirm_attempt IS NOT NULL, confirm_attempt LIMIT ?",
+                (connector, ItemState.DONE.value, ItemState.IGNORED.value, limit),
+            ).fetchall()
+            now = time.time()
+            connection.executemany(
+                "UPDATE items SET confirm_attempt = ? WHERE id = ?", [(now, row["id"]) for row in rows]
+            )
+        return [_item(row) for row in rows]
+
+    def confirm_round(self, connector: str, error: str) -> None:
+        with self._connect() as connection:
+            connection.execute("UPDATE sources SET confirm_error = ? WHERE connector = ?", (error, connector))
 
     def accept_next_snapshot(self, connector: str) -> None:
         with self._connect() as connection:

@@ -15,7 +15,7 @@ from .config import DB_FILENAME, WORKDIRS_DIRNAME, Config, load_config
 from .connectors import Connector, build_connector
 from .domain import Ticket
 from .ledger import Ledger
-from .polling import poll_sources
+from .polling import SourceWarning, poll_sources
 from .router import Assessor, Router, Sender, chat_safe
 from .store import Store
 from .watchdog import CheckResult, DriftJudge, check_once
@@ -26,6 +26,7 @@ logger = logging.getLogger(__name__)
 _SEND_TIMEOUT_SECONDS = 60
 _TICK_LOCK_FILENAME = "tick.lock"
 IGNORED_TRIGGER_RETENTION_SECONDS = 7 * 24 * 3600.0
+POLL_BUDGET_SHARE = 0.5
 
 
 @dataclass(frozen=True)
@@ -149,9 +150,10 @@ def _run_phases(runtime: Runtime, judge: DriftJudge | None, assessor: Assessor |
     tickets: list[Ticket] = []
     checks: list[CheckResult] = []
     delivered: list[tuple[str, str, str]] = []
-    warnings: list[str] = []
+    warnings: list[SourceWarning] = []
     try:
-        warnings = poll_sources(runtime.ledger, runtime.config.connectors, runtime.connectors)
+        budget = runtime.config.tick_deadline_seconds * POLL_BUDGET_SHARE
+        warnings = poll_sources(runtime.ledger, runtime.config.connectors, runtime.connectors, budget)
     except Exception as error:
         logger.exception("polling failed")
         errors.append(f"poll: {error}")
@@ -181,7 +183,7 @@ def _run_phases(runtime: Runtime, judge: DriftJudge | None, assessor: Assessor |
         logger.exception("pruning failed")
         errors.append(f"prune: {error}")
     try:
-        delivered += _raise_alerts(runtime, [*errors, *warnings])
+        delivered += _raise_alerts(runtime, errors, warnings)
     except Exception as error:
         logger.exception("alerting failed")
         errors.append(f"alerts: {error}")
@@ -192,13 +194,16 @@ def _run_phases(runtime: Runtime, judge: DriftJudge | None, assessor: Assessor |
             )
         except (subprocess.SubprocessError, OSError) as error:
             errors.append(f"heartbeat: {error}")
-    return TickResult(tuple(tickets), tuple(checks), tuple(delivered), tuple(errors), warnings=tuple(warnings))
+    texts = tuple(warning.text for warning in warnings)
+    return TickResult(tuple(tickets), tuple(checks), tuple(delivered), tuple(errors), warnings=texts)
 
 
-def _raise_alerts(runtime: Runtime, errors: list[str]) -> list[tuple[str, str, str]]:
+def _raise_alerts(runtime: Runtime, errors: list[str], warnings: list[SourceWarning]) -> list[tuple[str, str, str]]:
     active = {_alert_key(error): chat_safe(error) for error in errors}
+    active.update({warning.key: chat_safe(warning.text) for warning in warnings})
     channel = runtime.config.alerts_channel
-    raised, resolved = runtime.store.sync_alerts(active, runtime.config.alert_after_seconds, channel)
+    immediate = frozenset(warning.key for warning in warnings)
+    raised, resolved = runtime.store.sync_alerts(active, runtime.config.alert_after_seconds, channel, immediate)
     if not (raised or resolved):
         return []
     return runtime.router.relay(argv_sender(runtime.config.send_argv), only_channel=channel)

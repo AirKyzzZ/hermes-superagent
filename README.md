@@ -14,7 +14,7 @@ A <a href="https://github.com/NousResearch/hermes-agent">Hermes Agent</a> plugin
 <a href="LICENSE"><img alt="MIT licence" src="https://img.shields.io/github/license/AirKyzzZ/hermes-superagent?style=flat-square&label=license&labelColor=14142a&color=1a10b8"></a>
 <a href="pyproject.toml"><img alt="Python 3.11 or newer" src="https://img.shields.io/badge/python-3.11%2B-1a10b8?style=flat-square&labelColor=14142a"></a>
 <a href="plugin.yaml"><img alt="Hermes plugin, requires 0.22.7 or newer" src="https://img.shields.io/badge/Hermes_plugin-%3E%3D0.22.7-1a10b8?style=flat-square&labelColor=14142a"></a>
-<a href="tests"><img alt="331 tests" src="https://img.shields.io/badge/tests-331-1a10b8?style=flat-square&labelColor=14142a"></a>
+<a href="tests"><img alt="352 tests" src="https://img.shields.io/badge/tests-352-1a10b8?style=flat-square&labelColor=14142a"></a>
 <a href="docs/hackathon.md"><img alt="Built for the Hermes Agent Plugin Hackathon" src="https://img.shields.io/badge/built_for-Hermes_Plugin_Hackathon-1a10b8?style=flat-square&labelColor=14142a"></a>
 </p>
 
@@ -331,10 +331,12 @@ The rendered prompt becomes the goal, the comment's author is checked against `a
 | `[connectors.<name>] type` | required | `command` for now. A connector polls one tool into the item ledger |
 | `[connectors.<name>] every` | `5m` | How often it polls |
 | `[connectors.<name>] track` | `true` | `false` keeps its items, such as readings or events, without anyone owning them |
-| `[connectors.<name>] quiet_after` | off | Warns when the source has had nothing new for this long |
-| `command`: `argv`, `fields`, `items` | required | Runs `argv` and reads its JSON. `items` is the dotted path to the list. `fields` maps `id`, `title`, `url`, `due`, `status`, `excerpt` and any extra meta key to a dotted path or a `{path}` template |
+| `[connectors.<name>] quiet_after` | off, required for delta sources | Warns when the source has had nothing new for this long |
+| `command`: `argv`, `fields`, `items` | required | Runs `argv` and reads its JSON. `items` is the dotted path to the list. `fields` maps `id`, `title`, `url`, `due`, `status`, `excerpt` and any extra meta key to a dotted path or a `{path}` template. A bad item fails the run but the good ones are still recorded, and a mapped path that no item has fails it too |
+| `command`: `total`, `limit` | none | Catch a cut list: `total` is the path to the count the tool reports, which must match, and a run that returns exactly `limit` items fails |
 | `command`: `complete`, `confirm_argv` | `true`, none | A complete source returns everything open each time, so items it stops returning are marked gone. A snapshot that shrinks by half or more is held back until `superagent ledger accept <name>`. `confirm_argv` with `{id}` checks one vanished item's `status`. An id that starts with a symbol or holds anything outside letters, digits and `._:/#@+=-` is never passed to it |
-| `command`: `env`, `timeout`, `closed`, `overlap` | none, `60`, `closed`, `done`, `completed`, `true`, `merged`, `10m` | Variables passed through to the command, its timeout, the `status` values that mean closed, and how far each `{since}` cursor of a delta source reaches back |
+| `command`: `env`, `timeout`, `closed` | none, `60`, `closed`, `done`, `completed`, `true`, `merged` | Variables passed through to the command, its timeout (the whole process group is stopped), and the `status` values that mean closed |
+| `command`: `complete = false`, `overlap`, `backfill` | `true`, `10m`, `14d` | A delta source gets `{since}` (UTC, `2026-11-05T22:00:00Z`), `{since_epoch}` or `{since_date}` (`2026/11/05`) in its `argv`. It starts `backfill` ago and each window reaches `overlap` back into the previous one |
 | `[watchdog] stall_after_seconds` | `900` | Silence that counts as stuck |
 | `[watchdog] repeat_limit` | `3` | Identical reports in a row that count as stuck |
 | `[watchdog] repeated_call_limit` | `5` | Identical tool calls and results in a row that count as stuck |

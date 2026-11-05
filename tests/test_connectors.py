@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import json
+import os
+import sqlite3
 import sys
 import time
 from pathlib import Path
@@ -69,14 +71,40 @@ def test_templates_and_nested_item_lists(tmp_path: Path) -> None:
     assert item.title == "Sleep 6h12, HRV 48"
 
 
-@pytest.mark.parametrize(
-    "output",
-    ['[{"content": "no id"}]', '[{"id": "1"}]', '{"tasks": []}', "not json", "FAIL", '[{"id": " ", "content": "x"}]'],
-)
+@pytest.mark.parametrize("output", ['{"tasks": []}', "not json", "FAIL"])
 def test_output_the_connector_cannot_read_fails_the_poll(tmp_path: Path, output: str) -> None:
     connector = build_connector(command_spec(source_file(tmp_path, output)))
     with pytest.raises(ConnectorError):
         connector.poll("")
+
+
+@pytest.mark.parametrize(
+    "bad",
+    [{"content": "no id"}, {"id": "9"}, {"id": " ", "content": "blank id"}, {"id": "1", "content": "other content"}],
+)
+def test_a_bad_entry_is_a_problem_but_the_good_ones_still_come_through(tmp_path: Path, bad: object) -> None:
+    poll = build_connector(command_spec(source_file(tmp_path, [task("1"), bad, task("2")]))).poll("")
+    assert {item.external_id for item in poll.items} >= {"2"}
+    assert poll.problems
+
+
+def test_a_mapped_field_missing_from_every_item_is_a_problem(tmp_path: Path) -> None:
+    poll = build_connector(command_spec(source_file(tmp_path, [task("1"), task("2")]))).poll("")
+    assert any("state" in problem for problem in poll.problems)
+
+
+def test_a_field_that_some_items_lack_is_fine(tmp_path: Path) -> None:
+    entries = [task("1", state="open", repo={"name": "a"}), task("2", state="open", repo={"name": "b"}), task("3")]
+    assert build_connector(command_spec(source_file(tmp_path, entries))).poll("").problems == ()
+
+
+def test_a_list_cut_at_the_limit_or_short_of_its_total_fails(tmp_path: Path) -> None:
+    path = source_file(tmp_path, {"total_count": 45, "items": [task(str(n), state="open") for n in range(30)]})
+    with pytest.raises(ConnectorError, match="cut"):
+        build_connector(command_spec(path, items="items", total="total_count")).poll("")
+    path = source_file(tmp_path, [task(str(n), state="open") for n in range(30)], name="limited.json")
+    with pytest.raises(ConnectorError, match="limit"):
+        build_connector(command_spec(path, limit=30)).poll("")
 
 
 def test_a_hanging_command_times_out(tmp_path: Path) -> None:
@@ -114,24 +142,45 @@ def test_only_listed_environment_variables_reach_the_command(tmp_path: Path, mon
     assert [item.external_id for item in build_connector(spec).poll("").items] == ["TASKS_TOKEN"]
 
 
-def test_a_delta_source_gets_the_previous_cursor_with_an_overlap(tmp_path: Path) -> None:
-    script = "import json, sys; print(json.dumps([{'id': 'since', 'title': sys.argv[1] or 'empty'}]))"
+def test_a_delta_source_starts_from_its_backfill_and_overlaps_each_window(tmp_path: Path) -> None:
+    script = "import json, sys; print(json.dumps([{'id': 'since', 'title': ' '.join(sys.argv[1:])}]))"
     spec = parse_specs(
         {
             "mail": {
                 "type": "command",
-                "argv": [sys.executable, "-c", script, "{since}"],
+                "argv": [sys.executable, "-c", script, "{since}", "{since_epoch}", "{since_date}"],
                 "fields": {"id": "id", "title": "title"},
                 "complete": False,
                 "overlap": "10m",
+                "backfill": "2d",
+                "quiet_after": "2d",
             }
         }
     )[0]
     connector = build_connector(spec)
+    before = time.time()
     first = connector.poll("")
-    assert not first.complete and first.items[0].title == "empty"
+    iso, epoch, day = first.items[0].title.split()
+    assert iso.endswith("Z") and "+" not in iso and day.count("/") == 2
+    assert abs(int(epoch) - (before - 2 * 86400)) < 5
+    assert not first.complete and abs(float(first.cursor) - (before - 600)) < 5
     second = connector.poll(first.cursor)
-    assert second.items[0].title == first.cursor
+    assert second.items[0].title.split()[1] == str(int(float(first.cursor)))
+
+
+@pytest.mark.parametrize(
+    "extra",
+    [
+        {"confirm_argv": ["x"]},
+        {"argv": ["x", "{since}"]},
+        {"complete": False},
+        {"complete": False, "quiet_after": "1d", "overlap": 0},
+    ],
+)
+def test_risky_command_settings_are_refused(extra: dict[str, object]) -> None:
+    body = {"type": "command", "argv": ["x"], "fields": {"id": "id", "title": "t", "status": "s"}, **extra}
+    with pytest.raises(Exception, match="connectors.tasks"):
+        parse_specs({"tasks": body})
 
 
 @pytest.mark.parametrize(
@@ -162,6 +211,8 @@ def test_connector_names_are_checked() -> None:
 
 
 class ScriptedConnector:
+    timeout = 1.0
+
     def __init__(self, polls: list[Poll | Exception], confirms: dict[str, Upstream] | None = None) -> None:
         self.polls = polls
         self.confirms = confirms or {}
@@ -186,7 +237,7 @@ SPEC = ConnectorSpec("tasks", "command", every_seconds=0)
 
 
 def run(ledger: Ledger, connector: ScriptedConnector, spec: ConnectorSpec = SPEC) -> list[str]:
-    return poll_sources(ledger, [spec], {spec.name: connector})
+    return [warning.text for warning in poll_sources(ledger, [spec], {spec.name: connector}, 60)]
 
 
 def test_a_snapshot_records_new_items_and_marks_vanished_ones(tmp_path: Path) -> None:
@@ -245,7 +296,7 @@ def test_a_source_with_no_success_for_too_long_is_stale(tmp_path: Path) -> None:
     run(ledger, ScriptedConnector([snapshot("a")]))
     state = ledger.source("tasks")
     later = (state.last_ok or 0) + 2 * 3600
-    assert any("no successful poll for 120 minutes" in warning for warning in source_health(SPEC, state, later))
+    assert any("no successful poll for 120 minutes" in w.text for w in source_health(SPEC, state, later))
 
 
 def test_a_quiet_delta_source_is_flagged(tmp_path: Path) -> None:
@@ -254,7 +305,7 @@ def test_a_quiet_delta_source_is_flagged(tmp_path: Path) -> None:
     run(ledger, ScriptedConnector([Poll((), complete=False, cursor="c1")]), spec)
     state = ledger.source("chats")
     warnings = source_health(spec, ledger.source("chats"), (state.first_attempt or 0) + 7200)
-    assert "connector chats: nothing new for 2 hours" in warnings
+    assert "connector chats: nothing new for 2 hours" in [warning.text for warning in warnings]
 
 
 def test_a_cursor_only_moves_after_a_successful_poll(tmp_path: Path) -> None:
@@ -356,3 +407,122 @@ def test_a_safe_id_is_confirmed(tmp_path: Path) -> None:
     script = "import json, sys; print(json.dumps({'state': 'closed' if sys.argv[1] == 'acme/app#7' else 'open'}))"
     spec = command_spec(source_file(tmp_path, []), confirm_argv=[sys.executable, "-c", script, "{id}"])
     assert build_connector(spec).confirm("acme/app#7") is Upstream.CLOSED
+
+
+def test_one_slow_source_cannot_push_the_others_past_the_budget(tmp_path: Path) -> None:
+    ledger = Ledger(tmp_path / "s.db")
+    slow = ScriptedConnector([snapshot("a")])
+    slow.timeout = 120.0
+    quick = ScriptedConnector([snapshot("b")])
+    specs = [ConnectorSpec("slow", "command", every_seconds=0), ConnectorSpec("quick", "command", every_seconds=0)]
+    poll_sources(ledger, specs, {"slow": slow, "quick": quick}, 60)
+    assert slow.cursors == [] and quick.cursors == [""]
+
+
+def test_the_least_recently_polled_source_goes_first(tmp_path: Path) -> None:
+    ledger = Ledger(tmp_path / "s.db")
+    order: list[str] = []
+
+    class Recording(ScriptedConnector):
+        def __init__(self, name: str) -> None:
+            super().__init__([snapshot(name)] * 3)
+            self.name = name
+
+        def poll(self, cursor: str) -> Poll:
+            order.append(self.name)
+            return super().poll(cursor)
+
+    specs = [ConnectorSpec(name, "command", every_seconds=0) for name in ("first", "second")]
+    connectors = {"first": Recording("first"), "second": Recording("second")}
+    poll_sources(ledger, specs[1:], connectors, 60)
+    poll_sources(ledger, specs, connectors, 60)
+    assert order == ["second", "first", "second"]
+
+
+def test_a_source_failure_alert_keeps_one_key_whatever_the_error(tmp_path: Path) -> None:
+    ledger = Ledger(tmp_path / "s.db")
+    connector = ScriptedConnector(
+        [ConnectorError("timeout"), ConnectorError("502"), ConnectorError("timeout"), ConnectorError("502")]
+    )
+    keys = set()
+    for _ in range(4):
+        keys |= {w.key for w in poll_sources(ledger, [SPEC], {SPEC.name: connector}, 60)}
+    assert keys == {"connector tasks: failing"}
+
+
+def test_failed_confirms_are_reported_and_rotate(tmp_path: Path) -> None:
+    ledger = Ledger(tmp_path / "s.db")
+    names = [f"i{n}" for n in range(60)]
+    run(ledger, ScriptedConnector([snapshot(*names)]))
+
+    class Broken(ScriptedConnector):
+        def confirm(self, external_id: str) -> Upstream:
+            raise ConnectorError("confirm broke")
+
+    kept = snapshot(*names[29:])
+    warnings = run(ledger, Broken([kept]))
+    assert any("couldn't check vanished items" in warning for warning in warnings)
+    assert len(ledger.items(missing=True)) == 29
+
+    def attempted() -> int:
+        with sqlite3.connect(ledger.path) as connection:
+            return int(connection.execute("SELECT COUNT(*) FROM items WHERE confirm_attempt IS NOT NULL").fetchone()[0])
+
+    assert attempted() == 20
+    run(ledger, Broken([kept]))
+    assert attempted() == 29
+
+
+def test_a_poll_with_problems_records_good_items_but_moves_nothing_else(tmp_path: Path) -> None:
+    ledger = Ledger(tmp_path / "s.db")
+    run(ledger, ScriptedConnector([snapshot(*[str(n) for n in range(3)])]))
+    flawed = Poll(
+        (SourceItem("0", "item 0"), SourceItem("new", "fresh")), complete=True, problems=("item 2: it has no title",)
+    )
+    run(ledger, ScriptedConnector([flawed]))
+    assert ledger.get("tasks:new").is_open
+    assert ledger.items(missing=True) == []
+    assert ledger.source("tasks").failures == 1
+
+
+def test_a_timeout_kills_the_commands_children_too(tmp_path: Path) -> None:
+    pidfile = tmp_path / "child.pid"
+    spec = parse_specs(
+        {
+            "slow": {
+                "type": "command",
+                "argv": ["sh", "-c", f"sleep 30 & echo $! > {pidfile}; wait"],
+                "fields": {"id": "id", "title": "title"},
+                "timeout": 0.5,
+            }
+        }
+    )[0]
+    with pytest.raises(ConnectorError, match="longer than"):
+        build_connector(spec).poll("")
+    child = int(pidfile.read_text())
+    deadline = time.time() + 5
+    while time.time() < deadline:
+        try:
+            os.kill(child, 0)
+        except ProcessLookupError:
+            break
+        time.sleep(0.1)
+    else:
+        pytest.fail("the grandchild is still running")
+
+
+def test_a_ledger_from_before_confirm_rotation_is_upgraded(tmp_path: Path) -> None:
+    path = tmp_path / "old.db"
+    with sqlite3.connect(path) as connection:
+        connection.executescript(
+            "CREATE TABLE items (id TEXT PRIMARY KEY, connector TEXT NOT NULL, external_id TEXT NOT NULL, "
+            "handle TEXT NOT NULL UNIQUE, title TEXT NOT NULL, url TEXT NOT NULL, due TEXT NOT NULL, "
+            "upstream TEXT NOT NULL, updated TEXT NOT NULL, excerpt TEXT NOT NULL, meta TEXT NOT NULL, "
+            "state TEXT NOT NULL, reason TEXT NOT NULL, area TEXT NOT NULL, first_seen REAL NOT NULL, "
+            "last_seen REAL NOT NULL, last_changed REAL NOT NULL, missing_since REAL, snoozed_until REAL, "
+            "ticket_id TEXT); CREATE TABLE ledger_schema (version INTEGER NOT NULL); "
+            "INSERT INTO ledger_schema VALUES (0);"
+        )
+    ledger = Ledger(path)
+    ledger.record("tasks", SourceItem("a", "still works"))
+    assert Ledger(path).get("tasks:a").title == "still works"
