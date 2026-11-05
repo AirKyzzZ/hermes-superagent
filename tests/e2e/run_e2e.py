@@ -380,7 +380,7 @@ def stage_router(work: Path, log: Path) -> None:
         tick = hermes("-p", "watchdog", "superagent", "tick")
         print("tick:", tick.returncode, tick.stdout[-600:], tick.stderr[-600:], flush=True)
         check("watchdog: the tick runs from the CLI", tick.returncode == 0)
-        listed = hermes("-p", "watchdog", "superagent", "ledger", "list", "--json")
+        listed = hermes("-p", "watchdog", "superagent", "ledger", "list", "--json", "--connector", "tasks")
         titles = sorted(item["title"] for item in json.loads(listed.stdout or "[]")) if listed.returncode == 0 else []
         second = hermes("-p", "watchdog", "superagent", "tick")
         print("second tick:", second.returncode, second.stdout[-300:], flush=True)
