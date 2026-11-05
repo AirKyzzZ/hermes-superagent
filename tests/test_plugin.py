@@ -635,3 +635,16 @@ def test_someone_else_acting_on_an_allowed_persons_issue_starts_nothing(tmp_path
     event = FakeEvent(source, "Handle acme/app#9", None, payload)
     assert ctx.hooks["pre_gateway_dispatch"](event=event, gateway=object(), session_store=object())["action"] == "skip"
     assert Store(tmp_path / DB_FILENAME).live_tickets() == []
+
+
+def test_conflicting_people_never_fall_back_to_the_route_identity(tmp_path: Path) -> None:
+    ctx = webhook_router(tmp_path)
+    payload = {"comment": {"user": {"login": "mallory"}}, "sender": {"login": "alice"}}
+    source = FakeSource(platform="webhook", chat_id="d8", user_id="webhook:alerts")
+    alerts = '[sources."webhook:alerts"]\npolicy = "explicit_only"\nallow = ["webhook:alerts"]\n'
+    (tmp_path / "superagent.toml").write_text(
+        (tmp_path / "superagent.toml").read_text() + "\n" + alerts, encoding="utf-8"
+    )
+    event = FakeEvent(source, "do something", None, payload)
+    assert ctx.hooks["pre_gateway_dispatch"](event=event, gateway=object(), session_store=object())["action"] == "skip"
+    assert Store(tmp_path / DB_FILENAME).live_tickets() == []

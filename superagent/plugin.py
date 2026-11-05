@@ -292,7 +292,7 @@ def trigger_from_event(event: Any) -> Trigger:
             id=trigger_id,
             source=user_id,
             thread=f"{user_id}:{item}" if item else "",
-            actor=actor or user_id,
+            actor=user_id if actor is None else actor,
             text=str(event.text or ""),
             channel=address,
             addressed=True,
@@ -310,9 +310,9 @@ def trigger_from_event(event: Any) -> Trigger:
     )
 
 
-def _webhook_author(payload: object) -> tuple[str, bool, str]:
+def _webhook_author(payload: object) -> tuple[str | None, bool, str]:
     if not isinstance(payload, Mapping):
-        return "", False, ""
+        return None, False, ""
     repository = payload.get("repository")
     repo = str(repository.get("full_name") or "") if isinstance(repository, Mapping) else ""
     item = payload.get("issue") or payload.get("pull_request")
@@ -322,8 +322,10 @@ def _webhook_author(payload: object) -> tuple[str, bool, str]:
     authors = [item.get("user") for item in nested if isinstance(item, Mapping)]
     author = next((user for user in authors if isinstance(user, Mapping)), None)
     known = [user for user in (author, payload.get("sender")) if isinstance(user, Mapping)]
+    if not known:
+        return None, False, thread
     logins = {str(user.get("login") or "") for user in known}
-    if len(logins) != 1:
+    if len(logins) != 1 or "" in logins:
         return "", False, thread
     login = logins.pop()
     is_bot = any(user.get("type") == "Bot" for user in known) or login.endswith("[bot]")
