@@ -167,13 +167,13 @@ class Router:
             tickets.append(self._open_ticket(trigger, assessment.goal, Strength.INFERRED))
         return tickets
 
-    def relay(self, send: Sender | None = None) -> list[tuple[str, str, str]]:
+    def relay(self, send: Sender | None = None, only_channel: str = "") -> list[tuple[str, str, str]]:
         self.store.move_to_outbox(_render_report, _render_escalation)
         delivered: list[tuple[str, str, str]] = []
         held: set[str] = set()
         backing_off: dict[str, list[OutboxMessage]] = {}
         for message in self.store.pending_outbox():
-            if message.channel in held:
+            if message.channel in held or (only_channel and message.channel != only_channel):
                 continue
             if not message.due:
                 if message.attempts < ORDERED_RETRIES:
