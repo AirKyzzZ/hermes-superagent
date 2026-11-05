@@ -310,7 +310,8 @@ def stage_router(work: Path, log: Path) -> None:
     configure_worker(create_profile(hermes_home, "router"), home, role="router")
     configure_worker(create_profile(hermes_home, "worker"), home)
     configure_worker(create_profile(hermes_home, "watchdog"), home, role="watchdog")
-    configure_worker(create_profile(hermes_home, "owner"), home, role=None, tool_search="off")
+    owner_tools = {"platform_toolsets": {"webhook": ["terminal"]}}
+    configure_worker(create_profile(hermes_home, "owner"), home, role=None, tool_search="off", extra=owner_tools)
     interpreter = Path(shutil.which("hermes") or "hermes").resolve().parent / "python"
     extra = subprocess.run(
         [str(interpreter), "-c", "import pm; pm.sync_venv(['sms'], explicit=True)"],
