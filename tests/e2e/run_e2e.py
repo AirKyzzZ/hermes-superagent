@@ -243,14 +243,6 @@ def stored_summaries(home: Path) -> list[str]:
 
 
 def stage_router(work: Path, log: Path) -> None:
-    interpreter = Path(shutil.which("hermes") or "hermes").resolve().parent / "python"
-    probe = subprocess.run(
-        [str(interpreter), "-c", "import sys; print(sys.executable); from aiohttp import web; print(web)"],
-        capture_output=True,
-        text=True,
-        check=False,
-    )
-    print("aiohttp probe:", probe.returncode, probe.stdout[-400:], probe.stderr[-1200:], flush=True)
     hermes_home = work / "router-home"
     hermes_home.mkdir()
     os.environ["HERMES_HOME"] = str(hermes_home)
@@ -303,6 +295,13 @@ def stage_router(work: Path, log: Path) -> None:
     finally:
         host.terminate()
         host.wait(timeout=30)
+
+
+def scenario_environment_untouched() -> None:
+    interpreter = Path(shutil.which("hermes") or "hermes").resolve().parent / "python"
+    code = "import importlib.util as u; print(u.find_spec('pytest') is None and u.find_spec('aiohttp') is not None)"
+    found = subprocess.run([str(interpreter), "-c", code], capture_output=True, text=True, check=False)
+    check("enabling the plugin changes nothing in the Hermes environment", found.stdout.strip() == "True", found)
 
 
 def scenario_host_env() -> None:
@@ -366,6 +365,7 @@ def main() -> int:
         scenario_wander(opened)
         scenario_stop(opened, log)
         scenario_host_env()
+        scenario_environment_untouched()
         stage_router(work, log)
     finally:
         show_logs(hermes_home, work)
