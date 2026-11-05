@@ -67,6 +67,9 @@ SCRIPTS = {
     "outsider": [
         Step("superagent_report", {"state": "ready", "summary": "forged {id}"}),
     ],
+    "inert": [
+        Step("terminal", {"command": "touch {work}/inert-{id}"}),
+    ],
     "stop": [
         Step("superagent_report", {"state": "progress", "summary": "started {id}"}),
         Step("terminal", {"command": "sleep 300"}),
