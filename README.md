@@ -1,3 +1,5 @@
+![hermes-superagent: one voice, a hundred hands](assets/readme-header.png)
+
 # hermes-superagent
 
 One agent to talk to, many workers behind it, and a watchdog that notices when one stops making progress. A [Hermes Agent](https://github.com/NousResearch/hermes-agent) plugin based on DeepSeek's [Super-agent design](https://ghost.p2lab.com/exploring-super-agent-design/).
@@ -93,6 +95,8 @@ uv run --group dev mypy
 ## Credits
 
 The design comes from the DeepSeek Harness Team's article and their MIT-licensed [research prototype](https://github.com/deepseek-ai/dsh-superagent-prototype). This is an independent Python implementation, it copies no code from the prototype, and it isn't affiliated with DeepSeek or Nous Research.
+
+The figure is Briareus, the Hundred-Handed: one head, many hands. The head is the [Marble head of Zeus Ammon](https://www.metmuseum.org/art/collection/search/257864), The Metropolitan Museum of Art, 2012.22 (public domain). The arms and hands are procedural. See [assets/CREDITS.md](assets/CREDITS.md).
 
 ## Licence
 

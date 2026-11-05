@@ -17,6 +17,7 @@ pythonpath = ["."]
 [tool.ruff]
 line-length = 120
 target-version = "py311"
+extend-exclude = ["assets"]
 
 [tool.ruff.lint]
 select = ["E", "F", "I", "B", "UP"]
