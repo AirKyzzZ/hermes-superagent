@@ -7,7 +7,7 @@ import pytest
 
 from superagent.domain import RepairAction, ReportState, Strength, TicketStatus, Trigger
 from superagent.gate import SemanticRule, parse_rules
-from superagent.router import MAX_SEND_ATTEMPTS, Assessment, NotAdmittedError, Outcome, Router
+from superagent.router import MAX_SEND_ATTEMPTS, Assessment, NotAdmittedError, Outcome, Router, chat_safe
 from superagent.store import StaleAssignmentError, Store
 from superagent.watchdog import WatchdogPolicy, check_once
 
@@ -458,3 +458,12 @@ def test_concurrent_takers_get_each_trigger_once(router: Router) -> None:
     with ThreadPoolExecutor(max_workers=4) as pool:
         taken = list(pool.map(lambda _: router.store.take_admitted("chat", "alice", "same", 600), range(8)))
     assert sum(len(batch) for batch in taken) == 60
+
+
+@pytest.mark.parametrize(
+    "text", ["[[as_document]] x", "[[[as_document]] x", "[[[[audio_as_voice]]", "MEDIA:/etc/passwd"]
+)
+def test_relayed_text_carries_no_send_directive(text: str) -> None:
+    safe = chat_safe(text)
+    assert "[[" not in safe
+    assert "media:" not in safe.lower()
