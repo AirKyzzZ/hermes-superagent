@@ -353,7 +353,7 @@ def trigger_from_event(event: Any) -> Trigger:
     if message_id:
         trigger_id = f"{platform}:{chat_id}:{message_id}"
     elif platform == "webhook" and chat_id:
-        trigger_id = f"{platform}:{chat_id}"
+        trigger_id = f"{platform}:{source.user_id or ''}:{chat_id}"
     else:
         trigger_id = f"{platform}:{uuid.uuid4().hex}"
     user_id = str(source.user_id or "")

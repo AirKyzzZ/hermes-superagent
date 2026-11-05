@@ -685,3 +685,16 @@ def test_a_redelivered_webhook_opens_no_second_ticket(tmp_path: Path) -> None:
         event = FakeEvent(source, "fix it", None, payload)
         ctx.hooks["pre_gateway_dispatch"](event=event, gateway=object(), session_store=object())
     assert len(Store(tmp_path / DB_FILENAME).live_tickets()) == 1
+
+
+def test_the_same_delivery_id_on_another_route_is_a_different_trigger(tmp_path: Path) -> None:
+    ctx = webhook_router(tmp_path)
+    ask_router_through(tmp_path)
+    for route in ("github", "inbox"):
+        source = FakeSource(platform="webhook", chat_id="delivery-7", user_id=f"webhook:{route}")
+        ctx.hooks["pre_gateway_dispatch"](
+            event=FakeEvent(source, "x", None, {}), gateway=object(), session_store=object()
+        )
+    store = Store(tmp_path / DB_FILENAME)
+    assert store.get_trigger("webhook:webhook:github:delivery-7") is not None
+    assert store.get_trigger("webhook:webhook:inbox:delivery-7") is not None
