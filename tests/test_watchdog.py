@@ -58,6 +58,27 @@ def test_restart_fences_out_the_old_worker(router: Router, backend: FakeBackend)
         router.store.add_report(restarted.assignment_id, backend.started[0][2], ReportState.READY, "late fake done")
 
 
+def test_worker_cannot_report_done_while_being_stopped(router: Router, backend: FakeBackend) -> None:
+    router.ingest(REQUEST)
+    report(router, backend, "same", 3)
+    check_once(router)
+    report(router, backend, "same", 1)
+    token = backend.started[0][2]
+    refused: list[bool] = []
+
+    def report_on_sigterm(assignment_id: str) -> None:
+        try:
+            router.store.add_report(assignment_id, token, ReportState.READY, "all done, trust me")
+            refused.append(False)
+        except StaleAssignmentError:
+            refused.append(True)
+
+    backend.on_stop = report_on_sigterm
+    check_once(router)
+    assert refused == [True]
+    assert all("trust me" not in text for _, _, text in router.relay())
+
+
 def test_dead_worker_skips_the_nudge(router: Router, backend: FakeBackend) -> None:
     router.ingest(REQUEST)
     backend.alive = False

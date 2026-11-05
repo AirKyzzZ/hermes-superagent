@@ -103,8 +103,8 @@ def apply_repair(
         )
         router.store.add_input(ticket.id, "watchdog", message, trusted=True)
         return
-    router.backend.stop(assignment)
     router.store.end_assignment(assignment.id)
+    router.backend.stop(assignment)
     if action is RepairAction.RESTART:
         router.start_worker(ticket)
         return

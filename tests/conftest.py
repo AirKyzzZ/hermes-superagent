@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -39,6 +40,7 @@ class FakeBackend:
     alive: bool = True
     started: list[tuple[str, str, str]] = field(default_factory=list)
     stopped: list[str] = field(default_factory=list)
+    on_stop: Callable[[str], None] | None = None
 
     def start(self, ticket: Ticket, assignment: Assignment, token: str) -> int:
         self.started.append((ticket.id, assignment.id, token))
@@ -49,6 +51,8 @@ class FakeBackend:
 
     def stop(self, assignment: Assignment) -> None:
         self.stopped.append(assignment.id)
+        if self.on_stop is not None:
+            self.on_stop(assignment.id)
 
 
 @pytest.fixture
