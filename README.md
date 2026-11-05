@@ -14,7 +14,7 @@ A <a href="https://github.com/NousResearch/hermes-agent">Hermes Agent</a> plugin
 <a href="LICENSE"><img alt="MIT licence" src="https://img.shields.io/github/license/AirKyzzZ/hermes-superagent?style=flat-square&label=license&labelColor=14142a&color=1a10b8"></a>
 <a href="pyproject.toml"><img alt="Python 3.11 or newer" src="https://img.shields.io/badge/python-3.11%2B-1a10b8?style=flat-square&labelColor=14142a"></a>
 <a href="plugin.yaml"><img alt="Hermes plugin, requires 0.22.7 or newer" src="https://img.shields.io/badge/Hermes_plugin-%3E%3D0.22.7-1a10b8?style=flat-square&labelColor=14142a"></a>
-<a href="tests"><img alt="194 tests" src="https://img.shields.io/badge/tests-194-1a10b8?style=flat-square&labelColor=14142a"></a>
+<a href="tests"><img alt="198 tests" src="https://img.shields.io/badge/tests-198-1a10b8?style=flat-square&labelColor=14142a"></a>
 <a href="docs/hackathon.md"><img alt="Built for the Hermes Agent Plugin Hackathon" src="https://img.shields.io/badge/built_for-Hermes_Plugin_Hackathon-1a10b8?style=flat-square&labelColor=14142a"></a>
 </p>
 
@@ -289,6 +289,9 @@ platforms:
         github:
           secret: "the-secret-you-gave-github"
           events: ["issue_comment"]
+          filters:
+            - field: "action"
+              equals: "created"
           prompt: "Handle this comment on {repository.full_name}#{issue.number}: {comment.body}"
           profile: router
 ```
@@ -302,7 +305,7 @@ allow = ["your-github-login"]
 notify = "discord:YOUR_CHANNEL_ID"
 ```
 
-The rendered prompt becomes the goal, the sender's login is checked against `allow`, and the issue becomes the task's thread, so later comments from allowed people reach the running worker. Results go to `notify`.
+The rendered prompt becomes the goal, the comment's author is checked against `allow`, and the issue becomes the task's thread, so later comments from allowed people reach the running worker. Results go to `notify`. Keep a real secret on the route: Hermes checks GitHub's signature with it, and without one anyone who can reach the route can claim to be any author.
 
 </details>
 
@@ -317,7 +320,7 @@ The rendered prompt becomes the goal, the sender's login is checked against `all
 | `[sources.<name>] bots` | `[]` | Bots whose events can become candidates on a `candidate` source |
 | `[sources.<name>] pass_strangers` | `false` | Lets strangers' thread messages reach a worker, framed and with no authority |
 | `[sources.<name>] notify` | none | Channel that gets this source's results and escalations instead of the event's own, such as `discord:123` |
-| `[sources."webhook:<route>"] via_router` | `false` | Lets the router's model read this webhook's events instead of starting work directly |
+| `[sources."webhook:<route>"] via_router` | `false` | Lets the router's model read this webhook's admitted events instead of starting work directly. Authors still go through `allow` |
 | `[[semantic]] name`, `text` | required | A team rule, written in plain language |
 | `[[semantic]] mode` | `record` | `record` only logs, `act` opens a ticket |
 | `[worker] argv` | required | Command for one worker, must reference `{brief}` |

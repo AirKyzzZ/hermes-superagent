@@ -437,14 +437,14 @@ class Store:
             ).fetchall()
         return [(row["fingerprint"], row["at"]) for row in reversed(rows)]
 
-    def take_admitted(self, source: str, actor: str, message: str, max_age_seconds: float) -> list[Trigger]:
+    def take_admitted(self, source: str, actor: str | None, message: str, max_age_seconds: float) -> list[Trigger]:
         now = time.time()
         spoken = message.strip()
         with self._connect() as connection:
             rows = connection.execute(
-                "SELECT * FROM triggers WHERE admission = ? AND assessed_at IS NULL AND source = ? AND actor = ? "
-                "AND received_at >= ? ORDER BY received_at",
-                (Admission.ACT.value, source, actor, now - max_age_seconds),
+                "SELECT * FROM triggers WHERE admission = ? AND assessed_at IS NULL AND source = ? "
+                "AND (? IS NULL OR actor = ?) AND received_at >= ? ORDER BY received_at",
+                (Admission.ACT.value, source, actor, actor, now - max_age_seconds),
             ).fetchall()
             matching = [row for row in rows if row["text"].strip() and spoken.endswith(row["text"].strip())]
             connection.executemany(

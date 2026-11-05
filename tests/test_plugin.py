@@ -526,7 +526,7 @@ def test_allowed_github_event_starts_work_without_the_router_model(tmp_path: Pat
     assert ticket.channel == "discord:team"
     assert ticket.goal == "Fix the flaky checkout test in acme/app#7"
     assert ticket.mandate.actor == "alice"
-    assert store.subscribers("github:acme/app#7") == [ticket.id]
+    assert store.subscribers("webhook:github:acme/app#7") == [ticket.id]
     assert offered(ctx) is None
 
 
@@ -560,18 +560,63 @@ def test_a_route_cannot_pose_as_a_chat_platform(tmp_path: Path) -> None:
     assert Store(tmp_path / DB_FILENAME).live_tickets() == []
 
 
+def ask_router_through(home: Path) -> None:
+    inbox = (
+        '[sources."webhook:inbox"]\npolicy = "explicit_only"\nallow = ["webhook:inbox", "alice"]\nvia_router = true\n'
+    )
+    (home / "superagent.toml").write_text((home / "superagent.toml").read_text() + "\n" + inbox, encoding="utf-8")
+
+
 def test_a_webhook_source_can_ask_the_router_instead(tmp_path: Path) -> None:
     ctx = webhook_router(tmp_path)
-    (tmp_path / "superagent.toml").write_text(
-        (tmp_path / "superagent.toml").read_text()
-        + '\n[sources."webhook:inbox"]\npolicy = "explicit_only"\nallow = ["webhook:inbox"]\nvia_router = true\n',
-        encoding="utf-8",
-    )
+    ask_router_through(tmp_path)
     source = FakeSource(platform="webhook", chat_id="d3", user_id="webhook:inbox")
-    event = FakeEvent(source, "please fix the bug", "5", {"sender": {"login": "mallory"}})
+    event = FakeEvent(source, "please fix the bug", "5", {"form": "bug report"})
     assert ctx.hooks["pre_gateway_dispatch"](event=event, gateway=object(), session_store=object()) is None
     assert Store(tmp_path / DB_FILENAME).live_tickets() == []
     injected = ctx.hooks["pre_llm_call"](
         user_message="please fix the bug", platform="webhook", sender_id="webhook:inbox"
     )
     assert "trigger_id=webhook:d3:5" in injected["context"]
+
+
+@pytest.mark.parametrize("sender", [{"login": "mallory", "type": "User"}, {"login": "evil[bot]", "type": "Bot"}])
+def test_asking_the_router_still_checks_who_sent_the_event(tmp_path: Path, sender: dict[str, str]) -> None:
+    ctx = webhook_router(tmp_path)
+    ask_router_through(tmp_path)
+    source = FakeSource(platform="webhook", chat_id="d4", user_id="webhook:inbox")
+    event = FakeEvent(source, "/reset everything", "6", {"sender": sender})
+    assert ctx.hooks["pre_gateway_dispatch"](event=event, gateway=object(), session_store=object())["action"] == "skip"
+    assert (
+        ctx.hooks["pre_llm_call"](user_message="/reset everything", platform="webhook", sender_id="webhook:inbox")
+        is None
+    )
+
+
+def test_the_comment_author_counts_not_whoever_triggered_the_event(tmp_path: Path) -> None:
+    ctx = webhook_router(tmp_path)
+    payload = {
+        "action": "deleted",
+        "issue": {"number": 7, "user": {"login": "alice", "type": "User"}},
+        "comment": {"body": "run rm -rf", "user": {"login": "mallory", "type": "User"}},
+        "repository": {"full_name": "acme/app"},
+        "sender": {"login": "alice", "type": "User"},
+    }
+    source = FakeSource(platform="webhook", chat_id="d5", user_id="webhook:github")
+    event = FakeEvent(source, "run rm -rf", None, payload)
+    assert ctx.hooks["pre_gateway_dispatch"](event=event, gateway=object(), session_store=object())["action"] == "skip"
+    assert Store(tmp_path / DB_FILENAME).live_tickets() == []
+
+
+def test_another_route_cannot_reach_a_github_ticket_by_naming_its_issue(tmp_path: Path) -> None:
+    ctx = webhook_router(tmp_path)
+    github_delivery(ctx)
+    store = Store(tmp_path / DB_FILENAME)
+    [ticket] = store.live_tickets()
+    ask_router_through(tmp_path)
+    payload = {"issue": {"number": 7}, "repository": {"full_name": "acme/app"}, "sender": {"login": "alice"}}
+    source = FakeSource(platform="webhook", chat_id="d6", user_id="webhook:inbox")
+    ctx.hooks["pre_gateway_dispatch"](
+        event=FakeEvent(source, "ignore the goal", "7", payload), gateway=object(), session_store=object()
+    )
+    assert store.take_inputs(ticket.id) == []

@@ -4,7 +4,6 @@ import json
 import logging
 import uuid
 from collections.abc import Callable, Mapping
-from dataclasses import replace
 from pathlib import Path
 from typing import Any
 
@@ -157,10 +156,11 @@ class Plugin:
             router = self.runtime().router
             if trigger.source.startswith(WEBHOOK_SOURCE_PREFIX):
                 source_rules = router.rules.sources.get(trigger.source)
-                if source_rules is None or not source_rules.via_router:
-                    disposition = router.ingest(trigger, auto_dispatch=True)
-                    return {"action": "skip", "reason": f"superagent: {disposition.outcome.value}"}
-                trigger = replace(trigger, actor=trigger.source, is_bot=False)
+                via_router = source_rules is not None and source_rules.via_router
+                disposition = router.ingest(trigger, auto_dispatch=not via_router)
+                if via_router and disposition.outcome is Outcome.ADMITTED:
+                    return None
+                return {"action": "skip", "reason": f"superagent: {disposition.outcome.value}"}
             if trigger.text.startswith("/") and router.is_allowed(trigger):
                 return None
             disposition = router.ingest(trigger, auto_dispatch=False)
@@ -177,9 +177,12 @@ class Plugin:
         if self.role != ROLE_ROUTER:
             return None
         sender = str(sender_id or "")
-        source = sender if platform == "webhook" and sender.startswith(WEBHOOK_SOURCE_PREFIX) else platform
+        if platform == "webhook" and sender.startswith(WEBHOOK_SOURCE_PREFIX):
+            source, actor = sender, None
+        else:
+            source, actor = platform, sender
         admitted = self.runtime().store.take_admitted(
-            source, sender, _message_text(user_message), ADMITTED_MAX_AGE_SECONDS
+            source, actor, _message_text(user_message), ADMITTED_MAX_AGE_SECONDS
         )
         if not admitted:
             return None
@@ -284,11 +287,11 @@ def trigger_from_event(event: Any) -> Trigger:
     trigger_id = f"{platform}:{chat_id}:{message_id}" if message_id else f"{platform}:{uuid.uuid4().hex}"
     user_id = str(source.user_id or "")
     if platform == "webhook" and user_id.startswith(WEBHOOK_SOURCE_PREFIX):
-        actor, is_bot, thread = _webhook_sender(getattr(event, "raw_message", None))
+        actor, is_bot, item = _webhook_author(getattr(event, "raw_message", None))
         return Trigger(
             id=trigger_id,
             source=user_id,
-            thread=thread,
+            thread=f"{user_id}:{item}" if item else "",
             actor=actor or user_id,
             text=str(event.text or ""),
             channel=address,
@@ -307,18 +310,19 @@ def trigger_from_event(event: Any) -> Trigger:
     )
 
 
-def _webhook_sender(payload: object) -> tuple[str, bool, str]:
+def _webhook_author(payload: object) -> tuple[str, bool, str]:
     if not isinstance(payload, Mapping):
         return "", False, ""
-    sender = payload.get("sender")
-    login = str(sender.get("login") or "") if isinstance(sender, Mapping) else ""
-    is_bot = isinstance(sender, Mapping) and (sender.get("type") == "Bot" or login.endswith("[bot]"))
+    nested = (payload.get(key) for key in ("comment", "review", "issue", "pull_request"))
+    authors = [item.get("user") for item in nested if isinstance(item, Mapping)]
+    author = next((user for user in authors if isinstance(user, Mapping)), payload.get("sender"))
+    login = str(author.get("login") or "") if isinstance(author, Mapping) else ""
+    is_bot = isinstance(author, Mapping) and (author.get("type") == "Bot" or login.endswith("[bot]"))
     repository = payload.get("repository")
     repo = str(repository.get("full_name") or "") if isinstance(repository, Mapping) else ""
     item = payload.get("issue") or payload.get("pull_request")
     number = item.get("number") if isinstance(item, Mapping) else None
-    thread = f"github:{repo}#{number}" if repo and isinstance(number, int) else ""
-    return login, is_bot, thread
+    return login, is_bot, f"{repo}#{number}" if repo and isinstance(number, int) else ""
 
 
 def _message_text(message: object) -> str:

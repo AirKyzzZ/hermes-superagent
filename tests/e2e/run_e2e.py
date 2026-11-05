@@ -223,8 +223,8 @@ def post_webhook(route: str, message: str) -> int:
 def post_github_comment(login: str, body: str) -> int:
     payload = {
         "action": "created",
-        "issue": {"number": 7, "title": "Flaky checkout test"},
-        "comment": {"body": body},
+        "issue": {"number": 7, "title": "Flaky checkout test", "user": {"login": "alice", "type": "User"}},
+        "comment": {"body": body, "user": {"login": login, "type": "User"}},
         "repository": {"full_name": "acme/app"},
         "sender": {"login": login, "type": "User"},
     }
