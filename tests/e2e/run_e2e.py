@@ -66,7 +66,7 @@ def set_up_worker_profile(hermes_home: Path, home: Path) -> None:
     configure_worker(profile, home)
 
 
-def configure_worker(profile: Path, home: Path, *, tool_search: str = "auto") -> None:
+def configure_worker(profile: Path, home: Path, *, tool_search: str = "auto", role: str = "worker") -> None:
     config_path = profile / "config.yaml"
     config: dict[str, Any] = yaml.safe_load(config_path.read_text(encoding="utf-8")) if config_path.exists() else {}
     config = config or {}
@@ -78,7 +78,7 @@ def configure_worker(profile: Path, home: Path, *, tool_search: str = "auto") ->
     }
     config.setdefault("tools", {})["tool_search"] = {"enabled": tool_search}
     plugins = config.setdefault("plugins", {})
-    plugins.setdefault("entries", {})["hermes-superagent"] = {"settings": {"role": "worker", "home": str(home)}}
+    plugins.setdefault("entries", {})["hermes-superagent"] = {"settings": {"role": role, "home": str(home)}}
     config_path.write_text(yaml.safe_dump(config), encoding="utf-8")
 
 
@@ -167,6 +167,26 @@ def scenario_outsider(runtime: Runtime, log: Path, work: Path) -> None:
     check("outsider: the forged report is not stored", not any("forged" in summary for summary in stored), stored)
 
 
+def scenario_wander(runtime: Runtime) -> None:
+    ticket = start_task(runtime, "scenario=wander id=wandered")
+    wait_until(lambda: "ready" in report_states(runtime, ticket))
+    check("wander: changing directory in a terminal doesn't change identity", "ready" in report_states(runtime, ticket))
+
+
+def scenario_role_unset(runtime: Runtime, log: Path, profile: Path, home: Path) -> None:
+    configure_worker(profile, home, tool_search="off", role="")
+    ticket = start_task(runtime, "scenario=unset id=unset")
+    wait_until(lambda: "ready" in report_states(runtime, ticket))
+    results = [result for entry in turns(log, "unset") for result in entry["tool_results"]]
+    check(
+        "no role set: the guard still blocks a worker", any("report only to the router" in r for r in results), results
+    )
+    check(
+        "no role set: the worker can still report", "ready" in report_states(runtime, ticket), turns(log, "unset")[-2:]
+    )
+    configure_worker(profile, home, tool_search="off")
+
+
 def scenario_stop(runtime: Runtime, log: Path) -> None:
     ticket = start_task(runtime, "scenario=stop id=stopped")
     running = wait_until(lambda: subprocess.run(["pgrep", "-f", "sleep 300"], check=False).returncode == 0)
@@ -238,7 +258,10 @@ def main() -> int:
         scenario_fence(guarded, log, work)
         scenario_outsider(guarded, log, work)
         configure_worker(hermes_home / "profiles" / "worker", open_home, tool_search="off")
-        scenario_stop(open_runtime(open_home), log)
+        opened = open_runtime(open_home)
+        scenario_wander(opened)
+        scenario_role_unset(opened, log, hermes_home / "profiles" / "worker", open_home)
+        scenario_stop(opened, log)
         scenario_host_env()
     finally:
         show_logs(hermes_home, work)

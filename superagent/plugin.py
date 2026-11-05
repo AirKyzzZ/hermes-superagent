@@ -17,7 +17,7 @@ from .reporting import NotAWorkerError, WorkerIdentity, identity_from_workdir, r
 from .router import NotAdmittedError, Outcome
 from .runtime import Runtime, open_runtime, tick
 from .store import StaleAssignmentError, Store
-from .worker import ROLE_ROUTER, ROLE_WATCHDOG, ROLE_WORKER
+from .worker import IDENTITY_FILENAME, ROLE_ROUTER, ROLE_WATCHDOG, ROLE_WORKER
 
 logger = logging.getLogger(__name__)
 
@@ -96,7 +96,14 @@ class Plugin:
 
     @property
     def role(self) -> str:
-        return str(self.ctx.get_config("role", default="") or "")
+        configured = str(self.ctx.get_config("role", default="") or "")
+        if configured or not self._session_is_in_a_worker_directory():
+            return configured
+        return ROLE_WORKER
+
+    def _session_is_in_a_worker_directory(self) -> bool:
+        cwd = self.ctx.session_cwd()
+        return bool(cwd) and (Path(cwd) / IDENTITY_FILENAME).is_file()
 
     def home(self) -> Path:
         configured = self.ctx.get_config("home", default="")
@@ -110,7 +117,7 @@ class Plugin:
         return open_runtime(self.home())
 
     def worker_identity(self) -> WorkerIdentity:
-        identity = identity_from_workdir(Path(self.ctx.session_cwd() or "."))
+        identity = identity_from_workdir(Path(self.ctx.session_cwd() or ".").resolve())
         if identity.db_path.parent.resolve() != self.home().resolve():
             raise NotAWorkerError(f"worker directory is outside the configured home {self.home()}")
         return identity
@@ -126,7 +133,7 @@ class Plugin:
                 identity = self.worker_identity()
             except NotAWorkerError as error:
                 return {"action": "block", "message": f"This profile only runs superagent workers: {error}"}
-            if not Store(identity.db_path).assignment_is_running(identity.assignment_id):
+            if not Store(identity.db_path).assignment_is_current(identity.assignment_id, identity.token):
                 return {"action": "block", "message": "This assignment has ended. Stop working now."}
             worker_sandboxed = _terminal_backend() != "local" or load_config(self.home()).allow_same_user
         reason = blocked_reason(role, tool_name, worker_sandboxed=worker_sandboxed, args=kwargs.get("args"))

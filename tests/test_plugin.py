@@ -298,6 +298,33 @@ def test_worker_reports_through_the_bridge(worker_ctx: tuple[FakeContext, Store,
     assert decision is None
 
 
+def test_worker_directory_is_guarded_even_with_no_role_configured(
+    worker_ctx: tuple[FakeContext, Store, str], monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    ctx = worker_ctx[0]
+    ctx.settings["role"] = ""
+    use_terminal_backend(monkeypatch, "local")
+    assert ctx.hooks["pre_tool_call"](tool_name="send_message", args={}, task_id="t")["action"] == "block"
+    assert ctx.hooks["pre_tool_call"](tool_name="terminal", args={}, task_id="t")["action"] == "block"
+    ctx.cwd = str(tmp_path)
+    assert ctx.hooks["pre_tool_call"](tool_name="terminal", args={}, task_id="t") is None
+
+
+def test_configured_router_keeps_its_allowlist_inside_a_worker_directory(
+    worker_ctx: tuple[FakeContext, Store, str],
+) -> None:
+    ctx = worker_ctx[0]
+    ctx.settings["role"] = "router"
+    assert ctx.hooks["pre_tool_call"](tool_name="terminal", args={}, task_id="t")["action"] == "block"
+
+
+def test_tampered_identity_gets_no_tools(worker_ctx: tuple[FakeContext, Store, str]) -> None:
+    ctx, store, assignment_id = worker_ctx
+    ticket_id = store.get_assignment(assignment_id).ticket_id
+    write_identity(Path(ctx.cwd), ticket_id, assignment_id, "forged-token", 1)
+    assert ctx.hooks["pre_tool_call"](tool_name="memory", args={}, task_id="t")["action"] == "block"
+
+
 def test_environment_cannot_change_a_profile_role(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("SUPERAGENT_ROLE", "worker")
     ctx = registered("router", tmp_path)

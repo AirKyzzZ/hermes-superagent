@@ -14,7 +14,7 @@ A <a href="https://github.com/NousResearch/hermes-agent">Hermes Agent</a> plugin
 <a href="LICENSE"><img alt="MIT licence" src="https://img.shields.io/github/license/AirKyzzZ/hermes-superagent?style=flat-square&label=license&labelColor=14142a&color=1a10b8"></a>
 <a href="pyproject.toml"><img alt="Python 3.11 or newer" src="https://img.shields.io/badge/python-3.11%2B-1a10b8?style=flat-square&labelColor=14142a"></a>
 <a href="plugin.yaml"><img alt="Hermes plugin, requires 0.22.7 or newer" src="https://img.shields.io/badge/Hermes_plugin-%3E%3D0.22.7-1a10b8?style=flat-square&labelColor=14142a"></a>
-<a href="tests"><img alt="149 tests" src="https://img.shields.io/badge/tests-149-1a10b8?style=flat-square&labelColor=14142a"></a>
+<a href="tests"><img alt="182 tests" src="https://img.shields.io/badge/tests-182-1a10b8?style=flat-square&labelColor=14142a"></a>
 <a href="docs/hackathon.md"><img alt="Built for the Hermes Agent Plugin Hackathon" src="https://img.shields.io/badge/built_for-Hermes_Plugin_Hackathon-1a10b8?style=flat-square&labelColor=14142a"></a>
 </p>
 
@@ -37,14 +37,14 @@ A <a href="https://github.com/NousResearch/hermes-agent">Hermes Agent</a> plugin
 DeepSeek's article puts the limit at three to five active sessions: past that, a person's attention runs out before the models do. Here you never manage sessions.
 
 - **Continuous:** you talk to one router on the channels you already use.
-- **Efficient:** each task gets its own worker process, so a new request never waits for an old one.
+- **Efficient:** each task gets its own worker, so a new request never waits for an old one.
 - **Proactive:** events pass a gate on who sent them, then rules your team writes in plain language.
 - **Persistent:** state lives in SQLite, and a scheduled process outside the workers checks that the work is really moving.
 
 A prompt or skill can only ask a model to stay in its lane. Here the gate, the tool allowlist, fencing and the watchdog process are code the model can't talk its way past, which is why this has to be a plugin.
 
 > [!WARNING]
-> Early build, never run end to end with a live model and gateway. CI loads the plugin through real Hermes v0.22.7 discovery, and the tests use a fake host and scripted workers. Worker identity and the worker tool guard rely on environment variables, but Hermes 0.22.7 runs a chat turn's tools in the profile's gateway process, so workers started with `hermes chat` probably don't get them yet. Fixing and testing that is first on the roadmap.
+> Early build, never run with a live model. CI runs workers on real Hermes v0.22.7 with a fake model: they overlap, report as themselves, get guarded and fenced, and stop for real. The router's chat path has only run against a fake host so far.
 
 ## Architecture
 
@@ -58,7 +58,7 @@ flowchart TB
         router["Router<br/>talks and dispatches, never executes"]
     end
 
-    workers@{ shape: procs, label: "Workers<br/>one process per task" }
+    workers@{ shape: procs, label: "Workers<br/>one session per task" }
     store[("SQLite store")]
 
     subgraph watchdogProfile["Watchdog profile, on a schedule"]
@@ -159,7 +159,7 @@ A live worker gets a nudge first, and it waits for that worker's next report, so
 
 | Routing | Workers | Watchdog and safety |
 | --- | --- | --- |
-| **A router that can't execute**<br> A `pre_tool_call` allowlist blocks everything else, and Hermes fails closed if the hook errors. | **One worker per task**<br> Its own OS process and environment allowlist. `send_message` and cron are blocked, and the documented toolsets add no other messaging tool, so it reports through `superagent_report`. A terminal can still reach whatever its sandbox allows. | **An outside watchdog**<br> A separate scheduled process. It can nudge, restart or escalate within a budget, and can't edit rules or widen a task. |
+| **A router that can't execute**<br> A `pre_tool_call` allowlist blocks everything else, and Hermes fails closed if the hook errors. | **One worker per task**<br> Its own session, directory and environment allowlist. `send_message` and cron are blocked, and the documented toolsets add no other messaging tool, so it reports through `superagent_report`. A terminal can still reach whatever its sandbox allows. | **An outside watchdog**<br> A separate scheduled process. It can nudge, restart or escalate within a budget, and can't edit rules or widen a task. |
 | **A gate blind to content**<br> Pure code over source, sender and bot lists. The message text can't open it. | **Thread pass-through**<br> A follow-up in a task's thread reaches its worker in its next report result, with no router model call. | **Fenced repairs**<br> Each worker has its own token. It's fenced before it's stopped, so a late report from an old worker is refused. |
 | **Rules that start quiet**<br> Team rules begin in `record` mode and only log what they would have done, until you set `act`. | **Parked, not lost**<br> A blocked task waits for an answer, then a new worker resumes with it. | **Inert until you opt in**<br> With no role set, its hooks do nothing and it offers no tools. |
 
@@ -250,14 +250,14 @@ text = "Reproduce reported bugs quietly, speak up only with a confirmed fix."
 mode = "record"
 ```
 
-Give the router and watchdog their role in each profile's `config.yaml`:
+Give each profile its role in its `config.yaml`:
 
 ```yaml
 plugins:
   entries:
     hermes-superagent:
       settings:
-        role: router           # or watchdog
+        role: router           # worker or watchdog in the others
         home: /path/to/shared/dir
 ```
 
@@ -268,13 +268,15 @@ terminal:
   backend: docker
 ```
 
-Remove `terminal` and `file` from the router with `hermes -p router tools`, keep gateway credentials out of the worker profile, and schedule the watchdog:
+Remove `terminal` and `file` from the router with `hermes -p router tools`, keep gateway credentials out of the worker profile, restart the gateway so it picks up the plugin's toolset, and schedule the watchdog:
 
 ```bash
 */5 * * * * hermes -p watchdog superagent tick
 ```
 
-Questions, results, failures and escalations reach people on the next tick. Progress stays in the store. Workers get their role from the router through environment variables, which is the untested part.
+Questions, results, failures and escalations reach people on the next tick. Progress stays in the store. A worker is whichever session runs in its own worker directory, so the worker profile refuses any other session and isn't for general chat.
+
+Hermes defers plugin tools behind `tool_call` by default, and that works. Set `tools.tool_search.enabled: off` in a profile to hand its model the tools directly.
 
 </details>
 
@@ -312,8 +314,8 @@ Settings go under `plugins.entries.hermes-superagent.settings` in each profile's
 
 | Setting | Values |
 | --- | --- |
-| `role` | `router`, `watchdog` or empty. Empty keeps the plugin inert |
-| `home` | Directory shared by router and watchdog, holding `superagent.toml` and the database |
+| `role` | `router`, `worker`, `watchdog` or empty. Empty keeps the plugin inert |
+| `home` | Directory shared by all three profiles, holding `superagent.toml` and the database |
 
 | Tool or hook | Used for |
 | --- | --- |
@@ -338,7 +340,7 @@ These are three of the closest plugins in the Hermes catalog. Each solves a diff
 | **Version** | 0.1.0, not in the catalog | 0.4.15 | 2.0.13 | 0.5.0 |
 | **Built for** | One agent in front of any work | Supervising agent turns and Kanban work: evidence, token spend, context | A role-based dev team that debates, votes and builds | Unattended pull request review and fixes, plus issue triage and CI repair |
 | **Who you talk to** | A router that can't execute | Your usual Hermes agent | Your usual Hermes agent, with a leader chairing the team | Nobody, GitHub events drive it |
-| **Unit of work** | One process per ticket | A Kanban card, on a local or SSH worker | A Kanban task for a role | A pull request |
+| **Unit of work** | One worker session per ticket | A Kanban card, on a local or SSH worker | A Kanban task for a role | A pull request |
 | **What starts work** | Chat and ingested events, through a sender gate and team rules | Kanban cards | A project you start, then leader heartbeat and discussions | GitHub events |
 | **Progress check** | Separate scheduled process: liveness, silence, repeats, goal drift | Hooks in a local worker, a controller-side bridge for SSH workers: locked definition of done, evidence, token checkpoints | Leader wakes on a cron to assess and unblock | Scheduled watchdog reports stalls, drains queued work and repairs routes, review rounds are capped |
 | **When stuck** | Nudge, restart, escalate | Continue, watch, replan, block | Leader unblocks or raises a discussion | Reports it, disputes go to an adjudicator |
@@ -353,14 +355,14 @@ Use nerve to gate Kanban completion on verified evidence, agora for a team that 
 Event content is attacker-controlled, so who can start or steer work is enforced in code. Framing is a second layer that depends on the model, and an `act` rule lets a model reading event text open a ticket.
 
 > [!CAUTION]
-> The boundary is the sandbox. A worker on a local terminal backend runs as your OS user and could rewrite the router's config, so the plugin refuses it `terminal`, file and code tools unless its profile uses a sandboxed backend such as docker or you set `allow_same_user`. Agents outside Hermes that use the report command get no such guard. On Hermes 0.22.7 the guard may not reach `hermes chat` workers yet (see the warning at the top), so treat a worker as unguarded unless its profile is sandboxed.
+> The boundary is the sandbox. A worker on a local terminal backend runs as your OS user and could rewrite the router's config, so the plugin refuses it `terminal`, file and code tools unless its profile uses a sandboxed backend such as docker or you set `allow_same_user`. Agents outside Hermes that use the report command get no such guard. Hermes runs every profile's turns in one gateway process by default, so profiles scope config and credentials, not the OS process.
 
 | Threat | Control |
 | --- | --- |
 | Prompt injection through a trigger | The gate never reads message text. Dispatch only accepts a trigger the gate admitted, offered within the hour, still allowed and unused |
 | Router tricked into executing | `pre_tool_call` allowlist, plus toolsets you remove from the profile |
 | Stranger steering a worker | Bots never reach workers. Strangers don't either unless a source opts in, and a stranger can't resume a parked ticket |
-| Forged or late reports | Per-assignment token, hashed at rest. A worker is fenced before it's stopped |
+| Forged or late reports | Per-assignment token, hashed at rest, kept in a private file in the worker's directory. A session anywhere else gets no tools, and a worker is fenced before it's stopped |
 | A report exfiltrating files | Relay is code. `MEDIA:` tags are neutralised and text is capped at 100 words |
 | Watchdog fooled | The judge has no tools and returns one of two values, so the most it can do is spend the repair budget and escalate |
 
@@ -369,9 +371,9 @@ If the gate itself fails, the message is dropped and logged, so a person gets si
 ### What it does on your machine
 
 - **Runs commands you configure:** one worker process per task from `[worker] argv`, and the delivery command from `[outbound] argv`. Workers keep running after the turn that started them.
-- **Stops processes:** the watchdog signals its own workers' process groups, and checks each start time first so a reused PID isn't hit.
+- **Stops processes:** the watchdog signals its own workers' client process groups, which cancels their turns, and checks each start time first so a reused PID isn't hit.
 - **Spends model tokens:** ticks call the watchdog profile's model through `ctx.llm` when there's a new report to judge or a candidate event to assess. Router and workers use their own profiles' models as usual.
-- **Writes files:** `superagent.db` and per-worker directories under `home`, and it reads `superagent.toml` from there.
+- **Writes files:** `superagent.db` and per-worker directories under `home`, each with a brief and a private identity file, and it reads `superagent.toml` from there.
 - **Leaves approvals to Hermes:** workers start non-interactively from an environment allowlist, so they inherit no YOLO or approval-bypass setting, and Hermes's approval rules still apply to them.
 - **Doesn't:** make network calls of its own, send telemetry, or hold credentials. The scripts in `assets/art` that fetched the source image are build tools the plugin never runs.
 
@@ -380,7 +382,8 @@ If the gate itself fails, the message is dropped and logged, so a person gets si
 - [x] Router, one worker per ticket, gate, record-only rules, thread pass-through
 - [x] External watchdog with nudge, restart and escalate
 - [x] Guard hooks, runnable demo, CI against real Hermes discovery
-- [ ] Make worker identity and the tool guard work in Hermes's gateway process, proven by an end-to-end test with a fake model
+- [x] Workers proven end to end on real Hermes with a fake model
+- [ ] The router's chat path, from gateway message to relay, proven the same way
 - [ ] First live run with a model and gateway
 - [ ] GitHub, email and calendar sources
 - [ ] tmux and cmux backends for coding agents, then a Kanban backend

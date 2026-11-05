@@ -38,6 +38,14 @@ SCRIPTS = {
         Step("superagent_report", {"state": "progress", "summary": "late {id}"}, wait_for="release-{id}"),
         Step("terminal", {"command": "touch {work}/late-{id}"}),
     ],
+    "wander": [
+        Step("terminal", {"command": "cd /tmp && pwd"}),
+        Step("superagent_report", {"state": "ready", "summary": "done {id}"}),
+    ],
+    "unset": [
+        Step("send_message", {"action": "list"}),
+        Step("superagent_report", {"state": "ready", "summary": "done {id}"}),
+    ],
     "outsider": [
         Step("superagent_report", {"state": "ready", "summary": "forged {id}"}),
     ],
