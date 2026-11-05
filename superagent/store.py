@@ -445,12 +445,13 @@ class Store:
             )
         return [_trigger_from_row(row) for row in matching]
 
-    def claim_trigger(self, trigger_id: str, assessment: str) -> bool:
+    def claim_offered_trigger(self, trigger_id: str, assessment: str, offered_within_seconds: float) -> bool:
+        now = time.time()
         with self._connect() as connection:
             cursor = connection.execute(
                 "UPDATE triggers SET assessed_at = ?, assessment = ? WHERE id = ? AND admission = ? "
-                "AND (assessment IS NULL OR assessment = ?)",
-                (time.time(), assessment, trigger_id, Admission.ACT.value, OFFERED),
+                "AND assessment = ? AND assessed_at >= ?",
+                (now, assessment, trigger_id, Admission.ACT.value, OFFERED, now - offered_within_seconds),
             )
             return cursor.rowcount == 1
 
