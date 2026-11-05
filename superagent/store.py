@@ -86,6 +86,7 @@ def hash_token(token: str) -> str:
 _MIGRATIONS = (
     "ALTER TABLE outbox ADD COLUMN next_attempt_at REAL",
     "ALTER TABLE outbox ADD COLUMN drop_reason TEXT",
+    "UPDATE outbox SET failed_at = NULL WHERE sent_at IS NULL AND failed_at IS NOT NULL AND drop_reason IS NULL",
 )
 SEND_RETRY_BASE_SECONDS = 60.0
 SEND_RETRY_CAP_SECONDS = 1800.0
@@ -521,6 +522,13 @@ class Store:
         with self._connect() as connection:
             connection.execute("UPDATE outbox SET sent_at = ? WHERE seq = ?", (time.time(), seq))
 
+    def is_pending(self, seq: int) -> bool:
+        with self._connect() as connection:
+            row = connection.execute(
+                "SELECT 1 FROM outbox WHERE seq = ? AND sent_at IS NULL AND failed_at IS NULL", (seq,)
+            ).fetchone()
+        return row is not None
+
     def record_assessment_failure(self, trigger_ids: Sequence[str], give_up_after: int) -> list[str]:
         now = time.time()
         given_up: list[str] = []
@@ -568,7 +576,11 @@ class Store:
         with self._connect() as connection:
             connection.execute("UPDATE outbox SET attempts = attempts + 1 WHERE seq = ?", (seq,))
             attempts = connection.execute("SELECT attempts FROM outbox WHERE seq = ?", (seq,)).fetchone()["attempts"]
-            delay = 0.0 if attempts < 2 else min(SEND_RETRY_BASE_SECONDS * 2 ** (attempts - 2), SEND_RETRY_CAP_SECONDS)
+            delay = (
+                0.0
+                if attempts < 2
+                else min(SEND_RETRY_BASE_SECONDS * 2 ** min(attempts - 2, 10), SEND_RETRY_CAP_SECONDS)
+            )
             next_attempt_at = time.time() + delay
             connection.execute("UPDATE outbox SET next_attempt_at = ? WHERE seq = ?", (next_attempt_at, seq))
         return next_attempt_at

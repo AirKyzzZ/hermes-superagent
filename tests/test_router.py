@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import sqlite3
+import time
 from collections.abc import Sequence
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
@@ -607,3 +608,73 @@ def test_a_message_that_keeps_failing_stops_holding_its_channel(
     router.relay(picky)
     assert sent == ["fine"]
     assert [message.text for message in router.store.pending_outbox()] == ["poison"]
+
+
+def test_backoff_stays_capped_after_a_thousand_failures(router: Router) -> None:
+    router.store.queue_message("tk-1", "discord:gone", "never arrives")
+    [message] = router.store.pending_outbox()
+    with sqlite3.connect(router.store.path) as connection:
+        connection.execute("UPDATE outbox SET attempts = 5000 WHERE seq = ?", (message.seq,))
+    assert router.store.record_send_failure(message.seq) <= time.time() + SEND_RETRY_CAP_SECONDS
+
+
+def test_an_unexpected_send_error_is_retried_and_blocks_nothing_else(router: Router) -> None:
+    router.store.queue_message("tk-1", "discord:a", "bad\x00byte")
+    router.store.queue_message("tk-2", "discord:b", "fine")
+
+    def strict(channel: str, text: str) -> None:
+        if "\x00" in text:
+            raise ValueError("embedded null byte")
+
+    assert [text for _, _, text in router.relay(strict)] == ["fine"]
+    assert router.store.failed_send_count() == 1
+
+
+def test_order_survives_a_long_outage(router: Router, monkeypatch: pytest.MonkeyPatch) -> None:
+    clock = Clock(monkeypatch)
+    for text in ("A", "B", "C"):
+        router.store.queue_message("tk-1", "discord:brief", text)
+    sent: list[str] = []
+    down = True
+
+    def flaky(channel: str, text: str) -> None:
+        if down:
+            raise OSError("discord down")
+        sent.append(text)
+
+    for _ in range(12):
+        router.relay(flaky)
+        clock.now += 120
+    down = False
+    for _ in range(20):
+        router.relay(flaky)
+        clock.now += 120
+    assert sent == ["A", "B", "C"]
+
+
+def test_a_message_dropped_mid_relay_is_not_sent(router: Router) -> None:
+    router.store.queue_message("tk-1", "discord:brief", "first")
+    router.store.queue_message("tk-2", "discord:brief", "second")
+    second = router.store.pending_outbox()[1].seq
+    sent: list[str] = []
+
+    def dropping(channel: str, text: str) -> None:
+        router.store.drop_message(second, "operator")
+        sent.append(text)
+
+    router.relay(dropping)
+    assert sent == ["first"]
+
+
+def test_messages_the_old_attempt_cap_gave_up_on_are_retried_again(tmp_path: Path) -> None:
+    path = tmp_path / "old.db"
+    with sqlite3.connect(path) as connection:
+        connection.execute(
+            "CREATE TABLE outbox (seq INTEGER PRIMARY KEY AUTOINCREMENT, ticket_id TEXT NOT NULL, "
+            "channel TEXT NOT NULL, text TEXT NOT NULL, sent_at REAL, attempts INTEGER NOT NULL DEFAULT 0, "
+            "failed_at REAL)"
+        )
+        connection.execute(
+            "INSERT INTO outbox (ticket_id, channel, text, attempts, failed_at) VALUES ('tk-1', 'chat:a', 'lost', 5, 1)"
+        )
+    assert [message.text for message in Store(path).pending_outbox()] == ["lost"]
