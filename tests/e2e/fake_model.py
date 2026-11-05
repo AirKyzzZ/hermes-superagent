@@ -13,6 +13,7 @@ from typing import Any
 
 GOAL = re.compile(r"scenario=(\w+) id=([\w-]+)")
 TRIGGER = re.compile(r"trigger_id=(\S+)")
+TICKET = re.compile(r"ticket=(tk-\w+)")
 RENDEZVOUS_SECONDS = 120.0
 WAIT_SECONDS = 300.0
 
@@ -56,6 +57,13 @@ SCRIPTS = {
         Step("superagent_report", {"state": "ready", "summary": "done {id}"}),
     ],
     "quiet": [],
+    "linger": [
+        Step("superagent_report", {"state": "progress", "summary": "started {id}"}),
+        Step("superagent_report", {"state": "progress", "summary": "late {id}"}, wait_for="release-{id}"),
+    ],
+    "cancel": [
+        Step("superagent_cancel", {"trigger_id": "{trigger}", "ticket_id": "{ticket}"}),
+    ],
     "outsider": [
         Step("superagent_report", {"state": "ready", "summary": "forged {id}"}),
     ],
@@ -71,8 +79,9 @@ arrivals_changed = threading.Condition()
 log_lock = threading.Lock()
 
 
-def render(template: str, goal_id: str, work: Path, trigger: str = "") -> str:
-    return template.replace("{id}", goal_id).replace("{work}", str(work)).replace("{trigger}", trigger)
+def render(template: str, goal_id: str, work: Path, trigger: str = "", ticket: str = "") -> str:
+    rendered = template.replace("{id}", goal_id).replace("{work}", str(work))
+    return rendered.replace("{trigger}", trigger).replace("{ticket}", ticket)
 
 
 def wait_for_partner(goal_id: str) -> bool:
@@ -133,7 +142,9 @@ def choose(body: dict[str, Any], work: Path) -> tuple[Step | None, dict[str, Any
     found = next((m for m in (TRIGGER.search(text_of(message)) for message in messages) if m), None)
     trigger = found.group(1) if found else ""
     entry["trigger"] = trigger
-    args = {key: render(value, goal_id, work, trigger) for key, value in step.args.items()}
+    named = next((m for m in (TICKET.search(text_of(message)) for message in messages) if m), None)
+    ticket = named.group(1) if named else ""
+    args = {key: render(value, goal_id, work, trigger, ticket) for key, value in step.args.items()}
     if step.tool in tools:
         return Step(step.tool, args), entry
     return Step("tool_call", {"calls": [{"name": step.tool, "arguments": args}]}), entry

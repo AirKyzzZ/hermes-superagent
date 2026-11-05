@@ -29,6 +29,7 @@ logger = logging.getLogger(__name__)
 
 CHAT_WORD_LIMIT = 100
 MAX_SEND_ATTEMPTS = 5
+LABEL_WORDS = 6
 OFFER_VALID_SECONDS = 3600.0
 _ATTACHMENT_TAG = re.compile(r"media:", re.IGNORECASE)
 _DIRECTIVE_OPENING = re.compile(r"\[(?=\[)")
@@ -105,6 +106,28 @@ class Router:
         raise NotAdmittedError(f"trigger {trigger_id} was already used or is not an offered request")
 
     def forward(self, trigger_id: str, ticket_id: str) -> Ticket:
+        trigger, ticket = self._claim_for_ticket(trigger_id, ticket_id, f"forwarded to {ticket_id}")
+        self.store.add_input(ticket_id, f"{trigger.source}:{trigger.actor}", frame_trigger(trigger), trusted=True)
+        self._resume_if_waiting(ticket)
+        return self.store.get_ticket(ticket_id)
+
+    def cancel_from(self, trigger_id: str, ticket_id: str) -> Ticket:
+        trigger, _ = self._claim_for_ticket(trigger_id, ticket_id, f"cancelled {ticket_id}")
+        return self.cancel(ticket_id, trigger.actor or trigger.source)
+
+    def cancel(self, ticket_id: str, by: str) -> Ticket:
+        ticket = self.store.get_ticket(ticket_id)
+        if ticket.status is TicketStatus.ENDED:
+            raise ValueError(f"ticket {ticket_id} has already ended")
+        self.store.end_ticket(ticket_id)
+        label = task_label(ticket.id, ticket.goal)
+        self.store.queue_message(ticket.id, ticket.channel, chat_safe(shorten(f"Cancelled {label} by {by}")))
+        for assignment in self.store.running_assignments():
+            if assignment.ticket_id == ticket_id and self.store.end_assignment(assignment.id):
+                self.backend.stop(assignment)
+        return self.store.get_ticket(ticket_id)
+
+    def _claim_for_ticket(self, trigger_id: str, ticket_id: str, assessment: str) -> tuple[Trigger, Ticket]:
         trigger = self._admitted_trigger(trigger_id)
         ticket = self.store.get_ticket(ticket_id)
         if ticket.status is TicketStatus.ENDED:
@@ -114,11 +137,9 @@ class Router:
         )
         if trigger.channel != ticket.channel and not same_person:
             raise NotAdmittedError(f"trigger {trigger_id} comes from another conversation and another person")
-        if not self.store.claim_offered_trigger(trigger_id, f"forwarded to {ticket_id}", OFFER_VALID_SECONDS):
+        if not self.store.claim_offered_trigger(trigger_id, assessment, OFFER_VALID_SECONDS):
             raise NotAdmittedError(f"trigger {trigger_id} was already used or is not an offered request")
-        self.store.add_input(ticket_id, f"{trigger.source}:{trigger.actor}", frame_trigger(trigger), trusted=True)
-        self._resume_if_waiting(ticket)
-        return self.store.get_ticket(ticket_id)
+        return trigger, ticket
 
     def assess_candidates(self, assessor: Assessor) -> list[Ticket]:
         batch = self.store.pending_candidates()
@@ -165,6 +186,7 @@ class Router:
                     "goal": shorten(ticket.goal),
                     "status": ticket.status.value,
                     "state": reports[-1].state.value if reports else "starting",
+                    "question": reports[-1].question if reports and ticket.status is TicketStatus.WAITING else "",
                 }
             )
         return lines
@@ -242,13 +264,17 @@ def shorten(text: str, limit: int = CHAT_WORD_LIMIT) -> str:
     return text if len(words) <= limit else " ".join(words[:limit]) + " ..."
 
 
-def _render_report(report: Report) -> str | None:
+def task_label(ticket_id: str, goal: str) -> str:
+    return f"[{shorten(goal, LABEL_WORDS)} · {ticket_id}]"
+
+
+def _render_report(report: Report, goal: str) -> str | None:
     if report.state not in HUMAN_FACING_REPORT_STATES:
         return None
     text = report.question if report.question else report.summary
     prefix = "Done" if report.state is ReportState.READY else report.state.value.capitalize()
-    return chat_safe(shorten(f"{prefix}: {text}"))
+    return chat_safe(shorten(f"{prefix} {task_label(report.ticket_id, goal)}: {text}"))
 
 
-def _render_escalation(reason: str) -> str:
-    return chat_safe(shorten(f"Needs you: {reason}"))
+def _render_escalation(reason: str, ticket_id: str, goal: str) -> str:
+    return chat_safe(shorten(f"Needs you {task_label(ticket_id, goal)}: {reason}"))

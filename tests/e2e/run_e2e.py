@@ -342,11 +342,11 @@ def stage_router(work: Path, log: Path) -> None:
         print("tick:", tick.returncode, tick.stdout[-600:], tick.stderr[-600:], flush=True)
         check("watchdog: the tick runs from the CLI", tick.returncode == 0)
         delivered = sent.read_text(encoding="utf-8") if sent.exists() else ""
-        check("watchdog: the result is relayed to the person", "Done: done routed-worker" in delivered, delivered)
+        check("watchdog: the result is relayed to the person", "]: done routed-worker" in delivered, delivered)
         check("watchdog: the relay goes back to the webhook chat", delivered.startswith("webhook:"), delivered)
-        check(
-            "github: the result goes to the team channel", "discord:team\tDone: done gh-worker" in delivered, delivered
-        )
+        check("github: the result goes to the team channel", "discord:team\tDone [" in delivered, delivered)
+        check("relay: messages name their task", "· tk-" in delivered and "]: done gh-worker" in delivered, delivered)
+        scenario_cancel(open_runtime(home), log, work, sent)
     finally:
         host.terminate()
         host.wait(timeout=30)
@@ -356,6 +356,33 @@ def scenario_environment_untouched(hermes_home: Path) -> None:
     roots = [hermes_home, Path(shutil.which("hermes") or "hermes").resolve().parents[1]]
     leaked = [str(path) for root in roots for path in root.rglob("site-packages/pytest")]
     check("enabling the plugin puts no dev tools in the Hermes environment", not leaked, leaked)
+
+
+def scenario_cancel(runtime: Runtime, log: Path, work: Path, sent: Path) -> None:
+    trigger = Trigger(
+        id="linger-1",
+        source="webhook:inbox",
+        thread="",
+        actor="webhook:inbox",
+        text="scenario=linger id=lingering",
+        channel="webhook:linger",
+        addressed=True,
+    )
+    ticket = runtime.router.ingest(trigger).ticket_ids[0]
+    wait_until(lambda: "progress" in report_states(runtime, ticket))
+    assignment = next(a for a in runtime.store.running_assignments() if a.ticket_id == ticket)
+    post_webhook("inbox", f"scenario=cancel id=cancel-request ticket={ticket}")
+    ended = wait_until(lambda: runtime.store.get_ticket(ticket).status.value == "ended", timeout=120.0)
+    check("cancel: the router's model stops a ticket for the person who asked", ended, turns(log, "cancel-request"))
+    gone = wait_until(lambda: not runtime.router.backend.is_alive(assignment), timeout=60.0)
+    check("cancel: the worker's client is gone", gone)
+    (work / "release-lingering").touch()
+    time.sleep(5)
+    summaries = [report.summary for report in runtime.store.ticket_reports(ticket)]
+    check("cancel: the worker's late report is never stored", "late lingering" not in summaries, summaries)
+    hermes("-p", "watchdog", "superagent", "tick")
+    delivered = sent.read_text(encoding="utf-8") if sent.exists() else ""
+    check("cancel: the person is told", "Cancelled [" in delivered, delivered[-400:])
 
 
 def scenario_host_env() -> None:

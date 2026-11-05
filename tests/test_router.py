@@ -11,7 +11,7 @@ from superagent.router import MAX_SEND_ATTEMPTS, Assessment, NotAdmittedError, O
 from superagent.store import StaleAssignmentError, Store
 from superagent.watchdog import WatchdogPolicy, check_once
 
-from .conftest import FakeBackend
+from .conftest import FakeBackend, unlabelled
 
 
 def admit(router: Router, trigger: Trigger) -> None:
@@ -159,6 +159,11 @@ def test_assessor_cannot_invent_a_rule(router: Router, backend: FakeBackend) -> 
     assert backend.started == []
 
 
+def running_ticket(router: Router) -> str:
+    router.ingest(event())
+    return router.store.live_tickets()[0].id
+
+
 def only_assignment(store: Store) -> tuple[str, str]:
     assignment = store.running_assignments()[0]
     return assignment.id, assignment.ticket_id
@@ -172,10 +177,12 @@ def test_only_the_router_speaks_and_progress_stays_quiet(router: Router, backend
     assert router.relay() == []
     router.store.add_report(assignment_id, token, ReportState.READY, "PR opened")
     sent: list[tuple[str, str]] = []
-    assert router.relay(lambda channel, text: sent.append((channel, text))) == [
+    delivered = router.relay(lambda channel, text: sent.append((channel, text)))
+    assert [(ticket, channel, unlabelled(text)) for ticket, channel, text in delivered] == [
         (ticket_id, "chat:th1", "Done: PR opened")
     ]
-    assert sent == [("chat:th1", "Done: PR opened")]
+    assert [(channel, unlabelled(text)) for channel, text in sent] == [("chat:th1", "Done: PR opened")]
+    assert ticket_id in sent[0][1]
     assert router.relay() == []
     assert router.store.get_ticket(ticket_id).status is TicketStatus.ENDED
 
@@ -208,7 +215,9 @@ def test_a_failed_send_keeps_the_message_for_the_next_tick(router: Router, backe
         raise ConnectionError("platform down")
 
     assert router.relay(broken) == []
-    assert router.relay() == [(ticket_id, "chat:th1", "Done: PR opened")]
+    assert [(ticket, channel, unlabelled(text)) for ticket, channel, text in router.relay()] == [
+        (ticket_id, "chat:th1", "Done: PR opened")
+    ]
 
 
 def test_one_bad_message_does_not_block_the_others(router: Router, backend: FakeBackend) -> None:
@@ -224,7 +233,7 @@ def test_one_bad_message_does_not_block_the_others(router: Router, backend: Fake
         sent.append(text)
 
     router.relay(picky)
-    assert sent == ["Done: fine"]
+    assert [unlabelled(text) for text in sent] == ["Done: fine"]
 
 
 def test_send_gives_up_after_the_attempt_cap(router: Router, backend: FakeBackend) -> None:
@@ -263,7 +272,9 @@ def test_blocked_parks_the_ticket_and_asks_once(router: Router, backend: FakeBac
     ticket_id = blocked_ticket(router, backend)
     assert router.store.get_ticket(ticket_id).status is TicketStatus.WAITING
     assert router.store.running_assignments() == []
-    assert router.relay() == [(ticket_id, "chat:th1", "Blocked: Postgres or SQLite?")]
+    assert [(ticket, channel, unlabelled(text)) for ticket, channel, text in router.relay()] == [
+        (ticket_id, "chat:th1", "Blocked: Postgres or SQLite?")
+    ]
     assert check_once(router) == []
     assert len(backend.started) == 1
 
@@ -467,3 +478,39 @@ def test_relayed_text_carries_no_send_directive(text: str) -> None:
     safe = chat_safe(text)
     assert "[[" not in safe
     assert "media:" not in safe.lower()
+
+
+def test_the_person_who_asked_can_cancel_their_ticket(router: Router, backend: FakeBackend) -> None:
+    ticket_id = running_ticket(router)
+    router.ingest(event("t9", thread="", text="stop, wrong repo"), auto_dispatch=False)
+    router.store.take_admitted("chat", "alice", "stop, wrong repo", 600)
+    ticket = router.cancel_from("t9", ticket_id)
+    assert ticket.status is TicketStatus.ENDED
+    assert backend.stopped == [backend.started[0][1]]
+    assert router.store.running_assignments() == []
+    [message] = [text for _, _, text in router.relay()]
+    assert message.startswith("Cancelled [") and "by alice" in message
+    assert check_once(router) == []
+    assert len(backend.started) == 1
+
+
+def test_someone_else_cannot_cancel_a_ticket(router: Router, backend: FakeBackend) -> None:
+    ticket_id = running_ticket(router)
+    router.ingest(Trigger("t8", "chat", "", "bob", "cancel it", "chat:elsewhere", True))
+    router.store.take_admitted("chat", "bob", "cancel it", 600)
+    with pytest.raises(NotAdmittedError):
+        router.cancel_from("t8", ticket_id)
+    assert router.store.get_ticket(ticket_id).status is TicketStatus.OPEN
+
+
+def test_a_ticket_cannot_be_cancelled_twice(router: Router, backend: FakeBackend) -> None:
+    ticket_id = running_ticket(router)
+    router.cancel(ticket_id, "an operator")
+    with pytest.raises(ValueError, match="already ended"):
+        router.cancel(ticket_id, "an operator")
+
+
+def test_status_shows_the_question_a_parked_ticket_waits_on(router: Router, backend: FakeBackend) -> None:
+    blocked_ticket(router, backend)
+    [line] = router.status()
+    assert line["question"] == "Postgres or SQLite?"

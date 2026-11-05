@@ -30,6 +30,9 @@ def setup_parser(parser: argparse.ArgumentParser) -> None:
     ingest.add_argument("--channel", default="")
     ingest.add_argument("--addressed", action="store_true")
     ingest.add_argument("--bot", action="store_true")
+    cancel = commands.add_parser("cancel", help="stop a ticket and its worker, and tell the people on it")
+    cancel.add_argument("ticket")
+    cancel.add_argument("--by", default="an operator")
     report = commands.add_parser("report", help="report status from a worker directory, for agents outside Hermes")
     report.add_argument("--state", required=True, choices=_WORKER_STATES)
     report.add_argument("--summary", required=True)
@@ -55,6 +58,10 @@ def run(
         print("--home is required outside Hermes", file=sys.stderr)
         return 2
     runtime = open_runtime(home)
+    if args.superagent_command == "cancel":
+        ticket = runtime.router.cancel(args.ticket, args.by)
+        print(json.dumps({"ticket": ticket.id, "status": ticket.status.value}))
+        return 0
     if args.superagent_command == "status":
         print(json.dumps(runtime.router.status(), indent=1))
         return 0

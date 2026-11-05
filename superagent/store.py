@@ -341,28 +341,37 @@ class Store:
         return [_report_from_row(row) for row in rows]
 
     def move_to_outbox(
-        self, render_report: Callable[[Report], str | None], render_escalation: Callable[[str], str]
+        self,
+        render_report: Callable[[Report, str], str | None],
+        render_escalation: Callable[[str, str, str], str],
     ) -> None:
         now = time.time()
         insert = "INSERT INTO outbox (ticket_id, channel, text) VALUES (?,?,?)"
         with self._connect() as connection:
             reports = connection.execute(
-                "SELECT r.*, t.channel FROM reports r JOIN tickets t ON t.id = r.ticket_id "
+                "SELECT r.*, t.channel, t.goal FROM reports r JOIN tickets t ON t.id = r.ticket_id "
                 "WHERE r.relayed_at IS NULL ORDER BY r.seq"
             ).fetchall()
             for row in reports:
-                text = render_report(_report_from_row(row))
+                text = render_report(_report_from_row(row), row["goal"])
                 if text is not None:
                     connection.execute(insert, (row["ticket_id"], row["channel"], text))
                 connection.execute("UPDATE reports SET relayed_at = ? WHERE seq = ?", (now, row["seq"]))
             escalations = connection.execute(
-                "SELECT e.seq, e.ticket_id, e.reason, t.channel FROM watchdog_events e "
+                "SELECT e.seq, e.ticket_id, e.reason, t.channel, t.goal FROM watchdog_events e "
                 "JOIN tickets t ON t.id = e.ticket_id WHERE e.relayed_at IS NULL AND e.action = ? ORDER BY e.seq",
                 (RepairAction.ESCALATE.value,),
             ).fetchall()
             for row in escalations:
-                connection.execute(insert, (row["ticket_id"], row["channel"], render_escalation(row["reason"])))
+                text = render_escalation(row["reason"], row["ticket_id"], row["goal"])
+                connection.execute(insert, (row["ticket_id"], row["channel"], text))
                 connection.execute("UPDATE watchdog_events SET relayed_at = ? WHERE seq = ?", (now, row["seq"]))
+
+    def queue_message(self, ticket_id: str, channel: str, text: str) -> None:
+        with self._connect() as connection:
+            connection.execute(
+                "INSERT INTO outbox (ticket_id, channel, text) VALUES (?,?,?)", (ticket_id, channel, text)
+            )
 
     def pending_candidates(self) -> list[Trigger]:
         with self._connect() as connection:
