@@ -31,7 +31,7 @@ The form can go in as soon as the PR is open. Catalog checks run once a maintain
 
 ## Before submitting
 
-**Still open before the demo:** the router's chat path needs an end-to-end run on real Hermes, and someone needs to run the whole thing once with a live model and gateway. Workers already pass on real Hermes with a fake model in CI.
+**Still open before the demo:** one run with a live model and a real chat platform. CI already runs the whole path on real Hermes with a fake model.
 
 | Catalog rule | State | Evidence |
 | --- | --- | --- |

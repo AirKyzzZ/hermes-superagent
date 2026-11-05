@@ -24,10 +24,10 @@ jobs:
       - uses: astral-sh/setup-uv@v6
         with:
           python-version: ${{ matrix.python }}
-      - run: uv run --group dev ruff check .
-      - run: uv run --group dev ruff format --check .
-      - run: uv run --group dev mypy
-      - run: uv run --group dev pytest -q
+      - run: uv run --no-project --with-requirements requirements-dev.txt ruff check .
+      - run: uv run --no-project --with-requirements requirements-dev.txt ruff format --check .
+      - run: uv run --no-project --with-requirements requirements-dev.txt mypy
+      - run: uv run --no-project --with-requirements requirements-dev.txt pytest -q
 
   hermes-compat:
     runs-on: ubuntu-latest

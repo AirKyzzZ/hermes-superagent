@@ -37,3 +37,12 @@ def test_cover_is_two_to_one_and_pinned_with_the_entry() -> None:
     header = (ROOT / match.group(2)).read_bytes()[16:24]
     width, height = struct.unpack(">II", header)
     assert width == 2 * height
+
+
+def test_plugin_puts_nothing_into_the_shared_hermes_environment() -> None:
+    document = tomllib.loads((ROOT / "pyproject.toml").read_text(encoding="utf-8"))
+    assert document["project"]["dependencies"] == []
+    assert "optional-dependencies" not in document["project"]
+    assert "dependency-groups" not in document
+    assert "build-system" not in document
+    assert "package" not in document.get("tool", {}).get("uv", {})

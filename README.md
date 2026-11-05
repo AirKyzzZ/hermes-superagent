@@ -14,7 +14,7 @@ A <a href="https://github.com/NousResearch/hermes-agent">Hermes Agent</a> plugin
 <a href="LICENSE"><img alt="MIT licence" src="https://img.shields.io/github/license/AirKyzzZ/hermes-superagent?style=flat-square&label=license&labelColor=14142a&color=1a10b8"></a>
 <a href="pyproject.toml"><img alt="Python 3.11 or newer" src="https://img.shields.io/badge/python-3.11%2B-1a10b8?style=flat-square&labelColor=14142a"></a>
 <a href="plugin.yaml"><img alt="Hermes plugin, requires 0.22.7 or newer" src="https://img.shields.io/badge/Hermes_plugin-%3E%3D0.22.7-1a10b8?style=flat-square&labelColor=14142a"></a>
-<a href="tests"><img alt="182 tests" src="https://img.shields.io/badge/tests-182-1a10b8?style=flat-square&labelColor=14142a"></a>
+<a href="tests"><img alt="183 tests" src="https://img.shields.io/badge/tests-183-1a10b8?style=flat-square&labelColor=14142a"></a>
 <a href="docs/hackathon.md"><img alt="Built for the Hermes Agent Plugin Hackathon" src="https://img.shields.io/badge/built_for-Hermes_Plugin_Hackathon-1a10b8?style=flat-square&labelColor=14142a"></a>
 </p>
 
@@ -44,7 +44,7 @@ DeepSeek's article puts the limit at three to five active sessions: past that, a
 A prompt or skill can only ask a model to stay in its lane. Here the gate, the tool allowlist, fencing and the watchdog process are code the model can't talk its way past, which is why this has to be a plugin.
 
 > [!WARNING]
-> Early build, never run with a live model. CI runs workers on real Hermes v0.22.7 with a fake model: they overlap, report as themselves, get guarded and fenced, and stop for real. The router's chat path has only run against a fake host so far.
+> Early build, never run with a live model. CI runs the whole path on real Hermes v0.22.7 with a fake model: a gateway message passes the gate, the router dispatches, workers overlap, report, get guarded, fenced and stopped for real, and the watchdog relays the result.
 
 ## Architecture
 
@@ -383,7 +383,7 @@ If the gate itself fails, the message is dropped and logged, so a person gets si
 - [x] External watchdog with nudge, restart and escalate
 - [x] Guard hooks, runnable demo, CI against real Hermes discovery
 - [x] Workers proven end to end on real Hermes with a fake model
-- [ ] The router's chat path, from gateway message to relay, proven the same way
+- [x] The router's chat path, from gateway message to relay, proven the same way
 - [ ] First live run with a model and gateway
 - [ ] GitHub, email and calendar sources
 - [ ] tmux and cmux backends for coding agents, then a Kanban backend
@@ -393,9 +393,9 @@ If the gate itself fails, the message is dropped and logged, so a person gets si
 ## Develop
 
 ```bash
-uv run --group dev pytest -q
-uv run --group dev ruff check .
-uv run --group dev mypy
+uv run --no-project --with-requirements requirements-dev.txt pytest -q
+uv run --no-project --with-requirements requirements-dev.txt ruff check .
+uv run --no-project --with-requirements requirements-dev.txt mypy
 ```
 
 Design notes and the module mapping to Hermes are in [DESIGN.md](DESIGN.md). The hackathon rules and submission steps are in [docs/hackathon.md](docs/hackathon.md).

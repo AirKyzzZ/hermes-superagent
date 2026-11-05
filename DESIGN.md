@@ -78,7 +78,7 @@ If the gate itself fails, the message is dropped and logged rather than let thro
 - Hermes gives hooks no mention flag, so chat messages count as addressed and rely on the adapter's own mention rules. Semantic rules therefore apply to listed bots and `ingest` sources for now.
 - Under `plugins.isolation: host`, Hermes skips `hermes superagent`, so use `python -m superagent` there.
 - `hermes plugins validate` passes with one scanner caution: the invisible-character regex in `framing.py`, which is the sanitizer itself.
-- Not yet run with a live model. CI runs workers on real Hermes with a fake model, in `tests/e2e`. The router's chat path has only run against a fake host, written from the documented API.
+- Not yet run with a live model. CI runs the whole path on real Hermes with a fake model, in `tests/e2e`: a webhook message through the gate, the router, real workers, a tick and the relay.
 
 ## How this differs from the catalog
 
