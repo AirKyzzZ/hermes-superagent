@@ -297,11 +297,10 @@ def stage_router(work: Path, log: Path) -> None:
         host.wait(timeout=30)
 
 
-def scenario_environment_untouched() -> None:
-    interpreter = Path(shutil.which("hermes") or "hermes").resolve().parent / "python"
-    code = "import importlib.util as u; print(u.find_spec('pytest') is None and u.find_spec('aiohttp') is not None)"
-    found = subprocess.run([str(interpreter), "-c", code], capture_output=True, text=True, check=False)
-    check("enabling the plugin changes nothing in the Hermes environment", found.stdout.strip() == "True", found)
+def scenario_environment_untouched(hermes_home: Path) -> None:
+    roots = [hermes_home, Path(shutil.which("hermes") or "hermes").resolve().parents[1]]
+    leaked = [str(path) for root in roots for path in root.rglob("site-packages/pytest")]
+    check("enabling the plugin puts no dev tools in the Hermes environment", not leaked, leaked)
 
 
 def scenario_host_env() -> None:
@@ -365,7 +364,7 @@ def main() -> int:
         scenario_wander(opened)
         scenario_stop(opened, log)
         scenario_host_env()
-        scenario_environment_untouched()
+        scenario_environment_untouched(hermes_home)
         stage_router(work, log)
     finally:
         show_logs(hermes_home, work)

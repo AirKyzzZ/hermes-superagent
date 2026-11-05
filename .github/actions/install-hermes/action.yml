@@ -4,10 +4,6 @@ inputs:
   pin:
     description: Hermes commit to install
     required: true
-  sync-args:
-    description: Extra arguments for uv sync
-    required: false
-    default: ""
 runs:
   using: composite
   steps:
@@ -17,7 +13,7 @@ runs:
         git init -q "$src"
         git -C "$src" fetch -q --depth 1 https://github.com/NousResearch/hermes-agent "${{ inputs.pin }}"
         git -C "$src" checkout -q FETCH_HEAD
-        uv sync --project "$src" --frozen --no-dev ${{ inputs.sync-args }}
+        uv sync --project "$src" --frozen --no-dev
         echo "$src/.venv/bin" >> "$GITHUB_PATH"
         echo "HERMES_HOME=$RUNNER_TEMP/hermes-home" >> "$GITHUB_ENV"
         mkdir -p "$RUNNER_TEMP/hermes-home"

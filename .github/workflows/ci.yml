@@ -64,6 +64,7 @@ jobs:
         uses: ./.github/actions/install-hermes
         with:
           pin: ${{ env.HERMES_PIN }}
-          sync-args: --extra sms
+      - name: Add the webhook adapter's dependency through Hermes
+        run: hermes pm install --extra sms
       - name: Real Hermes, fake model
         run: uv run --no-project --with pyyaml python tests/e2e/run_e2e.py --work "$RUNNER_TEMP/e2e"
