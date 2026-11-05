@@ -93,7 +93,6 @@ TICK_SCHEMA = {
 class Plugin:
     def __init__(self, ctx: Any) -> None:
         self.ctx = ctx
-        self._runtime: Runtime | None = None
 
     @property
     def role(self) -> str:
@@ -108,9 +107,7 @@ class Plugin:
         return Path(plugin_data_dir(PLUGIN_NAME))
 
     def runtime(self) -> Runtime:
-        if self._runtime is None:
-            self._runtime = open_runtime(self.home())
-        return self._runtime
+        return open_runtime(self.home())
 
     def is_role(self, role: str) -> bool:
         return self.role == role

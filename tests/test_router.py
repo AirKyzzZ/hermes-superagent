@@ -5,13 +5,20 @@ from concurrent.futures import ThreadPoolExecutor
 
 import pytest
 
-from superagent.domain import ReportState, Strength, TicketStatus, Trigger
+from superagent.domain import RepairAction, ReportState, Strength, TicketStatus, Trigger
 from superagent.gate import SemanticRule, parse_rules
 from superagent.router import MAX_SEND_ATTEMPTS, Assessment, NotAdmittedError, Outcome, Router
 from superagent.store import StaleAssignmentError, Store
-from superagent.watchdog import check_once
+from superagent.watchdog import WatchdogPolicy, check_once
 
 from .conftest import FakeBackend
+
+
+def admit(router: Router, trigger: Trigger) -> None:
+    assert router.ingest(trigger, auto_dispatch=False).outcome is Outcome.ADMITTED
+    assert [item.id for item in router.store.take_admitted(trigger.source, trigger.actor, trigger.text, 600)] == [
+        trigger.id
+    ]
 
 
 def event(
@@ -61,7 +68,7 @@ def test_candidate_cannot_be_dispatched_directly(router: Router) -> None:
 
 
 def test_router_can_set_the_goal_after_admission(router: Router, backend: FakeBackend) -> None:
-    assert router.ingest(event(), auto_dispatch=False).outcome is Outcome.ADMITTED
+    admit(router, event())
     assert backend.started == []
     ticket = router.dispatch("t1", "fix login redirect in auth flow")
     assert ticket.goal == "fix login redirect in auth flow"
@@ -281,7 +288,7 @@ def test_a_stranger_cannot_resume_a_waiting_ticket(store: Store, backend: FakeBa
 
 def test_forward_resumes_a_waiting_ticket_from_a_message_without_a_thread(router: Router, backend: FakeBackend) -> None:
     ticket_id = blocked_ticket(router, backend)
-    router.ingest(event("t2", thread="", text="use Postgres"), auto_dispatch=False)
+    admit(router, event("t2", thread="", text="use Postgres"))
     router.forward("t2", ticket_id)
     assert "use Postgres" in backend.contexts[1]
     assert offered(router, "use Postgres") == []
@@ -292,7 +299,7 @@ def test_forward_refuses_a_stranger_and_an_ended_ticket(router: Router, backend:
     router.ingest(event("t2", thread="", actor="mallory"), auto_dispatch=False)
     with pytest.raises(NotAdmittedError):
         router.forward("t2", ticket_id)
-    router.ingest(event("t3", thread=""), auto_dispatch=False)
+    admit(router, event("t3", thread=""))
     with pytest.raises(ValueError):
         router.forward("t3", ticket_id)
 
@@ -333,7 +340,7 @@ def test_a_stale_message_is_not_offered(router: Router) -> None:
 
 def test_a_trigger_can_be_forwarded_only_once(router: Router, backend: FakeBackend) -> None:
     ticket_id = blocked_ticket(router, backend)
-    router.ingest(event("t2", thread="", text="use Postgres"), auto_dispatch=False)
+    admit(router, event("t2", thread="", text="use Postgres"))
     router.forward("t2", ticket_id)
     with pytest.raises(NotAdmittedError, match="already used"):
         router.forward("t2", ticket_id)
@@ -341,7 +348,7 @@ def test_a_trigger_can_be_forwarded_only_once(router: Router, backend: FakeBacke
 
 def test_a_forwarded_trigger_cannot_also_be_dispatched(router: Router, backend: FakeBackend) -> None:
     ticket_id = blocked_ticket(router, backend)
-    router.ingest(event("t2", thread="", text="use Postgres"), auto_dispatch=False)
+    admit(router, event("t2", thread="", text="use Postgres"))
     router.forward("t2", ticket_id)
     with pytest.raises(NotAdmittedError, match="already used"):
         router.dispatch("t2", "something else")
@@ -358,8 +365,7 @@ def test_another_person_elsewhere_cannot_forward_into_a_ticket(store: Store, bac
     rules = parse_rules('[sources.chat]\npolicy = "explicit_only"\nallow = ["alice", "bob"]')
     router = Router(store, rules, backend)
     ticket_id = blocked_ticket(router, backend)
-    other = Trigger("t2", "chat", "", "bob", "do this instead", "chat:elsewhere", True, False)
-    router.ingest(other, auto_dispatch=False)
+    admit(router, Trigger("t2", "chat", "", "bob", "do this instead", "chat:elsewhere", True, False))
     with pytest.raises(NotAdmittedError, match="another conversation"):
         router.forward("t2", ticket_id)
     assert len(backend.started) == 1
@@ -369,10 +375,59 @@ def test_another_person_in_the_same_conversation_can_forward(store: Store, backe
     rules = parse_rules('[sources.chat]\npolicy = "explicit_only"\nallow = ["alice", "bob"]')
     router = Router(store, rules, backend)
     ticket_id = blocked_ticket(router, backend)
-    other = Trigger("t2", "chat", "", "bob", "use Postgres", "chat:th1", True, False)
-    router.ingest(other, auto_dispatch=False)
+    admit(router, Trigger("t2", "chat", "", "bob", "use Postgres", "chat:th1", True, False))
     router.forward("t2", ticket_id)
     assert len(backend.started) == 2
+
+
+def test_same_id_on_another_platform_is_not_the_same_person(store: Store, backend: FakeBackend) -> None:
+    rules = parse_rules(
+        '[sources.chat]\npolicy = "explicit_only"\nallow = ["alice"]\n'
+        '[sources.other]\npolicy = "explicit_only"\nallow = ["alice"]'
+    )
+    router = Router(store, rules, backend)
+    ticket_id = blocked_ticket(router, backend)
+    admit(router, Trigger("t2", "other", "", "alice", "do this instead", "other:elsewhere", True, False))
+    with pytest.raises(NotAdmittedError, match="another conversation"):
+        router.forward("t2", ticket_id)
+
+
+def test_the_model_cannot_use_a_trigger_it_was_never_offered(router: Router, backend: FakeBackend) -> None:
+    ticket_id = blocked_ticket(router, backend)
+    router.ingest(event("t2", thread="", text="an old message"), auto_dispatch=False)
+    with pytest.raises(NotAdmittedError, match="not an offered request"):
+        router.dispatch("t2", "start something")
+    with pytest.raises(NotAdmittedError, match="not an offered request"):
+        router.forward("t2", ticket_id)
+
+
+def test_an_offer_expires(router: Router, monkeypatch: pytest.MonkeyPatch) -> None:
+    admit(router, event(thread=""))
+    monkeypatch.setattr("superagent.router.OFFER_VALID_SECONDS", -1.0)
+    with pytest.raises(NotAdmittedError, match="not an offered request"):
+        router.dispatch("t1", "too late")
+
+
+def test_removing_someone_from_the_rules_voids_their_pending_request(store: Store, backend: FakeBackend) -> None:
+    allowed = parse_rules('[sources.chat]\npolicy = "explicit_only"\nallow = ["alice"]')
+    router = Router(store, allowed, backend)
+    admit(router, event(thread=""))
+    router.rules = parse_rules('[sources.chat]\npolicy = "explicit_only"\nallow = []')
+    with pytest.raises(NotAdmittedError, match="no longer allowed"):
+        router.dispatch("t1", "stale permission")
+
+
+def test_a_failed_worker_start_is_recovered_by_the_watchdog(router: Router, backend: FakeBackend) -> None:
+    admit(router, event(thread=""))
+    backend.fail_next_start = True
+    with pytest.raises(OSError):
+        router.dispatch("t1", "fix the bug")
+    ticket = router.dispatch("t1", "fix the bug")
+    assert backend.started == []
+    backend.alive = False
+    result = check_once(router, policy=WatchdogPolicy(orphan_after_seconds=-1))[0]
+    assert result.action is RepairAction.RESTART
+    assert backend.started[0][0] == ticket.id
 
 
 def test_two_answers_resume_a_waiting_ticket_once(router: Router, backend: FakeBackend) -> None:
