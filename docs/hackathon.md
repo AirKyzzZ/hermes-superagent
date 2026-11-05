@@ -1,39 +1,80 @@
-# Hermes Agent Plugin Hackathon: what we know
+# Hermes Agent Plugin Hackathon
 
-Announcement: https://x.com/NousResearch/status/2118094256438936062 (not readable without an X session, text still to confirm).
+Rules from the [announcement](https://x.com/NousResearch/status/2118094256438936062), as posted by Nous Research.
 
-No official rules page found. The Hermes site, docs, marketplace page and source repo don't mention it. These facts come from one secondary report:
-https://coinfomania.com/nousresearch-launches-hermes-agent-plugin-hackathon-offering/
+| Item | Rule |
+| --- | --- |
+| Deadline | 5PM EST on Wednesday, November 11, 2026 (22:00 UTC, 23:00 in Paris) |
+| Length | 7 days, every kind of plugin is eligible |
+| Judging | Usefulness, reliability, polish and creativity. Judges favour plugins that do more than a prompt or a skill could. The entry is the plugin itself |
+| Listing | Accepted entries go in the Hermes Marketplace |
+| Afterwards | A thread for every entry in the Nous Research Discord when submissions close |
 
-| Item | Reported | Status |
+| Place | Prize |
+| --- | --- |
+| 1st | $10,000, neon sign, merch, $1,000 credits |
+| 2nd | $5,000, neon sign, merch, $1,000 credits |
+| 3rd | $2,500, neon sign, merch, $1,000 credits |
+| 4th | $1,500, merch, $500 credits |
+| 5th | $1,000, merch, $500 credits |
+| Runners up (5) | Merch, $250 credits |
+
+## To enter
+
+The owner does all three steps. Nothing in this repo opens the PR, posts or submits.
+
+1. Open a PR adding the plugin to the catalog, following the [catalog submission guide](https://hermes-agent.nousresearch.com/docs/developer-guide/plugins/catalog-submission).
+2. Post a demo video on X tagging @NousResearch. Keep it under 90 seconds and show the plugin working.
+3. Submit both links through the [form](https://form.typeform.com/to/FwJLvOln).
+
+The form can go in as soon as the PR is open. Catalog checks run once a maintainer starts them, and entries are reviewed every few days.
+
+## Before submitting
+
+**Blocker:** worker identity probably doesn't work on real Hermes yet, see [Known limits](../DESIGN.md#known-limits). It needs a fix and an end-to-end run before the demo can show the plugin working.
+
+| Catalog rule | State | Evidence |
 | --- | --- | --- |
-| Deadline | "open until November 11, 2026" | no timezone given, plan for the morning of Nov 11 UTC |
-| Prizes | $20,000 total | split not stated |
-| Judging | usefulness, reliability, creativity | secondary source |
-| Submission | a pull request and a demo video | PR target not stated |
-| Reward | accepted entries listed in the Hermes Marketplace | secondary source |
-| Eligibility, teams | not stated | to confirm |
+| Loadable plugin, validation passes | Ready | CI runs `hermes plugins validate --install-deps .` on Hermes v0.22.7, with one caution: the sanitizer regex in `framing.py` |
+| 2. Exact SHA pin | At submission | See the steps below |
+| 3. No self-updating code | Ready | The plugin fetches nothing |
+| 5. Submitted by the owner | At submission | The owner opens the PR |
+| 6. Declared capabilities match | Ready | `tests/test_catalog_entry.py`, plus validation in CI |
+| 9. No core overrides | Ready | Checked by validation |
+| 10. Dependencies | Ready | No runtime dependencies |
+| 11. Credentials through Hermes | Ready | The plugin holds no credentials and calls models through `ctx.llm` |
+| 12. Approvals respected | Ready | Workers start from an environment allowlist that drops YOLO settings, tested in `tests/test_worker.py` |
+| 13. Risky behaviour disclosed | Ready | [What it does on your machine](../README.md#what-it-does-on-your-machine), the entry description and the PR text below |
+| 14. Truthful compatibility | Ready | `tests/test_catalog_entry.py` keeps the floor and version in step |
+| 17. No executable payloads | Ready | No binaries, bytecode or archives in the tree |
 
-Likely PR target, not confirmed: `plugin-catalog/<name>.yaml` on `NousResearch/hermes-agent`, the only discovery route for out-of-tree plugins. See `website/docs/developer-guide/plugins/catalog-submission.md` in that repo.
+The plugin page renders the README through an allowlist that drops raw HTML, so the README keeps its content in Markdown and the HTML only decorates it on GitHub. Mermaid shows as code and alerts as plain quotes there.
 
-## Catalog entry draft
+## Submission steps
 
-For the owner to submit, once the pin is final. `sha` and the `image` URL must point at the same commit.
+1. Confirm CI is green on `main` and the blocker above is closed.
+2. Copy [catalog-entry.yaml](catalog-entry.yaml) to `plugin-catalog/hermes-superagent.yaml` in a fork of `NousResearch/hermes-agent`, and pin it. Both the `sha` and the `image` URL take the same commit:
 
-```yaml
-name: hermes-superagent
-repo: https://github.com/AirKyzzZ/hermes-superagent
-sha: <40-char commit>
-requires_hermes: ">=0.22.7"
-version: "0.1.0"
-description: "A resident router that dispatches and never executes, isolated workers that report only to it, team-written trigger rules, and an external watchdog that checks real progress and goal drift. Disclosure: spawns worker processes from the argv you configure, runs the outbound send command you configure, and stops or restarts its own workers. Inert until a profile sets a role."
-platforms: [linux, macos]
-maintainer: AirKyzzZ
-tier: community
-category: automation
-docs_url: https://github.com/AirKyzzZ/hermes-superagent#readme
-image: https://raw.githubusercontent.com/AirKyzzZ/hermes-superagent/<40-char commit>/assets/cover.png
-capabilities:
-  provides_tools: [superagent_dispatch, superagent_forward, superagent_status, superagent_report, superagent_tick]
-  provides_hooks: [pre_tool_call, post_tool_call, pre_gateway_dispatch, pre_llm_call]
+   ```bash
+   sha=$(git -C /path/to/hermes-superagent rev-parse origin/main)
+   sed -i '' "s/0000000000000000000000000000000000000000/$sha/g" plugin-catalog/hermes-superagent.yaml
+   ```
+
+3. Open the PR with one file changed, using the text below.
+
+## PR description draft
+
+```markdown
+Adds hermes-superagent, a plugin that brings DeepSeek's Super-agent design to Hermes: one resident router that talks to people and never executes, isolated workers that report only to it, a sender gate plus team-written trigger rules, and an external watchdog that checks real progress and goal drift, then nudges, restarts or escalates.
+
+Hermes surfaces: `ctx.register_tool` (5 tools), the hooks `pre_gateway_dispatch`, `pre_llm_call`, `pre_tool_call` and `post_tool_call`, `ctx.llm`, `ctx.register_cli_command` and `ctx.register_automation_blueprint`. No core patches.
+
+Disclosure, also in the README:
+- Spawns long-running worker processes from the argv the operator configures, and runs the outbound send command the operator configures.
+- Stops or restarts its own workers by process group.
+- Spends tokens on the watchdog profile's model during ticks.
+- Writes its database and worker directories under the configured home.
+- Inert until a profile sets a role. No telemetry, no network calls of its own, no stored credentials.
+- `hermes plugins validate` reports one caution: the invisible-character regex in `framing.py`, which is the sanitizer itself.
+- `assets/art` holds the scripts that built the cover from a public-domain Met image. The plugin never runs them.
 ```
