@@ -101,3 +101,10 @@ class Report:
     summary: str
     question: str
     at: float
+
+
+@dataclass(frozen=True)
+class DigestItem:
+    ticket_id: str
+    goal: str
+    text: str

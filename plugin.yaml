@@ -14,6 +14,7 @@ provides_tools:
   - superagent_status
   - superagent_report
   - superagent_tick
+  - superagent_digest
 provides_hooks:
   - pre_tool_call
   - post_tool_call

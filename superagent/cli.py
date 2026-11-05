@@ -3,10 +3,12 @@ from __future__ import annotations
 import argparse
 import json
 import sys
+import time
 import uuid
 from collections.abc import Callable
 from pathlib import Path
 
+from .digest import build_digest, send_digest
 from .domain import ReportState, Trigger
 from .reporting import identity_from_workdir, submit_report
 from .router import Assessor
@@ -30,6 +32,11 @@ def setup_parser(parser: argparse.ArgumentParser) -> None:
     ingest.add_argument("--channel", default="")
     ingest.add_argument("--addressed", action="store_true")
     ingest.add_argument("--bot", action="store_true")
+    digest = commands.add_parser(
+        "digest", help="summarise recent work, waiting questions and what record-mode rules would do"
+    )
+    digest.add_argument("--hours", type=float, default=24.0)
+    digest.add_argument("--send", action="store_true", help="queue it for the [digest] channel, sent on the next tick")
     cancel = commands.add_parser("cancel", help="stop a ticket and its worker, and tell the people on it")
     cancel.add_argument("ticket")
     cancel.add_argument("--by", default="an operator")
@@ -58,6 +65,12 @@ def run(
         print("--home is required outside Hermes", file=sys.stderr)
         return 2
     runtime = open_runtime(home)
+    if args.superagent_command == "digest":
+        text = build_digest(runtime.store, time.time() - args.hours * 3600, args.hours)
+        if args.send:
+            send_digest(runtime.store, runtime.config.digest_channel, text)
+        print(text)
+        return 0
     if args.superagent_command == "cancel":
         ticket = runtime.router.cancel(args.ticket, args.by)
         print(json.dumps({"ticket": ticket.id, "status": ticket.status.value}))

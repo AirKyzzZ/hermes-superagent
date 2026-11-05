@@ -663,3 +663,10 @@ def test_conflicting_people_never_fall_back_to_the_route_identity(tmp_path: Path
     event = FakeEvent(source, "do something", None, payload)
     assert ctx.hooks["pre_gateway_dispatch"](event=event, gateway=object(), session_store=object())["action"] == "skip"
     assert Store(tmp_path / DB_FILENAME).live_tickets() == []
+
+
+def test_only_the_watchdog_writes_the_digest(tmp_path: Path) -> None:
+    answer = json.loads(registered("watchdog", tmp_path).tools["superagent_digest"]["handler"]({"hours": 2}))
+    assert answer["digest"].startswith("Superagent, last 2 hours")
+    refused = json.loads(registered("router", tmp_path).tools["superagent_digest"]["handler"]({}))
+    assert "watchdog" in refused["error"]

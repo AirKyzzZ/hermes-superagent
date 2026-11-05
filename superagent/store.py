@@ -15,6 +15,7 @@ from .domain import (
     Admission,
     Assignment,
     AssignmentStatus,
+    DigestItem,
     Mandate,
     RepairAction,
     Report,
@@ -369,6 +370,40 @@ class Store:
                 text = render_escalation(row["reason"], row["ticket_id"], row["goal"])
                 connection.execute(insert, (row["ticket_id"], row["channel"], text))
                 connection.execute("UPDATE watchdog_events SET relayed_at = ? WHERE seq = ?", (now, row["seq"]))
+
+    def final_reports_since(self, since: float) -> list[tuple[DigestItem, ReportState]]:
+        with self._connect() as connection:
+            rows = connection.execute(
+                "SELECT r.ticket_id, r.state, r.summary, t.goal FROM reports r JOIN tickets t ON t.id = r.ticket_id "
+                "WHERE r.at >= ? AND r.state IN (?,?,?) ORDER BY r.seq",
+                (since, ReportState.READY.value, ReportState.FAILED.value, ReportState.DROPPED.value),
+            ).fetchall()
+        return [(DigestItem(row["ticket_id"], row["goal"], row["summary"]), ReportState(row["state"])) for row in rows]
+
+    def escalations_since(self, since: float) -> list[DigestItem]:
+        with self._connect() as connection:
+            rows = connection.execute(
+                "SELECT e.ticket_id, e.reason, t.goal FROM watchdog_events e JOIN tickets t ON t.id = e.ticket_id "
+                "WHERE e.at >= ? AND e.action = ? ORDER BY e.seq",
+                (since, RepairAction.ESCALATE.value),
+            ).fetchall()
+        return [DigestItem(row["ticket_id"], row["goal"], row["reason"]) for row in rows]
+
+    def assessments_since(self, since: float, prefix: str) -> list[tuple[str, str]]:
+        with self._connect() as connection:
+            rows = connection.execute(
+                "SELECT assessment, source FROM triggers WHERE assessed_at >= ? AND substr(assessment, 1, ?) = ? "
+                "ORDER BY assessed_at",
+                (since, len(prefix), prefix),
+            ).fetchall()
+        return [(row["assessment"], row["source"]) for row in rows]
+
+    def admission_counts_since(self, since: float, admission: Admission) -> list[str]:
+        with self._connect() as connection:
+            rows = connection.execute(
+                "SELECT source FROM triggers WHERE received_at >= ? AND admission = ?", (since, admission.value)
+            ).fetchall()
+        return [row["source"] for row in rows]
 
     def queue_message(self, ticket_id: str, channel: str, text: str) -> None:
         with self._connect() as connection:

@@ -13,11 +13,12 @@ DB_FILENAME = "superagent.db"
 WORKDIRS_DIRNAME = "workers"
 LAST_GOOD_FILENAME = ".superagent.last-good.toml"
 _KNOWN_KEYS = {
-    "": {"sources", "semantic", "worker", "outbound", "watchdog"},
+    "": {"sources", "semantic", "worker", "outbound", "watchdog", "digest"},
     "sources": {"policy", "allow", "bots", "pass_strangers", "notify", "via_router"},
     "semantic": {"name", "text", "mode"},
     "worker": {"argv", "allow_same_user"},
     "outbound": {"argv"},
+    "digest": {"channel"},
 }
 
 
@@ -29,6 +30,7 @@ class Config:
     watchdog: WatchdogPolicy
     allow_same_user: bool = False
     problem: str = ""
+    digest_channel: str = ""
 
 
 class ConfigError(ValueError):
@@ -61,7 +63,8 @@ def parse_config(raw: str) -> Config:
     except (TypeError, ValueError) as error:
         raise ConfigError(f"invalid [watchdog] section: {error}") from error
     allow_same_user = bool(data.get("worker", {}).get("allow_same_user", False))
-    return Config(rules, worker_argv, send_argv, policy, allow_same_user)
+    digest_channel = str(data.get("digest", {}).get("channel", ""))
+    return Config(rules, worker_argv, send_argv, policy, allow_same_user, digest_channel=digest_channel)
 
 
 def _reject_unknown_keys(data: dict[str, object]) -> None:
@@ -72,7 +75,7 @@ def _reject_unknown_keys(data: dict[str, object]) -> None:
     for rule in data.get("semantic") or []:  # type: ignore[attr-defined]
         if unknown := set(rule) - _KNOWN_KEYS["semantic"]:
             problems.append(f"unknown keys in [[semantic]]: {sorted(unknown)}")
-    for section in ("worker", "outbound"):
+    for section in ("worker", "outbound", "digest"):
         if unknown := set(dict(data.get(section) or {})) - _KNOWN_KEYS[section]:  # type: ignore[call-overload]
             problems.append(f"unknown keys in [{section}]: {sorted(unknown)}")
     if problems:
