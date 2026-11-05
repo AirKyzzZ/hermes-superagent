@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import logging
 import re
-import subprocess
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass
 from enum import StrEnum
@@ -22,15 +21,15 @@ from .domain import (
 )
 from .framing import frame_trigger, frame_untrusted
 from .gate import RuleMode, Rules, SemanticRule, SourcePolicy, gate
-from .store import Store
+from .store import OutboxMessage, Store
 from .worker import WorkerBackend
 
 logger = logging.getLogger(__name__)
 
 CHAT_WORD_LIMIT = 100
-MAX_SEND_ATTEMPTS = 5
 LABEL_WORDS = 6
 MAX_ASSESS_BATCH = 20
+ORDERED_RETRIES = 3
 ASSESS_ATTEMPTS = 3
 OFFER_VALID_SECONDS = 3600.0
 _ATTACHMENT_TAG = re.compile(r"media:", re.IGNORECASE)
@@ -171,17 +170,36 @@ class Router:
     def relay(self, send: Sender | None = None) -> list[tuple[str, str, str]]:
         self.store.move_to_outbox(_render_report, _render_escalation)
         delivered: list[tuple[str, str, str]] = []
-        for seq, ticket_id, channel, text in self.store.pending_outbox():
-            if send is not None:
-                try:
-                    send(channel, text)
-                except (subprocess.SubprocessError, OSError) as error:
-                    gave_up = self.store.record_send_failure(seq, MAX_SEND_ATTEMPTS)
-                    logger.warning("send to %s failed (gave up: %s): %s", channel, gave_up, error)
-                    continue
-            self.store.mark_sent(seq)
-            delivered.append((ticket_id, channel, text))
+        held: set[str] = set()
+        backing_off: dict[str, list[OutboxMessage]] = {}
+        for message in self.store.pending_outbox():
+            if message.channel in held:
+                continue
+            if not message.due:
+                if message.attempts < ORDERED_RETRIES:
+                    held.add(message.channel)
+                else:
+                    backing_off.setdefault(message.channel, []).append(message)
+                continue
+            for earlier in backing_off.pop(message.channel, []):
+                self._deliver(earlier, send, delivered)
+            if not self._deliver(message, send, delivered) and message.attempts + 1 < ORDERED_RETRIES:
+                held.add(message.channel)
         return delivered
+
+    def _deliver(self, message: OutboxMessage, send: Sender | None, delivered: list[tuple[str, str, str]]) -> bool:
+        if not self.store.is_pending(message.seq):
+            return True
+        if send is not None:
+            try:
+                send(message.channel, message.text)
+            except Exception as error:
+                self.store.record_send_failure(message.seq)
+                logger.warning("send to %s failed, retrying later: %s", message.channel, error)
+                return False
+        self.store.mark_sent(message.seq)
+        delivered.append((message.ticket_id, message.channel, message.text))
+        return True
 
     def status(self) -> list[dict[str, str]]:
         lines = []

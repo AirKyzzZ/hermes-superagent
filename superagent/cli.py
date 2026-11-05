@@ -40,6 +40,9 @@ def setup_parser(parser: argparse.ArgumentParser) -> None:
     cancel = commands.add_parser("cancel", help="stop a ticket and its worker, and tell the people on it")
     cancel.add_argument("ticket")
     cancel.add_argument("--by", default="an operator")
+    outbox = commands.add_parser("outbox", help="list messages not delivered yet, or drop one")
+    outbox.add_argument("--drop", type=int, default=None, metavar="SEQ", help="stop retrying this message")
+    outbox.add_argument("--reason", default="dropped by an operator")
     report = commands.add_parser("report", help="report status from a worker directory, for agents outside Hermes")
     report.add_argument("--state", required=True, choices=_WORKER_STATES)
     report.add_argument("--summary", required=True)
@@ -74,6 +77,19 @@ def run(
     if args.superagent_command == "cancel":
         ticket = runtime.router.cancel(args.ticket, args.by)
         print(json.dumps({"ticket": ticket.id, "status": ticket.status.value}))
+        return 0
+    if args.superagent_command == "outbox":
+        if args.drop is not None:
+            if not runtime.store.drop_message(args.drop, args.reason):
+                print(f"no undelivered message {args.drop}", file=sys.stderr)
+                return 1
+            print(json.dumps({"dropped": args.drop, "reason": args.reason}))
+            return 0
+        messages = [
+            {"seq": m.seq, "ticket": m.ticket_id, "channel": m.channel, "attempts": m.attempts, "text": m.text[:200]}
+            for m in runtime.store.pending_outbox()
+        ]
+        print(json.dumps(messages, indent=1))
         return 0
     if args.superagent_command == "status":
         print(
