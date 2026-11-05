@@ -7,7 +7,7 @@
 <p><strong>One voice, a hundred hands.</strong></p>
 
 <p>One agent to talk to, many workers behind it, and a watchdog that notices when one stops making progress.<br>
-A <a href="https://github.com/NousResearch/hermes-agent">Hermes Agent</a> plugin based on DeepSeek's <a href="https://ghost.p2lab.com/exploring-super-agent-design/">Super-agent design</a>.</p>
+A <a href="https://github.com/NousResearch/hermes-agent">Hermes Agent</a> plugin based on DeepSeek's <a href="https://mp.weixin.qq.com/s/zoS7GlReWPhfCjENGxXCdg">Super-agent design</a>.</p>
 
 <p>
 <a href="https://github.com/AirKyzzZ/hermes-superagent/actions/workflows/ci.yml"><img alt="CI status" src="https://img.shields.io/github/actions/workflow/status/AirKyzzZ/hermes-superagent/ci.yml?branch=main&style=flat-square&label=CI&labelColor=14142a"></a>
@@ -34,15 +34,15 @@ A <a href="https://github.com/NousResearch/hermes-agent">Hermes Agent</a> plugin
 
 ## Why
 
-DeepSeek's article puts the limit at three to five active sessions: past that, a person's attention runs out before the models do. Here sessions are an implementation detail.
+DeepSeek's article puts the limit at three to five active sessions: past that, a person's attention runs out before the models do. Here you never manage sessions.
 
 - **Continuous:** you talk to one router on the channels you already use.
 - **Efficient:** each task gets its own worker process, so a new request never waits for an old one.
 - **Proactive:** events pass a gate on who sent them, then rules your team writes in plain language.
 - **Persistent:** state lives in SQLite, and a scheduled process outside the workers checks that the work is really moving.
 
-> [!NOTE]
-> Early build. CI loads the plugin through real Hermes v0.22.7 discovery and the tests use a fake host, but it hasn't run end to end with a live model and gateway yet.
+> [!WARNING]
+> Early build, never run end to end with a live model and gateway. CI loads the plugin through real Hermes v0.22.7 discovery, and the tests use a fake host and scripted workers. Worker identity and the worker tool guard rely on environment variables, but Hermes 0.22.7 runs a chat turn's tools in the profile's gateway process, so workers started with `hermes chat` probably don't get them yet. Fixing and testing that is first on the [roadmap](#roadmap).
 
 ## Architecture
 
@@ -72,20 +72,22 @@ flowchart TB
     router -->|superagent_dispatch| workers
     workers -->|superagent_report| store
     gate -->|"candidates, thread follow-ups"| store
+    gate -.->|"addressed ingest event"| workers
     store --> rules
     store --> watchdog
     store --> relay
     rules -.->|"act: open a ticket"| workers
-    watchdog -.->|"nudge, restart"| workers
+    watchdog -->|"nudge, queued"| store
+    watchdog -.->|restart| workers
     relay -.->|"reports, escalations"| people
 ```
 
-The router's model only sees requests the gate admitted. Workers can't reach people: their reports go to the store, and code relays them.
+On the gateway, the router's model only sees messages the gate let through. An addressed event from `superagent ingest` skips that model: code opens the ticket, with the event text as the goal. Workers have no messaging tools, so their reports go to the store and code relays them.
 
 ### One task
 
 ```mermaid
-%%{init: {"theme":"base","sequence":{"mirrorActors":false,"diagramMarginY":48},"themeVariables":{"primaryColor":"#1a10b8","primaryTextColor":"#ffffff","primaryBorderColor":"#a9a9cc","lineColor":"#8a8ab8","textColor":"#ffffff","actorBkg":"#1a10b8","actorBorder":"#a9a9cc","actorTextColor":"#ffffff","actorLineColor":"#8a8ab8","signalColor":"#a9a9cc","signalTextColor":"#ffffff","labelBoxBkgColor":"#0a0a9a","labelBoxBorderColor":"#a9a9cc","labelTextColor":"#ffffff","loopTextColor":"#ffffff"}}}%%
+%%{init: {"theme":"base","sequence":{"mirrorActors":false,"diagramMarginY":48},"themeVariables":{"primaryColor":"#1a10b8","primaryTextColor":"#ffffff","primaryBorderColor":"#a9a9cc","lineColor":"#8a8ab8","textColor":"#ffffff","actorBkg":"#1a10b8","actorBorder":"#a9a9cc","actorTextColor":"#ffffff","actorLineColor":"#8a8ab8","signalColor":"#a9a9cc","signalTextColor":"#ffffff","labelBoxBkgColor":"#0a0a9a","labelBoxBorderColor":"#a9a9cc","labelTextColor":"#ffffff","loopTextColor":"#ffffff","noteBkgColor":"#0a0a9a","noteBorderColor":"#a9a9cc","noteTextColor":"#ffffff"}}}%%
 sequenceDiagram
     participant person as Person
     participant gate as Gate
@@ -110,7 +112,8 @@ sequenceDiagram
             worker->>store: superagent_report(blocked, question)
             tick->>person: relay the question
             person->>gate: answer
-            gate->>worker: new worker resumes with the answer
+            gate->>worker: in a thread, a new worker resumes with the answer
+            Note over gate,router: outside a thread, the router's model calls superagent_forward
         else worker is done
             worker->>store: superagent_report(ready, summary)
             tick->>person: Done, in at most 100 words
@@ -125,8 +128,7 @@ sequenceDiagram
 stateDiagram-v2
     direction TB
     [*] --> Running
-    Running --> Nudged: stuck, alive
-    Nudged --> Running: goal restated
+    Running --> Running: stuck, alive, nudge queued
     Running --> Restarting: dead, or nudges spent
     Restarting --> Running: fenced, new worker
     Restarting --> Escalated: can't stop it
@@ -134,7 +136,7 @@ stateDiagram-v2
     Running --> Parked: blocked
     Parked --> Running: answered
     Running --> Ended: ready, failed, dropped
-    Escalated --> Ended: person told
+    Escalated --> Ended: worker stopped, ticket closed
     Ended --> [*]
 
     classDef ended fill:#14142a,color:#ffffff,stroke:#a9a9cc
@@ -143,14 +145,16 @@ stateDiagram-v2
     class Escalated alert
 ```
 
-Stuck or drifting both lead to the same repairs. Code decides stuck: a dead process, silence, identical reports or the same tool call over and over. A judge with no tools decides drift and can only answer `on_track` or `drifting`, so fooling it costs one bounded repair. A broken judge never triggers one.
+Stuck and drifting lead to the same repairs, within a budget per ticket. Code decides stuck: a dead process, silence, identical reports or the same tool call over and over. A judge with no tools decides drift and can only answer `on_track` or `drifting`, so the most a fooled judge can do is spend the budget and escalate, which ends the ticket. A broken judge never triggers a repair.
+
+A nudge waits for the worker's next report, so a silent worker gets restarted on the next tick instead. After an escalation, relay tells the person on a best-effort basis, and a reply starts new work.
 
 ## Features
 
 <table>
 <tr>
 <td width="33%" valign="top"><b>A router that can't execute</b><br>A <code>pre_tool_call</code> allowlist blocks everything else, and Hermes fails closed if the hook errors.</td>
-<td width="33%" valign="top"><b>One worker per task</b><br>Its own OS process, profile and environment allowlist. Its only way out is <code>superagent_report</code>.</td>
+<td width="33%" valign="top"><b>One worker per task</b><br>Its own OS process and environment allowlist. Messaging tools are blocked, so it reports through <code>superagent_report</code>. A terminal can still reach whatever its sandbox allows.</td>
 <td width="33%" valign="top"><b>A gate blind to content</b><br>Pure code over source, sender and bot lists. The message text can't open it.</td>
 </tr>
 <tr>
@@ -159,15 +163,15 @@ Stuck or drifting both lead to the same repairs. Code decides stuck: a dead proc
 <td valign="top"><b>Fenced repairs</b><br>Each worker has its own token. It's fenced before it's stopped, so a late report from an old worker is refused.</td>
 </tr>
 <tr>
-<td valign="top"><b>Thread pass-through</b><br>A follow-up in a task's thread goes straight to its worker, with no router model call.</td>
+<td valign="top"><b>Thread pass-through</b><br>A follow-up in a task's thread reaches its worker in its next report result, with no router model call.</td>
 <td valign="top"><b>Parked, not lost</b><br>A blocked task waits for an answer, then a new worker resumes with it.</td>
-<td valign="top"><b>Inert until you opt in</b><br>With no role set, installing the plugin changes nothing.</td>
+<td valign="top"><b>Inert until you opt in</b><br>With no role set, its hooks do nothing and it offers no tools.</td>
 </tr>
 </table>
 
 ## Quickstart
 
-No Hermes, model or network needed. The workers are scripted and only Python 3.11+ is required.
+No Hermes, model or network needed. The workers are scripted, and all you need is Python 3.11+ on macOS or Linux.
 
 ```bash
 git clone https://github.com/AirKyzzZ/hermes-superagent
@@ -216,16 +220,16 @@ python3 demo/run_demo.py
 </details>
 
 <details>
-<summary><b>Run it with Hermes</b> (0.22.7 or newer, macOS or Linux, not yet tried live)</summary>
+<summary><b>Run it with Hermes</b> (0.22.7 or newer, macOS or Linux, untested, see the warning above)</summary>
 
 <br>
 
-Install it in each profile:
+Install and enable it in each profile. The install scanner reports one caution, the sanitizer regex in `framing.py`, and asks you to confirm:
 
 ```bash
 for p in router worker watchdog; do
   hermes profile create "$p"
-  hermes -p "$p" plugins install AirKyzzZ/hermes-superagent
+  hermes -p "$p" plugins install AirKyzzZ/hermes-superagent --enable
 done
 ```
 
@@ -272,13 +276,13 @@ Remove `terminal` and `file` from the router with `hermes -p router tools`, keep
 */5 * * * * hermes -p watchdog superagent tick
 ```
 
-Reports reach people on the next tick. Workers get their role from the router.
+Questions, results, failures and escalations reach people on the next tick. Progress stays in the store. Workers get their role from the router through environment variables, which is the untested part.
 
 </details>
 
 ## Configuration
 
-`superagent.toml` lives in the shared directory, and edits to its rules apply without a restart.
+`superagent.toml` lives in the shared directory, and edits to its rules apply without a restart. Hermes gives hooks no mention flag, so chat messages always count as addressed, and team rules only see listed bots and `ingest` events for now.
 
 | Key | Default | What it does |
 | --- | --- | --- |
@@ -290,12 +294,12 @@ Reports reach people on the next tick. Workers get their role from the router.
 | `[[semantic]] mode` | `record` | `record` only logs, `act` opens a ticket |
 | `[worker] argv` | required | Command for one worker, must reference `{brief}` |
 | `[worker] allow_same_user` | `false` | Allows host tools in a worker with no sandbox |
-| `[outbound] argv` | none | Delivery command using `{channel}` and `{text}`. Without it nothing is sent |
+| `[outbound] argv` | none | Delivery command using `{channel}` and `{text}`. Without it nothing is sent, and messages are still marked sent |
 | `[watchdog] stall_after_seconds` | `900` | Silence that counts as stuck |
 | `[watchdog] repeat_limit` | `3` | Identical reports in a row that count as stuck |
 | `[watchdog] repeated_call_limit` | `5` | Identical tool calls and results in a row that count as stuck |
-| `[watchdog] nudge_budget` | `1` | Nudges per ticket, reset when a person answers |
-| `[watchdog] restart_budget` | `1` | Restarts per ticket, reset when a person answers |
+| `[watchdog] nudge_budget` | `1` | Nudges per ticket, reset when a person's answer resumes a parked ticket |
+| `[watchdog] restart_budget` | `1` | Restarts per ticket, reset when a person's answer resumes a parked ticket |
 | `[watchdog] orphan_after_seconds` | `30` | How long an open ticket can go without a worker before a repair |
 | `[watchdog] reap_grace_seconds` | `30` | How long a finished worker can linger before it's stopped |
 
@@ -314,7 +318,7 @@ Settings go under `plugins.entries.hermes-superagent.settings` in each profile's
 | Tool or hook | Used for |
 | --- | --- |
 | `superagent_dispatch` | Router opens a ticket from an admitted trigger |
-| `superagent_forward` | Router passes a follow-up to a running ticket |
+| `superagent_forward` | Router passes a follow-up to a running or parked ticket, resuming it |
 | `superagent_status` | Router lists live tickets |
 | `superagent_report` | Worker reports progress, blocked, ready, failed or dropped |
 | `superagent_tick` | Watchdog assesses candidates, checks workers and relays |
@@ -327,47 +331,47 @@ Settings go under `plugins.entries.hermes-superagent.settings` in each profile's
 
 ## Comparison
 
-These are the closest plugins in the Hermes catalog. Each solves a different problem, and all three are further along.
+These are three of the closest plugins in the Hermes catalog. Each solves a different problem, and all three are further along.
 
 | | hermes-superagent | [nerve](https://github.com/keeltrace/hermes-nerve) | [agora](https://github.com/yzy806806/agora) | [diaktoros](https://github.com/coe0718/diaktoros) |
 | --- | --- | --- | --- | --- |
 | **Version** | 0.1.0, not in the catalog | 0.4.15 | 2.0.13 | 0.5.0 |
-| **Built for** | One agent in front of any work | Supervising Kanban work and its token spend | A role-based dev team that debates, votes and builds | Unattended pull request review and fixes |
+| **Built for** | One agent in front of any work | Supervising agent turns and Kanban work: evidence, token spend, context | A role-based dev team that debates, votes and builds | Unattended pull request review and fixes, plus issue triage and CI repair |
 | **Who you talk to** | A router that can't execute | Your usual Hermes agent | Your usual Hermes agent, with a leader chairing the team | Nobody, GitHub events drive it |
 | **Unit of work** | One process per ticket | A Kanban card, on a local or SSH worker | A Kanban task for a role | A pull request |
-| **What starts work** | Chat and ingested events, through a sender gate and team rules | Kanban cards | Leader heartbeat and discussions | GitHub events |
-| **Progress check** | Separate scheduled process: liveness, silence, repeats, goal drift | Hooks in the worker: locked definition of done, evidence, token checkpoints | Leader wakes on a cron to assess and unblock | Scheduled watchdog reports stalls, review rounds are capped |
+| **What starts work** | Chat and ingested events, through a sender gate and team rules | Kanban cards | A project you start, then leader heartbeat and discussions | GitHub events |
+| **Progress check** | Separate scheduled process: liveness, silence, repeats, goal drift | Hooks in a local worker, a controller-side bridge for SSH workers: locked definition of done, evidence, token checkpoints | Leader wakes on a cron to assess and unblock | Scheduled watchdog reports stalls, drains queued work and repairs routes, review rounds are capped |
 | **When stuck** | Nudge, restart, escalate | Continue, watch, replan, block | Leader unblocks or raises a discussion | Reports it, disputes go to an adjudicator |
-| **Requires** | Hermes 0.22.7+, a sandbox for worker tools | Hermes 0.21+, an API key for the default hosted backend | Hermes 0.20+, a running gateway | Hermes 0.21.5+, Linux, bubblewrap, three GitHub accounts |
+| **Requires** | Hermes 0.22.7+, macOS or Linux, a running gateway, a scheduler, a sandbox for worker tools | Hermes 0.21+, an API key for the default hosted backend | Hermes 0.20+, a running gateway | Hermes 0.21.5+, Linux, bubblewrap, three GitHub accounts, an HTTPS-reachable gateway |
 
-Use nerve to gate Kanban completion on verified evidence, agora for a team that argues before it builds, and diaktoros for PR review. Use this if you want one agent in front of everything. What we didn't find in these three is the combination: a resident router barred from executing in code, a trigger gate that ignores message text, and a tool-less judge checking each worker against its original goal from another process.
+Use nerve to gate Kanban completion on verified evidence, agora for a team that argues before it builds, and diaktoros for PR review. This one aims at a single agent in front of everything, and it's the least mature of the four. What we didn't find in these three is the combination: a resident router barred from executing in code, a trigger gate that ignores message text, and a tool-less judge checking each worker against its original goal from a separate scheduled process.
 
 <sub>Based on each project's README and catalog entry at its pinned catalog commit, checked 2026-11-05.</sub>
 
 ## Security model
 
-Event content is attacker-controlled, so every control that matters is enforced in code, and none relies on the model behaving.
+Event content is attacker-controlled, so who can start or steer work is enforced in code. Framing is a second layer that depends on the model, and an `act` rule lets a model reading event text open a ticket.
 
 > [!CAUTION]
-> The boundary is the sandbox. A worker on a local terminal backend runs as your OS user and could rewrite the router's config, so the plugin refuses it `terminal`, file and code tools unless its profile uses a sandboxed backend such as docker or you set `allow_same_user`. Agents outside Hermes that use the report command get no such guard.
+> The boundary is the sandbox. A worker on a local terminal backend runs as your OS user and could rewrite the router's config, so the plugin refuses it `terminal`, file and code tools unless its profile uses a sandboxed backend such as docker or you set `allow_same_user`. Agents outside Hermes that use the report command get no such guard. On Hermes 0.22.7 the guard may not reach `hermes chat` workers yet (see the warning at the top), so treat a worker as unguarded unless its profile is sandboxed.
 
 | Threat | Control |
 | --- | --- |
 | Prompt injection through a trigger | The gate never reads message text. Dispatch only accepts a trigger the gate admitted, offered within the hour, still allowed and unused |
 | Router tricked into executing | `pre_tool_call` allowlist, plus toolsets you remove from the profile |
-| Stranger steering a worker | Strangers and bots are dropped before workers unless a source opts in, and a stranger can't resume a parked ticket |
+| Stranger steering a worker | Bots never reach workers. Strangers don't either unless a source opts in, and a stranger can't resume a parked ticket |
 | Forged or late reports | Per-assignment token, hashed at rest. A worker is fenced before it's stopped |
-| A report exfiltrating files | Relay is code. `MEDIA:` tags and `[[` directives are neutralised, and text is capped at 100 words |
-| Watchdog fooled | The judge has no tools and returns one of two values, so the cost is one bounded repair |
+| A report exfiltrating files | Relay is code. `MEDIA:` tags are neutralised and text is capped at 100 words |
+| Watchdog fooled | The judge has no tools and returns one of two values, so the most it can do is spend the repair budget and escalate |
 
-If the gate itself fails, the message is dropped and logged, so a person gets silence rather than a bypass. The full threat model, with residual risks and known limits, is in [DESIGN.md](DESIGN.md#threat-model).
+If the gate itself fails, the message is dropped and logged, so a person gets silence rather than a bypass. An allowed person's `/` commands skip the gate and go straight to Hermes unrecorded, even on an `ignore` source. The full threat model, with residual risks and known limits, is in [DESIGN.md](DESIGN.md#threat-model).
 
 ## Roadmap
 
 - [x] Router, one worker per ticket, gate, record-only rules, thread pass-through
 - [x] External watchdog with nudge, restart and escalate
 - [x] Guard hooks, runnable demo, CI against real Hermes discovery
-- [ ] End-to-end test with real Hermes and a fake model
+- [ ] Make worker identity and the tool guard work in Hermes's gateway process, proven by an end-to-end test with a fake model
 - [ ] First live run with a model and gateway
 - [ ] GitHub, email and calendar sources
 - [ ] tmux and cmux backends for coding agents, then a Kanban backend
@@ -391,7 +395,7 @@ Design notes and the module mapping to Hermes are in [DESIGN.md](DESIGN.md). Wha
 
 ## Credits
 
-- **Design:** the DeepSeek Harness Team's [article](https://ghost.p2lab.com/exploring-super-agent-design/) and their MIT-licensed [research prototype](https://github.com/deepseek-ai/dsh-superagent-prototype). This is an independent Python implementation that copies no code from it.
+- **Design:** the DeepSeek Harness Team's [article](https://mp.weixin.qq.com/s/zoS7GlReWPhfCjENGxXCdg) (in Chinese, with an [unofficial, unreviewed translation](https://ghost.p2lab.com/exploring-super-agent-design/)) and their MIT-licensed [research prototype](https://github.com/deepseek-ai/dsh-superagent-prototype). This is an independent Python implementation that copies no code from it.
 - **Host:** [Hermes Agent](https://github.com/NousResearch/hermes-agent) by Nous Research. This project isn't affiliated with DeepSeek or Nous Research.
 - **Art:** Briareus, the Hundred-Handed. The head is the [Marble head of Zeus Ammon](https://www.metmuseum.org/art/collection/search/257864), The Metropolitan Museum of Art, 2012.22 (public domain). The arms and hands are procedural. See [assets/CREDITS.md](assets/CREDITS.md).
 
