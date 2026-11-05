@@ -14,7 +14,7 @@ A <a href="https://github.com/NousResearch/hermes-agent">Hermes Agent</a> plugin
 <a href="LICENSE"><img alt="MIT licence" src="https://img.shields.io/github/license/AirKyzzZ/hermes-superagent?style=flat-square&label=license&labelColor=14142a&color=1a10b8"></a>
 <a href="pyproject.toml"><img alt="Python 3.11 or newer" src="https://img.shields.io/badge/python-3.11%2B-1a10b8?style=flat-square&labelColor=14142a"></a>
 <a href="plugin.yaml"><img alt="Hermes plugin, requires 0.22.7 or newer" src="https://img.shields.io/badge/Hermes_plugin-%3E%3D0.22.7-1a10b8?style=flat-square&labelColor=14142a"></a>
-<a href="tests"><img alt="145 tests" src="https://img.shields.io/badge/tests-145-1a10b8?style=flat-square&labelColor=14142a"></a>
+<a href="tests"><img alt="149 tests" src="https://img.shields.io/badge/tests-149-1a10b8?style=flat-square&labelColor=14142a"></a>
 <a href="docs/hackathon.md"><img alt="Built for the Hermes Agent Plugin Hackathon" src="https://img.shields.io/badge/built_for-Hermes_Plugin_Hackathon-1a10b8?style=flat-square&labelColor=14142a"></a>
 </p>
 
@@ -41,13 +41,14 @@ DeepSeek's article puts the limit at three to five active sessions: past that, a
 - **Proactive:** events pass a gate on who sent them, then rules your team writes in plain language.
 - **Persistent:** state lives in SQLite, and a scheduled process outside the workers checks that the work is really moving.
 
+A prompt or skill can only ask a model to stay in its lane. Here the gate, the tool allowlist, fencing and the watchdog process are code the model can't talk its way past, which is why this has to be a plugin.
+
 > [!WARNING]
-> Early build, never run end to end with a live model and gateway. CI loads the plugin through real Hermes v0.22.7 discovery, and the tests use a fake host and scripted workers. Worker identity and the worker tool guard rely on environment variables, but Hermes 0.22.7 runs a chat turn's tools in the profile's gateway process, so workers started with `hermes chat` probably don't get them yet. Fixing and testing that is first on the [roadmap](#roadmap).
+> Early build, never run end to end with a live model and gateway. CI loads the plugin through real Hermes v0.22.7 discovery, and the tests use a fake host and scripted workers. Worker identity and the worker tool guard rely on environment variables, but Hermes 0.22.7 runs a chat turn's tools in the profile's gateway process, so workers started with `hermes chat` probably don't get them yet. Fixing and testing that is first on the roadmap.
 
 ## Architecture
 
 ```mermaid
-%%{init: {"theme":"base","layout":"dagre","flowchart":{"wrappingWidth":420,"nodeSpacing":36,"rankSpacing":44},"themeVariables":{"primaryColor":"#1a10b8","primaryTextColor":"#ffffff","primaryBorderColor":"#a9a9cc","lineColor":"#8a8ab8","textColor":"#ffffff","clusterBkg":"#14142a","clusterBorder":"#4a4a78","titleColor":"#f4f4fd","edgeLabelBackground":"#14142a"}}}%%
 flowchart TB
     people(["People on chat"])
     events(["Events: superagent ingest"])
@@ -84,6 +85,7 @@ flowchart TB
     relay ~~~ controlsClearance[" "]
     classDef invisible fill:none,stroke:none
     class controlsClearance invisible
+%%{init: {"theme":"base","layout":"dagre","flowchart":{"wrappingWidth":420,"nodeSpacing":36,"rankSpacing":44},"themeVariables":{"primaryColor":"#1a10b8","primaryTextColor":"#ffffff","primaryBorderColor":"#a9a9cc","lineColor":"#8a8ab8","textColor":"#ffffff","clusterBkg":"#14142a","clusterBorder":"#4a4a78","titleColor":"#f4f4fd","edgeLabelBackground":"#14142a"}}}%%
 ```
 
 On the gateway, the router's model only sees messages the gate let through, plus an allowed person's `/` commands that Hermes turns into a turn, such as skills. An addressed event from an allowed sender through `superagent ingest` skips that model: code opens the ticket, with the event text as the goal. In the documented setup workers have no messaging tools, so their reports go to the store and code relays them.
@@ -91,7 +93,6 @@ On the gateway, the router's model only sees messages the gate let through, plus
 ### One task
 
 ```mermaid
-%%{init: {"theme":"base","sequence":{"mirrorActors":false,"diagramMarginY":48},"themeVariables":{"primaryColor":"#1a10b8","primaryTextColor":"#ffffff","primaryBorderColor":"#a9a9cc","lineColor":"#8a8ab8","textColor":"#ffffff","actorBkg":"#1a10b8","actorBorder":"#a9a9cc","actorTextColor":"#ffffff","actorLineColor":"#8a8ab8","signalColor":"#a9a9cc","signalTextColor":"#ffffff","labelBoxBkgColor":"#0a0a9a","labelBoxBorderColor":"#a9a9cc","labelTextColor":"#ffffff","loopTextColor":"#ffffff","noteBkgColor":"#0a0a9a","noteBorderColor":"#a9a9cc","noteTextColor":"#ffffff"}}}%%
 sequenceDiagram
     participant person as Person
     participant gate as Gate
@@ -123,12 +124,12 @@ sequenceDiagram
             tick->>person: Done, in at most 100 words
         end
     end
+%%{init: {"theme":"base","sequence":{"mirrorActors":false,"diagramMarginY":48},"themeVariables":{"primaryColor":"#1a10b8","primaryTextColor":"#ffffff","primaryBorderColor":"#a9a9cc","lineColor":"#8a8ab8","textColor":"#ffffff","actorBkg":"#1a10b8","actorBorder":"#a9a9cc","actorTextColor":"#ffffff","actorLineColor":"#8a8ab8","signalColor":"#a9a9cc","signalTextColor":"#ffffff","labelBoxBkgColor":"#0a0a9a","labelBoxBorderColor":"#a9a9cc","labelTextColor":"#ffffff","loopTextColor":"#ffffff","noteBkgColor":"#0a0a9a","noteBorderColor":"#a9a9cc","noteTextColor":"#ffffff"}}}%%
 ```
 
 ### Watchdog
 
 ```mermaid
-%%{init: {"theme":"base","layout":"dagre","themeVariables":{"primaryColor":"#1a10b8","primaryTextColor":"#ffffff","primaryBorderColor":"#a9a9cc","lineColor":"#8a8ab8","textColor":"#ffffff","transitionColor":"#8a8ab8","transitionLabelColor":"#ffffff","stateLabelColor":"#ffffff","stateBkg":"#1a10b8","labelBackgroundColor":"#14142a","edgeLabelBackground":"#14142a","specialStateColor":"#8a8ab8","innerEndBackground":"#8a8ab8"}}}%%
 stateDiagram-v2
     direction TB
     [*] --> Running
@@ -147,6 +148,7 @@ stateDiagram-v2
     classDef alert fill:#f4f4fd,color:#14142a,stroke:#1a10b8
     class Ended ended
     class Escalated alert
+%%{init: {"theme":"base","layout":"dagre","themeVariables":{"primaryColor":"#1a10b8","primaryTextColor":"#ffffff","primaryBorderColor":"#a9a9cc","lineColor":"#8a8ab8","textColor":"#ffffff","transitionColor":"#8a8ab8","transitionLabelColor":"#ffffff","stateLabelColor":"#ffffff","stateBkg":"#1a10b8","labelBackgroundColor":"#14142a","edgeLabelBackground":"#14142a","specialStateColor":"#8a8ab8","innerEndBackground":"#8a8ab8"}}}%%
 ```
 
 Stuck and drifting lead to the same repairs, within a budget per ticket. Code decides stuck: a dead process, silence, identical reports or the same tool call over and over. A judge with no tools decides drift and can only answer `on_track` or `drifting`, so the most a fooled judge can do is spend the budget and escalate, which ends the ticket. A broken judge never triggers a repair.
@@ -155,23 +157,11 @@ A live worker gets a nudge first, and it waits for that worker's next report, so
 
 ## Features
 
-<table>
-<tr>
-<td width="33%" valign="top"><b>A router that can't execute</b><br>A <code>pre_tool_call</code> allowlist blocks everything else, and Hermes fails closed if the hook errors.</td>
-<td width="33%" valign="top"><b>One worker per task</b><br>Its own OS process and environment allowlist. <code>send_message</code> and cron are blocked, and the documented toolsets add no other messaging tool, so it reports through <code>superagent_report</code>. A terminal can still reach whatever its sandbox allows.</td>
-<td width="33%" valign="top"><b>A gate blind to content</b><br>Pure code over source, sender and bot lists. The message text can't open it.</td>
-</tr>
-<tr>
-<td valign="top"><b>Rules that start quiet</b><br>Team rules begin in <code>record</code> mode and only log what they would have done, until you set <code>act</code>.</td>
-<td valign="top"><b>An outside watchdog</b><br>A separate scheduled process. It can nudge, restart or escalate within a budget, and can't edit rules or widen a task.</td>
-<td valign="top"><b>Fenced repairs</b><br>Each worker has its own token. It's fenced before it's stopped, so a late report from an old worker is refused.</td>
-</tr>
-<tr>
-<td valign="top"><b>Thread pass-through</b><br>A follow-up in a task's thread reaches its worker in its next report result, with no router model call.</td>
-<td valign="top"><b>Parked, not lost</b><br>A blocked task waits for an answer, then a new worker resumes with it.</td>
-<td valign="top"><b>Inert until you opt in</b><br>With no role set, its hooks do nothing and it offers no tools.</td>
-</tr>
-</table>
+| Routing | Workers | Watchdog and safety |
+| --- | --- | --- |
+| **A router that can't execute**<br> A `pre_tool_call` allowlist blocks everything else, and Hermes fails closed if the hook errors. | **One worker per task**<br> Its own OS process and environment allowlist. `send_message` and cron are blocked, and the documented toolsets add no other messaging tool, so it reports through `superagent_report`. A terminal can still reach whatever its sandbox allows. | **An outside watchdog**<br> A separate scheduled process. It can nudge, restart or escalate within a budget, and can't edit rules or widen a task. |
+| **A gate blind to content**<br> Pure code over source, sender and bot lists. The message text can't open it. | **Thread pass-through**<br> A follow-up in a task's thread reaches its worker in its next report result, with no router model call. | **Fenced repairs**<br> Each worker has its own token. It's fenced before it's stopped, so a late report from an old worker is refused. |
+| **Rules that start quiet**<br> Team rules begin in `record` mode and only log what they would have done, until you set `act`. | **Parked, not lost**<br> A blocked task waits for an answer, then a new worker resumes with it. | **Inert until you opt in**<br> With no role set, its hooks do nothing and it offers no tools. |
 
 ## Quickstart
 
@@ -223,8 +213,12 @@ python3 demo/run_demo.py
 
 </details>
 
+### Run it with Hermes
+
+Needs Hermes 0.22.7 or newer on macOS or Linux. These steps haven't been run end to end yet, see the warning above.
+
 <details>
-<summary><b>Run it with Hermes</b> (0.22.7 or newer, macOS or Linux, untested, see the warning above)</summary>
+<summary><b>Setup steps</b></summary>
 
 <br>
 
@@ -307,8 +301,10 @@ Questions, results, failures and escalations reach people on the next tick. Prog
 | `[watchdog] orphan_after_seconds` | `30` | How long an open ticket can go without a worker before a repair |
 | `[watchdog] reap_grace_seconds` | `30` | How long a finished worker can linger before it's stopped |
 
+### Plugin settings and surface
+
 <details>
-<summary><b>Plugin settings and surface</b></summary>
+<summary><b>Settings, tools and hooks</b></summary>
 
 <br>
 
@@ -370,6 +366,15 @@ Event content is attacker-controlled, so who can start or steer work is enforced
 
 If the gate itself fails, the message is dropped and logged, so a person gets silence rather than a bypass. An allowed person's `/` commands skip the gate and go straight to Hermes unrecorded, even on an `ignore` source. They can reach the model as skills but can't start work, because dispatch needs a recorded trigger. The full threat model, with residual risks and known limits, is in [DESIGN.md](DESIGN.md#threat-model).
 
+### What it does on your machine
+
+- **Runs commands you configure:** one worker process per task from `[worker] argv`, and the delivery command from `[outbound] argv`. Workers keep running after the turn that started them.
+- **Stops processes:** the watchdog signals its own workers' process groups, and checks each start time first so a reused PID isn't hit.
+- **Spends model tokens:** ticks call the watchdog profile's model through `ctx.llm` when there's a new report to judge or a candidate event to assess. Router and workers use their own profiles' models as usual.
+- **Writes files:** `superagent.db` and per-worker directories under `home`, and it reads `superagent.toml` from there.
+- **Leaves approvals to Hermes:** workers start non-interactively from an environment allowlist, so they inherit no YOLO or approval-bypass setting, and Hermes's approval rules still apply to them.
+- **Doesn't:** make network calls of its own, send telemetry, or hold credentials. The scripts in `assets/art` that fetched the source image are build tools the plugin never runs.
+
 ## Roadmap
 
 - [x] Router, one worker per ticket, gate, record-only rules, thread pass-through
@@ -382,10 +387,7 @@ If the gate itself fails, the message is dropped and logged, so a person gets si
 - [ ] Event ledger with a digest and morning sweep
 - [ ] Demo video
 
-<details>
-<summary><b>Develop</b></summary>
-
-<br>
+## Develop
 
 ```bash
 uv run --group dev pytest -q
@@ -393,9 +395,7 @@ uv run --group dev ruff check .
 uv run --group dev mypy
 ```
 
-Design notes and the module mapping to Hermes are in [DESIGN.md](DESIGN.md). What we know about the hackathon is in [docs/hackathon.md](docs/hackathon.md).
-
-</details>
+Design notes and the module mapping to Hermes are in [DESIGN.md](DESIGN.md). The hackathon rules and submission steps are in [docs/hackathon.md](docs/hackathon.md).
 
 ## Credits
 

@@ -49,5 +49,11 @@ jobs:
       - run: hermes --version
       - name: Plugin doctor loads the plugin through real discovery
         run: hermes plugins doctor . --ci
-      - name: Catalog validation
-        run: hermes plugins validate .
+      - name: Catalog validation, as the catalog CI runs it
+        run: hermes plugins validate --install-deps .
+      - name: Draft catalog entry passes the catalog validator
+        run: |
+          entry_dir="$RUNNER_TEMP/plugin-catalog"
+          mkdir -p "$entry_dir"
+          sed "s/0000000000000000000000000000000000000000/$GITHUB_SHA/g" docs/catalog-entry.yaml > "$entry_dir/hermes-superagent.yaml"
+          uv run --no-project --with ruamel.yaml==0.18.17 python "$RUNNER_TEMP/hermes-src/scripts/validate_plugin_catalog.py" "$entry_dir/hermes-superagent.yaml"
