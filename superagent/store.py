@@ -55,6 +55,9 @@ CREATE TABLE IF NOT EXISTS outbox (
     seq INTEGER PRIMARY KEY AUTOINCREMENT, ticket_id TEXT NOT NULL, channel TEXT NOT NULL, text TEXT NOT NULL,
     sent_at REAL, attempts INTEGER NOT NULL DEFAULT 0, failed_at REAL
 );
+CREATE TABLE IF NOT EXISTS assessment_failures (
+    trigger_id TEXT PRIMARY KEY, failures INTEGER NOT NULL
+);
 CREATE TABLE IF NOT EXISTS activities (
     seq INTEGER PRIMARY KEY AUTOINCREMENT, assignment_id TEXT NOT NULL, fingerprint TEXT NOT NULL, at REAL NOT NULL
 );
@@ -340,11 +343,11 @@ class Store:
                 connection.execute(insert, (row["ticket_id"], row["channel"], render_escalation(row["reason"])))
                 connection.execute("UPDATE watchdog_events SET relayed_at = ? WHERE seq = ?", (now, row["seq"]))
 
-    def pending_candidates(self) -> list[Trigger]:
+    def pending_candidates(self, limit: int = -1) -> list[Trigger]:
         with self._connect() as connection:
             rows = connection.execute(
-                "SELECT id FROM triggers WHERE admission = ? AND assessed_at IS NULL ORDER BY received_at",
-                (Admission.CANDIDATE.value,),
+                "SELECT id FROM triggers WHERE admission = ? AND assessed_at IS NULL ORDER BY received_at LIMIT ?",
+                (Admission.CANDIDATE.value, limit),
             ).fetchall()
         triggers = [self.get_trigger(row["id"]) for row in rows]
         return [trigger for trigger in triggers if trigger is not None]
@@ -405,6 +408,50 @@ class Store:
     def mark_sent(self, seq: int) -> None:
         with self._connect() as connection:
             connection.execute("UPDATE outbox SET sent_at = ? WHERE seq = ?", (time.time(), seq))
+
+    def record_assessment_failure(self, trigger_ids: Sequence[str], give_up_after: int) -> list[str]:
+        now = time.time()
+        given_up: list[str] = []
+        with self._connect() as connection:
+            for trigger_id in trigger_ids:
+                connection.execute(
+                    "INSERT INTO assessment_failures VALUES (?, 1) "
+                    "ON CONFLICT(trigger_id) DO UPDATE SET failures = failures + 1",
+                    (trigger_id,),
+                )
+                row = connection.execute(
+                    "SELECT failures FROM assessment_failures WHERE trigger_id = ?", (trigger_id,)
+                ).fetchone()
+                if row["failures"] >= give_up_after:
+                    connection.execute(
+                        "UPDATE triggers SET assessed_at = ?, assessment = ? WHERE id = ? AND assessed_at IS NULL",
+                        (now, "assessment failed", trigger_id),
+                    )
+                    given_up.append(trigger_id)
+        return given_up
+
+    def outbox_problems(self, since: float) -> tuple[int, int]:
+        with self._connect() as connection:
+            waiting = connection.execute(
+                "SELECT COUNT(*) AS n FROM outbox WHERE sent_at IS NULL AND failed_at IS NULL AND attempts > 0"
+            ).fetchone()["n"]
+            dropped = connection.execute("SELECT COUNT(*) AS n FROM outbox WHERE failed_at >= ?", (since,)).fetchone()[
+                "n"
+            ]
+        return int(waiting), int(dropped)
+
+    def undelivered_count(self) -> int:
+        with self._connect() as connection:
+            row = connection.execute("SELECT COUNT(*) AS n FROM outbox WHERE sent_at IS NULL").fetchone()
+        return int(row["n"])
+
+    def prune_ignored_triggers(self, older_than_seconds: float) -> int:
+        cutoff = time.time() - older_than_seconds
+        with self._connect() as connection:
+            cursor = connection.execute(
+                "DELETE FROM triggers WHERE admission = ? AND received_at < ?", (Admission.IGNORE.value, cutoff)
+            )
+            return cursor.rowcount
 
     def record_send_failure(self, seq: int, max_attempts: int) -> bool:
         with self._connect() as connection:

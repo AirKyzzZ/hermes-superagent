@@ -56,7 +56,9 @@ def run(
         return 2
     runtime = open_runtime(home)
     if args.superagent_command == "status":
-        print(json.dumps(runtime.router.status(), indent=1))
+        print(
+            json.dumps({"tickets": runtime.router.status(), "undelivered": runtime.store.undelivered_count()}, indent=1)
+        )
         return 0
     if args.superagent_command == "ingest":
         trigger = Trigger(

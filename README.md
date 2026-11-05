@@ -282,7 +282,7 @@ Hermes defers plugin tools behind `tool_call` by default, and that works. Set `t
 
 ## Configuration
 
-`superagent.toml` lives in the shared directory, and edits to its rules apply without a restart. Hermes gives hooks no mention flag, so chat messages always count as addressed, and team rules only see listed bots and `ingest` events for now.
+`superagent.toml` lives in the shared directory, and edits to its rules apply without a restart. Unknown keys are refused, and if an edit breaks the file the plugin keeps running on the last good copy while every tick fails with the error until it's fixed. Hermes gives hooks no mention flag, so chat messages always count as addressed, and team rules only see listed bots and `ingest` events for now.
 
 | Key | Default | What it does |
 | --- | --- | --- |
@@ -294,7 +294,7 @@ Hermes defers plugin tools behind `tool_call` by default, and that works. Set `t
 | `[[semantic]] mode` | `record` | `record` only logs, `act` opens a ticket |
 | `[worker] argv` | required | Command for one worker, must reference `{brief}` |
 | `[worker] allow_same_user` | `false` | Allows host tools in a worker with no sandbox |
-| `[outbound] argv` | none | Delivery command using `{channel}` and `{text}`. Without it nothing is sent, and messages are still marked sent |
+| `[outbound] argv` | none | Delivery command using `{channel}` and `{text}`. Without it nothing is sent, and messages are still marked sent. A failed send fails the tick, and a message is dropped after five tries |
 | `[watchdog] stall_after_seconds` | `900` | Silence that counts as stuck |
 | `[watchdog] repeat_limit` | `3` | Identical reports in a row that count as stuck |
 | `[watchdog] repeated_call_limit` | `5` | Identical tool calls and results in a row that count as stuck |

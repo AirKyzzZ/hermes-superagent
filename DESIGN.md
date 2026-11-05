@@ -72,7 +72,8 @@ If the gate itself fails, the message is dropped and logged rather than let thro
 - A `terminal.cwd` in the worker profile can replace the session directory, in which case the worker gets no tools instead of the wrong identity.
 - Single host, macOS and Linux only: the store is SQLite, and `stop` works by local process group, with a start-time check against PID reuse. If workers run under another OS user, `stop` can't signal them, so the watchdog escalates to a person instead of starting a second worker.
 - Two narrow cases remain in `stop`. A group with no leader and under six hours old is assumed to be the worker's. If a tick dies mid-repair on a worker it can't stop, a later tick can escalate and still start a second worker.
-- A failed send retries on later ticks, up to five times per message, so a crash between send and mark can deliver a message twice.
+- A failed send retries on later ticks, up to five times per message, so a crash between send and mark can deliver a message twice. Every tick with an undelivered or dropped message exits with an error.
+- Candidate events are assessed 20 at a time, oldest first. A batch the model fails on three times is marked failed and skipped. Ignored events are deleted after a week.
 - A restarted worker starts from its brief plus the last report and pending messages. It doesn't resume its session.
 - Hermes gives hooks no mention flag, so chat messages count as addressed and rely on the adapter's own mention rules. Semantic rules therefore apply to listed bots and `ingest` sources for now.
 - Under `plugins.isolation: host`, Hermes skips `hermes superagent`, so use `python -m superagent` there.
