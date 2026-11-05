@@ -12,6 +12,16 @@ BASE_ENV = ("PATH", "HOME", "LANG", "LC_ALL", "TMPDIR", "USER", "XDG_CONFIG_HOME
 
 
 def run_json(argv: Sequence[str], env_names: Sequence[str], timeout: float, stdin: str | None = None) -> object:
+    stdout = run_text(argv, env_names, timeout, stdin)
+    try:
+        return json.loads(stdout)
+    except ValueError as error:
+        raise ConnectorError(f"{argv[0]} did not print JSON: {error}") from error
+
+
+def run_text(argv: Sequence[str], env_names: Sequence[str], timeout: float, stdin: str | None = None) -> str:
+    if timeout <= 0:
+        raise ConnectorError(f"no time left to run {argv[0]}")
     env = {name: os.environ[name] for name in (*BASE_ENV, *env_names) if name in os.environ}
     try:
         process = subprocess.Popen(
@@ -36,7 +46,4 @@ def run_json(argv: Sequence[str], env_names: Sequence[str], timeout: float, stdi
         raise ConnectorError(f"{argv[0]} took longer than {timeout:g}s") from error
     if process.returncode != 0:
         raise ConnectorError(f"{argv[0]} exited {process.returncode}: {stderr.strip()[-200:]}")
-    try:
-        return json.loads(stdout)
-    except ValueError as error:
-        raise ConnectorError(f"{argv[0]} did not print JSON: {error}") from error
+    return stdout

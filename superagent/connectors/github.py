@@ -1,12 +1,14 @@
 from __future__ import annotations
 
+import json
 import re
+import time
 from collections.abc import Mapping
 from dataclasses import dataclass
 
 from ..ledger import SourceItem, Upstream
 from . import ConnectorConfigError, ConnectorError, ConnectorSpec, Poll
-from .process import run_json
+from .process import run_text
 
 KEYS = frozenset({"queries", "gh", "timeout", "env"})
 DEFAULT_QUERIES = {
@@ -16,9 +18,18 @@ DEFAULT_QUERIES = {
 }
 PAGE_SIZE = 100
 SEARCH_CAP = 1000
+CALL_TIMEOUT_SECONDS = 30.0
 _ID = re.compile(r"(?P<repo>[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+)#(?P<number>\d+)")
 _REPO_FROM_URL = re.compile(r"/repos/([^/]+/[^/]+)$")
-_DEFAULT_ENV = ("GH_TOKEN", "GITHUB_TOKEN", "GH_CONFIG_DIR", "GH_HOST")
+_HEADER_END = re.compile(r"\r?\n\r?\n")
+_DEFAULT_ENV = (
+    "GH_TOKEN",
+    "GITHUB_TOKEN",
+    "GH_ENTERPRISE_TOKEN",
+    "GH_CONFIG_DIR",
+    "GH_HOST",
+    "DBUS_SESSION_BUS_ADDRESS",
+)
 
 
 @dataclass(frozen=True)
@@ -29,10 +40,17 @@ class GithubConnector:
     env_names: tuple[str, ...]
 
     def poll(self, cursor: str) -> Poll:
+        deadline = time.monotonic() + self.timeout
         found: dict[str, SourceItem] = {}
         matched: dict[str, list[str]] = {}
+        problems: list[str] = []
         for name, query in self.queries.items():
-            for entry in self._search(query):
+            try:
+                entries = self._search(query, deadline)
+            except ConnectorError as error:
+                problems.append(f"query {name}: {error}")
+                continue
+            for entry in entries:
                 item = _item(entry)
                 found[item.external_id] = item
                 matched.setdefault(item.external_id, []).append(name)
@@ -46,47 +64,74 @@ class GithubConnector:
             )
             for item in found.values()
         )
-        return Poll(items, complete=True)
+        return Poll(items, complete=not problems, problems=tuple(problems))
 
     def confirm(self, external_id: str) -> Upstream:
         match = _ID.fullmatch(external_id)
         if match is None:
             raise ConnectorError(f"not a GitHub issue id: {external_id[:80]!r}")
-        issue = self._api(f"repos/{match['repo']}/issues/{match['number']}")
+        issue = self._api(f"repos/{match['repo']}/issues/{match['number']}", time.monotonic() + self.timeout)
         state = issue.get("state") if isinstance(issue, Mapping) else None
         if state not in ("open", "closed"):
             raise ConnectorError(f"GitHub returned no state for {external_id}")
         return Upstream.CLOSED if state == "closed" else Upstream.OPEN
 
-    def _search(self, query: str) -> list[Mapping[str, object]]:
-        entries: list[Mapping[str, object]] = []
+    def _search(self, query: str, deadline: float) -> list[Mapping[str, object]]:
+        entries: dict[str, Mapping[str, object]] = {}
         total: int | None = None
         page = 1
         while total is None or len(entries) < total:
             result = self._api(
-                "search/issues", "-X", "GET", "-f", f"q={query}", "-f", f"per_page={PAGE_SIZE}", "-f", f"page={page}"
+                "search/issues",
+                deadline,
+                "-X",
+                "GET",
+                "-f",
+                f"q={query}",
+                "-f",
+                "sort=created",
+                "-f",
+                "order=asc",
+                "-f",
+                f"per_page={PAGE_SIZE}",
+                "-f",
+                f"page={page}",
             )
             if not isinstance(result, Mapping) or not isinstance(result.get("items"), list):
-                raise ConnectorError(f"GitHub search for {query!r} returned an unexpected shape")
+                raise ConnectorError("GitHub returned an unexpected shape")
             if result.get("incomplete_results"):
-                raise ConnectorError(f"GitHub says its results for {query!r} are incomplete")
+                raise ConnectorError("GitHub says the results are incomplete")
             count = result.get("total_count")
             if not isinstance(count, int) or isinstance(count, bool):
-                raise ConnectorError(f"GitHub search for {query!r} returned no total")
+                raise ConnectorError("GitHub returned no total")
             if count > SEARCH_CAP:
-                raise ConnectorError(f"{query!r} matches {count} items, over search's {SEARCH_CAP}, so narrow it")
+                raise ConnectorError(f"it matches {count} items, over search's {SEARCH_CAP}, so narrow it")
+            if total is not None and count != total:
+                raise ConnectorError(f"the total moved from {total} to {count} while paging, retrying next poll")
             total = count
             page_items = [entry for entry in result["items"] if isinstance(entry, Mapping)]
             if not page_items:
                 break
-            entries += page_items
+            for entry in page_items:
+                entries[str(entry.get("id", entry.get("html_url", "")))] = entry
             page += 1
         if len(entries) != total:
-            raise ConnectorError(f"GitHub search for {query!r} said {total} items but returned {len(entries)}")
-        return entries
+            raise ConnectorError(f"GitHub said {total} items but returned {len(entries)} different ones")
+        return list(entries.values())
 
-    def _api(self, path: str, *args: str) -> object:
-        return run_json([self.gh, "api", path, *args], self.env_names, self.timeout)
+    def _api(self, path: str, deadline: float, *args: str) -> object:
+        remaining = min(CALL_TIMEOUT_SECONDS, deadline - time.monotonic())
+        output = run_text([self.gh, "api", "--include", path, *args], self.env_names, remaining)
+        parts = _HEADER_END.split(output, maxsplit=1)
+        headers, body = (parts[0], parts[1]) if len(parts) == 2 else ("", output)
+        for line in headers.splitlines():
+            name, _, value = line.partition(":")
+            if name.strip().lower() == "x-github-sso":
+                raise ConnectorError(f"GitHub hid results that need SSO authorization ({value.strip()[:120]})")
+        try:
+            return json.loads(body)
+        except ValueError as error:
+            raise ConnectorError(f"GitHub did not return JSON: {error}") from error
 
 
 def _item(entry: Mapping[str, object]) -> SourceItem:
@@ -97,7 +142,7 @@ def _item(entry: Mapping[str, object]) -> SourceItem:
         raise ConnectorError("GitHub returned an item without a repository, number or title")
     repo = repo_match.group(1)
     labels = entry.get("labels")
-    label_names = (
+    names = (
         [str(label.get("name")) for label in labels if isinstance(label, Mapping)] if isinstance(labels, list) else []
     )
     user = entry.get("user")
@@ -106,7 +151,7 @@ def _item(entry: Mapping[str, object]) -> SourceItem:
         "repo": repo,
         "kind": "pr" if entry.get("pull_request") else "issue",
         "author": author,
-        "labels": ",".join(label_names),
+        "labels": ",".join(names),
     }
     return SourceItem(
         external_id=f"{repo}#{number}",
@@ -130,14 +175,14 @@ def build(spec: ConnectorSpec) -> GithubConnector:
         raise ConnectorConfigError(
             f'{where} queries must map names to GitHub searches, such as {{ mine = "is:open assignee:@me" }}'
         )
-    if any("is:open" not in query for query in queries.values()):
+    if any("is:open" not in query.split() or "-is:open" in query.split() for query in queries.values()):
         raise ConnectorConfigError(f"{where} every query needs is:open, since the snapshot is what's open")
     gh = spec.settings.get("gh", "gh")
     if not isinstance(gh, str) or not gh:
         raise ConnectorConfigError(f"{where} gh must be a command name or path")
-    timeout = spec.settings.get("timeout", 60)
+    timeout = spec.settings.get("timeout", 120)
     if isinstance(timeout, bool) or not isinstance(timeout, (int, float)) or not 0 < timeout <= 300:
-        raise ConnectorConfigError(f"{where} timeout must be between 0 and 300 seconds")
+        raise ConnectorConfigError(f"{where} timeout must be between 0 and 300 seconds, for one whole poll")
     env = spec.settings.get("env", [])
     if not isinstance(env, list) or not all(isinstance(name, str) for name in env):
         raise ConnectorConfigError(f"{where} env must be a list of variable names")

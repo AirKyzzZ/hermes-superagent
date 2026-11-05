@@ -64,18 +64,42 @@ def test_every_page_of_every_query_reaches_the_snapshot(tmp_path: Path, fixture:
 @pytest.mark.parametrize(
     "setup",
     [
-        {"totals": {ASSIGNED: 40}},
+        {"totals": {ASSIGNED: 140}},
         {"incomplete": [ASSIGNED]},
         {"fail": [ASSIGNED]},
         {"totals": {ASSIGNED: 1500}},
+        {"sso": [ASSIGNED]},
+        {"shift": [ASSIGNED]},
     ],
 )
-def test_a_search_that_cannot_be_trusted_fails_the_poll(
+def test_a_search_that_cannot_be_trusted_is_a_problem_but_other_queries_still_land(
     tmp_path: Path, fixture: Path, setup: dict[str, object]
 ) -> None:
-    write(fixture, search={ASSIGNED: [issue("acme/app", n) for n in range(1, 31)]}, **setup)
-    with pytest.raises(ConnectorError):
-        build_connector(github_spec(tmp_path, queries={"assigned": ASSIGNED})).poll("")
+    assigned = [issue("acme/app", n) for n in range(1, 131)]
+    write(fixture, search={ASSIGNED: assigned, REVIEW: [issue("acme/site", 9, pr=True)]}, **setup)
+    poll = build_connector(github_spec(tmp_path, queries={"assigned": ASSIGNED, "review": REVIEW})).poll("")
+    assert not poll.complete and poll.problems
+    assert "acme/site#9" in {item.external_id for item in poll.items}
+
+
+def test_a_problem_poll_records_what_it_found_but_marks_nothing_gone(tmp_path: Path, fixture: Path) -> None:
+    write(fixture, search={ASSIGNED: [issue("acme/app", 1)], REVIEW: [issue("acme/site", 9, pr=True)]})
+    spec = github_spec(tmp_path, queries={"assigned": ASSIGNED, "review": REVIEW})
+    ledger = Ledger(tmp_path / "s.db")
+    connectors = {spec.name: build_connector(spec)}
+    poll_sources(ledger, [spec], connectors, 600)
+    write(
+        fixture, search={ASSIGNED: [issue("acme/app", 1)], REVIEW: [issue("acme/site", 10, pr=True)]}, fail=[ASSIGNED]
+    )
+    poll_sources(ledger, [spec], connectors, 600)
+    assert ledger.get("github:acme/app#1").missing_since is None
+    assert ledger.get("github:acme/site#10").is_open
+    assert ledger.source("github").failures == 1
+
+
+def test_a_negated_open_filter_is_refused(tmp_path: Path) -> None:
+    with pytest.raises(Exception, match="is:open"):
+        github_spec(tmp_path, queries={"closed": "-is:open assignee:@me"})
 
 
 def test_a_closed_issue_is_confirmed_closed(tmp_path: Path, fixture: Path) -> None:

@@ -126,14 +126,17 @@ def announce(ledger: Ledger, spec: ConnectorSpec, before: Item | None, item: Ite
 
 def confirm_vanished(ledger: Ledger, spec: ConnectorSpec, connector: Connector, deadline: float | None) -> None:
     failures: list[str] = []
+    checked = 0
     for item in ledger.vanished(spec.name, MAX_CONFIRMS_PER_POLL):
         if deadline is not None and deadline - time.monotonic() < connector.timeout:
             break
+        checked += 1
         try:
             ledger.confirm(item.id, connector.confirm(item.external_id), f"connector:{spec.name}")
         except Exception as error:
             failures.append(f"{item.handle}: {error}")
-    ledger.confirm_round(spec.name, "; ".join(failures)[:300])
+    if checked:
+        ledger.confirm_round(spec.name, "; ".join(failures)[:300])
 
 
 def source_health(spec: ConnectorSpec, state: SourceState, now: float) -> list[SourceWarning]:
