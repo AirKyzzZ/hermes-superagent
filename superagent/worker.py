@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import signal
 import subprocess
 import threading
@@ -24,6 +25,8 @@ _STOP_GRACE_SECONDS = 5.0
 _STOP_POLL_SECONDS = 0.2
 _KILL_GRACE_SECONDS = 2.0
 _LEADERLESS_GROUP_MAX_AGE_SECONDS = 6 * 3600.0
+_OUTPUT_TAIL_BYTES = 4000
+_TERMINAL_ESCAPES = re.compile(r"\x1b\[[0-9;?]*[A-Za-z]")
 
 
 class WorkerStopError(RuntimeError):
@@ -36,6 +39,8 @@ class WorkerBackend(Protocol):
     def is_alive(self, assignment: Assignment) -> bool: ...
 
     def stop(self, assignment: Assignment) -> None: ...
+
+    def last_output(self, assignment: Assignment) -> str: ...
 
 
 def render_brief(ticket: Ticket, context: str = "") -> str:
@@ -148,6 +153,16 @@ class SubprocessBackend:
             )
         threading.Thread(target=process.wait, daemon=True).start()
         return process.pid
+
+    def last_output(self, assignment: Assignment) -> str:
+        log = self.workdir_root / assignment.ticket_id / assignment.id / "worker.log"
+        try:
+            with log.open("rb") as file:
+                file.seek(max(0, log.stat().st_size - _OUTPUT_TAIL_BYTES))
+                tail = file.read().decode("utf-8", errors="replace")
+        except OSError:
+            return ""
+        return _TERMINAL_ESCAPES.sub("", tail).strip()
 
     def is_alive(self, assignment: Assignment) -> bool:
         if assignment.pid is None:

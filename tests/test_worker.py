@@ -198,3 +198,15 @@ def test_identity_is_written_for_the_worker_only(tmp_path: Path) -> None:
     identity = tmp_path / IDENTITY_FILENAME
     assert stat.S_IMODE(identity.stat().st_mode) == 0o600
     assert json.loads(identity.read_text()) == {"assignment": "as-1", "ticket": "tk-1", "token": "secret", "attempt": 2}
+
+
+def test_last_output_is_the_tail_of_the_worker_log_without_terminal_codes(tmp_path: Path) -> None:
+    backend = SubprocessBackend(["worker", "{brief}"], tmp_path / "w")
+    log = tmp_path / "w" / "tk-1" / "as-1" / "worker.log"
+    log.parent.mkdir(parents=True)
+    log.write_text("noise\n" * 2000 + "\x1b[1mFinal answer: done\x1b[0m\n", encoding="utf-8")
+    output = backend.last_output(assignment())
+    assert output.endswith("Final answer: done")
+    assert "\x1b" not in output
+    assert len(output) <= 4000
+    assert SubprocessBackend(["worker"], tmp_path / "none").last_output(assignment()) == ""
