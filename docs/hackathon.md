@@ -26,7 +26,8 @@ repo: https://github.com/AirKyzzZ/hermes-superagent
 sha: <40-char commit>
 requires_hermes: ">=0.22.7"
 version: "0.1.0"
-description: "A resident router that dispatches and never executes, isolated workers that report only to it, team-written trigger rules, and an external watchdog that checks real progress and goal drift."
+description: "A resident router that dispatches and never executes, isolated workers that report only to it, team-written trigger rules, and an external watchdog that checks real progress and goal drift. Disclosure: spawns worker processes from the argv you configure, runs the outbound send command you configure, and stops or restarts its own workers. Inert until a profile sets a role."
+platforms: [linux, macos]
 maintainer: AirKyzzZ
 tier: community
 category: automation

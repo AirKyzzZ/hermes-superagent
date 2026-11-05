@@ -2,6 +2,8 @@
 
 Retrieved 2026-11-05. No AI image generation or paid services were used. Nothing comes from Nous Research, the marketplace, other plugins or a logo. The reference images were viewed for style only and are not read by the build.
 
+The navy `#14142a` was picked to match the card colour in the marketplace and is the same value as a colour token in the Hermes docs theme, so the cover fades into the card. No Nous artwork is used.
+
 ## Head: The Metropolitan Museum of Art
 
 | | |
@@ -18,7 +20,7 @@ Retrieved 2026-11-05. No AI image generation or paid services were used. Nothing
 
 Licence evidence:
 
-- The API record has `"isPublicDomain": true`, saved at `art/sources/met-257864/object.json`.
+- The API record has `"isPublicDomain": true`, saved at `art/met-257864-object.json`.
 - The API docs (https://metmuseum.github.io/) say the API gives access to Open Access data and "corresponding high resolution images (JPEG format) that are in the public domain".
 - The Met's Open Access repository (https://github.com/metmuseum/openaccess) says the dataset is released under Creative Commons Zero and that covered artworks are marked "with the Creative Commons Zero (CC0) icon" on the museum's website.
 
