@@ -80,6 +80,10 @@ flowchart TB
     watchdog -->|"nudge, queued"| store
     watchdog -.->|restart| workers
     relay -.->|"reports, escalations"| people
+
+    relay ~~~ controlsClearance[" "]
+    classDef invisible fill:none,stroke:none
+    class controlsClearance invisible
 ```
 
 On the gateway, the router's model only sees messages the gate let through. An addressed event from `superagent ingest` skips that model: code opens the ticket, with the event text as the goal. Workers have no messaging tools, so their reports go to the store and code relays them.
@@ -113,7 +117,7 @@ sequenceDiagram
             tick->>person: relay the question
             person->>gate: answer
             gate->>worker: in a thread, a new worker resumes with the answer
-            Note over gate,router: outside a thread, the router's model calls superagent_forward
+            Note over gate,store: outside a thread, the router's model<br/>calls superagent_forward
         else worker is done
             worker->>store: superagent_report(ready, summary)
             tick->>person: Done, in at most 100 words
@@ -128,7 +132,7 @@ sequenceDiagram
 stateDiagram-v2
     direction TB
     [*] --> Running
-    Running --> Running: stuck, alive, nudge queued
+    Running --> Running: nudge queued
     Running --> Restarting: dead, or nudges spent
     Restarting --> Running: fenced, new worker
     Restarting --> Escalated: can't stop it
@@ -136,7 +140,7 @@ stateDiagram-v2
     Running --> Parked: blocked
     Parked --> Running: answered
     Running --> Ended: ready, failed, dropped
-    Escalated --> Ended: worker stopped, ticket closed
+    Escalated --> Ended: ticket closed
     Ended --> [*]
 
     classDef ended fill:#14142a,color:#ffffff,stroke:#a9a9cc
@@ -147,7 +151,7 @@ stateDiagram-v2
 
 Stuck and drifting lead to the same repairs, within a budget per ticket. Code decides stuck: a dead process, silence, identical reports or the same tool call over and over. A judge with no tools decides drift and can only answer `on_track` or `drifting`, so the most a fooled judge can do is spend the budget and escalate, which ends the ticket. A broken judge never triggers a repair.
 
-A nudge waits for the worker's next report, so a silent worker gets restarted on the next tick instead. After an escalation, relay tells the person on a best-effort basis, and a reply starts new work.
+A live worker gets a nudge first, and it waits for that worker's next report, so a silent worker gets restarted on the next tick instead. An escalation stops the worker, then relay tells the person on a best-effort basis, and a reply starts new work.
 
 ## Features
 
