@@ -287,6 +287,8 @@ def stage_router(work: Path, log: Path) -> None:
             f'\n[sources."webhook:github"]\npolicy = "explicit_only"\nallow = ["alice"]\nnotify = "discord:team"\n'
             f'\n[sources."webhook:ci"]\npolicy = "candidate"\nbots = ["github-actions[bot]"]\n'
             f'\n[digest]\nchannel = "discord:team"\n'
+            f'\n[channels]\nalerts = "discord:alerts"\n'
+            f"\n[tick]\nalert_after_seconds = 0\n"
             f"\n[outbound]\nargv = {argv}\n"
             f'\n[[semantic]]\nname = "ci-watch"\ntext = "Look into failing CI runs on main."\nmode = "record"\n'
         )
@@ -369,6 +371,8 @@ def stage_router(work: Path, log: Path) -> None:
         broken_tick = hermes("-p", "watchdog", "superagent", "tick")
         loud = broken_tick.returncode != 0 and "last good config" in broken_tick.stdout
         check("config: every tick fails loudly until it's fixed", loud, broken_tick.stdout[-500:])
+        alerted = sent.read_text(encoding="utf-8") if sent.exists() else ""
+        check("alerts: the broken config reaches the alerts channel", "discord:alerts\tAlert: config:" in alerted)
         config_path.write_text(good, encoding="utf-8")
         scenario_cancel(open_runtime(home), log, work, sent)
         scenario_digest(sent)
