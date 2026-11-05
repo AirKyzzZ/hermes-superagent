@@ -12,10 +12,11 @@ from dataclasses import asdict
 from datetime import datetime
 from pathlib import Path
 
+from .agents import ATTENTION_STATES, HOOK_SCRIPT, SessionState, settings_block
 from .config import DB_FILENAME
 from .digest import build_digest, send_digest
 from .domain import ReportState, Trigger
-from .ledger import ItemState, Ledger, LedgerError
+from .ledger import Item, ItemState, Ledger, LedgerError
 from .reporting import identity_from_workdir, submit_report
 from .router import Assessor
 from .runtime import open_runtime, tick
@@ -49,6 +50,10 @@ def setup_parser(parser: argparse.ArgumentParser) -> None:
     outbox = commands.add_parser("outbox", help="list messages not delivered yet, or drop one")
     outbox.add_argument("--drop", type=int, default=None, metavar="SEQ", help="stop retrying this message")
     outbox.add_argument("--reason", default="dropped by an operator")
+    agents = commands.add_parser("agents", help="every Claude Code session the agents connectors see")
+    agents.add_argument("--json", action="store_true")
+    agents.add_argument("--hook-script", action="store_true", help="print the hook script to put on a host")
+    agents.add_argument("--hook-settings", action="store_true", help="print the hooks block for a host's settings")
     ledger = commands.add_parser("ledger", help="list, show, close, ignore or snooze tracked items")
     ledger_commands = ledger.add_subparsers(dest="ledger_command", required=True)
     listing = ledger_commands.add_parser("list", help="open items, or every item with --all")
@@ -92,6 +97,12 @@ def run(
     if home is None:
         print("--home is required outside Hermes", file=sys.stderr)
         return 2
+    if args.superagent_command == "agents" and (args.hook_script or args.hook_settings):
+        if args.hook_script:
+            print(HOOK_SCRIPT.read_text(encoding="utf-8"), end="")
+        else:
+            print(json.dumps(settings_block(), indent=2))
+        return 0
     if args.superagent_command == "ledger":
         return run_ledger(args, Ledger(home / DB_FILENAME))
     runtime = open_runtime(home)
@@ -104,6 +115,19 @@ def run(
     if args.superagent_command == "cancel":
         ticket = runtime.router.cancel(args.ticket, args.by)
         print(json.dumps({"ticket": ticket.id, "status": ticket.status.value}))
+        return 0
+    if args.superagent_command == "agents":
+        names = {spec.name for spec in runtime.config.connectors if spec.type == "agents"}
+        sessions = board(runtime.ledger, names)
+        if args.json:
+            print(json.dumps([asdict(item) for item in sessions], indent=1))
+        else:
+            now = time.time()
+            for item in sessions:
+                minutes = (now - item.last_changed) / 60
+                state = item.meta.get("state", "?")
+                line = f"{item.handle}  {state:<10} {minutes:>5.0f}m  {item.connector:<14} {item.title}"
+                print(line + (f"\n        {item.excerpt[:160]}" if item.excerpt else ""))
         return 0
     if args.superagent_command == "outbox":
         if args.drop is not None:
@@ -192,6 +216,16 @@ def arm_deadline(seconds: float) -> threading.Timer:
     timer.daemon = True
     timer.start()
     return timer
+
+
+def board(ledger: Ledger, connectors: set[str]) -> list[Item]:
+    sessions = [item for name in sorted(connectors) for item in ledger.items(open_only=True, connector=name)]
+    order = {state.value: rank for rank, state in enumerate(SessionState)}
+    attention = {state.value for state in ATTENTION_STATES}
+    return sorted(
+        sessions,
+        key=lambda item: (item.meta.get("state") not in attention, order.get(item.meta.get("state", ""), 99)),
+    )
 
 
 def run_ledger(args: argparse.Namespace, ledger: Ledger) -> int:

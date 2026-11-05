@@ -27,6 +27,7 @@ _SEND_TIMEOUT_SECONDS = 60
 _TICK_LOCK_FILENAME = "tick.lock"
 IGNORED_TRIGGER_RETENTION_SECONDS = 7 * 24 * 3600.0
 POLL_BUDGET_SHARE = 0.5
+SOURCE_TICKET = "sources"
 
 
 @dataclass(frozen=True)
@@ -153,7 +154,13 @@ def _run_phases(runtime: Runtime, judge: DriftJudge | None, assessor: Assessor |
     warnings: list[SourceWarning] = []
     try:
         budget = runtime.config.tick_deadline_seconds * POLL_BUDGET_SHARE
-        warnings = poll_sources(runtime.ledger, runtime.config.connectors, runtime.connectors, budget)
+        warnings = poll_sources(
+            runtime.ledger,
+            runtime.config.connectors,
+            runtime.connectors,
+            budget,
+            lambda channel, text: runtime.store.queue_message(SOURCE_TICKET, channel, chat_safe(text)),
+        )
     except Exception as error:
         logger.exception("polling failed")
         errors.append(f"poll: {error}")

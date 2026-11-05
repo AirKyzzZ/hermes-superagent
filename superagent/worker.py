@@ -133,6 +133,8 @@ class SubprocessBackend:
         self.extra_env = dict(extra_env or {})
 
     def start(self, ticket: Ticket, assignment: Assignment, token: str, context: str = "") -> int:
+        if not self.argv:
+            raise OSError("no [worker] argv is configured, so no worker can start")
         workdir = self.workdir_root / ticket.id / assignment.id
         workdir.mkdir(parents=True, exist_ok=True)
         brief = workdir / "brief.md"

@@ -181,3 +181,12 @@ def test_old_ignored_events_are_pruned(tmp_path: Path) -> None:
     runtime.router.ingest(Trigger("x1", "unknown", "", "mallory", "secret stuff"))
     assert runtime.store.prune_ignored_triggers(0.0) == 1
     assert runtime.store.get_trigger("x1") is None
+
+
+def test_a_config_without_workers_is_fine_until_a_worker_is_needed(tmp_path: Path) -> None:
+    (tmp_path / "superagent.toml").write_text('[sources.chat]\npolicy = "explicit_only"\nallow = ["alice"]\n')
+    runtime = open_runtime(tmp_path)
+    assert runtime.config.worker_argv == ()
+    assert tick(runtime).errors == ()
+    with pytest.raises(OSError, match="no \\[worker\\] argv"):
+        runtime.router.ingest(Trigger("w1", "chat", "th", "alice", "do it", "th", True))

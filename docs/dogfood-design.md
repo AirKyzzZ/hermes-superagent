@@ -244,7 +244,7 @@ Every Claude Code session on every machine is an item of the `agents` connector,
   - the event and the host-local time;
   - the working directory and the transcript path;
   - the `claude` process id and its start time;
-  - `TMUX_PANE`, or the cmux variables that say which pane the session lives in.
+  - `TMUX_PANE`, or the cmux workspace, surface, tab and panel ids that say which pane the session lives in. No other variable is copied, because cmux also exports tokens.
 - State is computed from main-thread events only. Events that carry an `agent_id` come from subagents and only extend `working`.
 - Installing the hook block in each host's Claude Code settings is a setup step that shows the diff and needs the owner's yes for each machine.
 

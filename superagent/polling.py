@@ -2,11 +2,12 @@ from __future__ import annotations
 
 import logging
 import time
-from collections.abc import Mapping, Sequence
+from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
 
+from .agents import redact
 from .connectors import Connector, ConnectorSpec
-from .ledger import ItemState, Ledger, LedgerError, SourceState
+from .ledger import Item, ItemState, Ledger, LedgerError, SourceState, item_id
 
 logger = logging.getLogger(__name__)
 
@@ -15,6 +16,7 @@ FAILURES_BEFORE_WARNING = 3
 STALE_FLOOR_SECONDS = 3600.0
 MAX_CONFIRMS_PER_POLL = 20
 PROBLEMS_SHOWN = 5
+QUIET_AT_FIRST_SIGHT = frozenset({"gone", "ended"})
 
 
 @dataclass(frozen=True)
@@ -27,8 +29,15 @@ class PollProblem(RuntimeError):
     pass
 
 
+Notify = Callable[[str, str], None]
+
+
 def poll_sources(
-    ledger: Ledger, specs: Sequence[ConnectorSpec], connectors: Mapping[str, Connector], budget_seconds: float
+    ledger: Ledger,
+    specs: Sequence[ConnectorSpec],
+    connectors: Mapping[str, Connector],
+    budget_seconds: float,
+    notify: Notify | None = None,
 ) -> list[SourceWarning]:
     deadline = time.monotonic() + budget_seconds
     states = {spec.name: ledger.source(spec.name) for spec in specs}
@@ -39,7 +48,7 @@ def poll_sources(
         if not due or deadline - time.monotonic() < connector.timeout:
             continue
         try:
-            poll_one(ledger, spec, connector, state, deadline)
+            poll_one(ledger, spec, connector, state, deadline, notify)
         except Exception:
             logger.exception("polling %s failed outside the connector", spec.name)
     warnings: list[SourceWarning] = []
@@ -49,16 +58,28 @@ def poll_sources(
 
 
 def poll_one(
-    ledger: Ledger, spec: ConnectorSpec, connector: Connector, state: SourceState, deadline: float | None = None
+    ledger: Ledger,
+    spec: ConnectorSpec,
+    connector: Connector,
+    state: SourceState,
+    deadline: float | None = None,
+    notify: Notify | None = None,
 ) -> None:
     ledger.begin_poll(spec.name)
     try:
         poll = connector.poll(state.cursor)
         new_items = 0
         for source in poll.items:
+            before = ledger.peek(item_id(spec.name, source.external_id))
             item = ledger.record(spec.name, source)
             if item.first_seen == item.last_seen:
                 new_items += 1
+            if spec.owned and item.state is ItemState.NEW:
+                try:
+                    item = ledger.move(item.id, ItemState.TRIAGED, "rule:owned", "", expected=ItemState.NEW)
+                except LedgerError as error:
+                    logger.info("left %s as it is: %s", item.id, error)
+            announce(ledger, spec, before, item, notify)
             if not spec.track and item.state is ItemState.NEW:
                 try:
                     ledger.move(
@@ -87,6 +108,20 @@ def poll_one(
     )
     if applied:
         confirm_vanished(ledger, spec, connector, deadline)
+
+
+def announce(ledger: Ledger, spec: ConnectorSpec, before: Item | None, item: Item, notify: Notify | None) -> None:
+    state = item.meta.get("state", "")
+    if notify is None or not spec.channel or state not in spec.notify or not item.is_open:
+        return
+    if before is None or before.meta.get("state") != state:
+        return
+    if state in QUIET_AT_FIRST_SIGHT and item.last_changed == item.first_seen:
+        return
+    if not ledger.announce_once(item.id, f"{state}@{item.last_changed}"):
+        return
+    detail = f": {redact(item.excerpt)[:200]}" if spec.notify_detail and item.excerpt else ""
+    notify(spec.channel, f"{item.title} [{spec.name}] is {state}{detail} ({item.handle})")
 
 
 def confirm_vanished(ledger: Ledger, spec: ConnectorSpec, connector: Connector, deadline: float | None) -> None:

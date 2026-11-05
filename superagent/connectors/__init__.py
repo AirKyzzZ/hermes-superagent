@@ -9,9 +9,10 @@ from typing import Protocol
 from ..ledger import SourceItem, Upstream
 
 DEFAULT_EVERY_SECONDS = 300.0
+DEFAULT_NOTIFY = ("waiting", "stuck", "limited", "gone")
 _DURATION = re.compile(r"^(\d+(?:\.\d+)?)([smhd])$")
 _UNITS = {"s": 1.0, "m": 60.0, "h": 3600.0, "d": 86400.0}
-COMMON_KEYS = frozenset({"type", "every", "track", "quiet_after"})
+COMMON_KEYS = frozenset({"type", "every", "track", "quiet_after", "owned", "channel", "notify", "notify_detail"})
 
 
 class ConnectorError(RuntimeError):
@@ -47,6 +48,10 @@ class ConnectorSpec:
     track: bool = True
     quiet_after_seconds: float = 0.0
     settings: Mapping[str, object] = field(default_factory=dict)
+    owned: bool = False
+    channel: str = ""
+    notify: frozenset[str] = frozenset()
+    notify_detail: bool = False
 
 
 @dataclass(frozen=True)
@@ -56,9 +61,12 @@ class ConnectorType:
 
 
 def connector_types() -> dict[str, ConnectorType]:
-    from . import command
+    from . import agents, command
 
-    return {"command": ConnectorType(command.KEYS, command.build)}
+    return {
+        "command": ConnectorType(command.KEYS, command.build),
+        "agents": ConnectorType(agents.KEYS, agents.build),
+    }
 
 
 def build_connector(spec: ConnectorSpec) -> Connector:
@@ -80,9 +88,15 @@ def parse_specs(section: object) -> tuple[ConnectorSpec, ...]:
             raise ConnectorConfigError(f"[connectors.{name}] type must be one of {sorted(types)}, got {kind!r}")
         if unknown := set(body) - COMMON_KEYS - types[kind].keys:
             raise ConnectorConfigError(f"unknown keys in [connectors.{name}]: {sorted(unknown)}")
-        track = body.get("track", True)
-        if not isinstance(track, bool):
-            raise ConnectorConfigError(f"[connectors.{name}] track must be true or false")
+        track, owned = body.get("track", True), body.get("owned", kind == "agents")
+        if not isinstance(track, bool) or not isinstance(owned, bool):
+            raise ConnectorConfigError(f"[connectors.{name}] track and owned must be true or false")
+        channel, detail = body.get("channel", ""), body.get("notify_detail", False)
+        if not isinstance(detail, bool):
+            raise ConnectorConfigError(f"[connectors.{name}] notify_detail must be true or false")
+        notify = body.get("notify", list(DEFAULT_NOTIFY) if kind == "agents" else [])
+        if not isinstance(channel, str) or not isinstance(notify, list) or not all(isinstance(s, str) for s in notify):
+            raise ConnectorConfigError(f"[connectors.{name}] channel must be a string and notify a list of states")
         spec = ConnectorSpec(
             name=name,
             type=kind,
@@ -90,6 +104,10 @@ def parse_specs(section: object) -> tuple[ConnectorSpec, ...]:
             track=track,
             quiet_after_seconds=duration(body.get("quiet_after", 0), f"[connectors.{name}] quiet_after"),
             settings={key: value for key, value in body.items() if key not in COMMON_KEYS},
+            owned=owned,
+            channel=channel,
+            notify=frozenset(notify),
+            notify_detail=detail,
         )
         types[kind].build(spec)
         specs.append(spec)
