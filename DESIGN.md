@@ -70,7 +70,6 @@ If the gate itself fails, the message is dropped and logged rather than let thro
 - By default Hermes runs every profile's turns in one host gateway process. Profiles scope config and credentials, not the OS process, so the plugin hooks and a sandboxed terminal are what separate a worker from the router.
 - `stop` and `is_alive` track the `hermes chat` client. SIGTERM cancels the turn, but after a SIGKILL the running command finishes, and the worker's next tool call is what gets refused.
 - A `terminal.cwd` in the worker profile can replace the session directory, in which case the worker gets no tools instead of the wrong identity.
-- `chat_safe` misses `[[[`, which leaves a `[[` directive intact. `MEDIA:` is still neutralised.
 - Single host, macOS and Linux only: the store is SQLite, and `stop` works by local process group, with a start-time check against PID reuse. If workers run under another OS user, `stop` can't signal them, so the watchdog escalates to a person instead of starting a second worker.
 - Two narrow cases remain in `stop`. A group with no leader and under six hours old is assumed to be the worker's. If a tick dies mid-repair on a worker it can't stop, a later tick can escalate and still start a second worker.
 - A failed send retries on later ticks, up to five times per message, so a crash between send and mark can deliver a message twice.

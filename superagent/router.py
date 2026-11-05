@@ -31,6 +31,7 @@ CHAT_WORD_LIMIT = 100
 MAX_SEND_ATTEMPTS = 5
 OFFER_VALID_SECONDS = 3600.0
 _ATTACHMENT_TAG = re.compile(r"media:", re.IGNORECASE)
+_DIRECTIVE_OPENING = re.compile(r"\[(?=\[)")
 
 
 class Outcome(StrEnum):
@@ -225,7 +226,7 @@ class Router:
 
 
 def chat_safe(text: str) -> str:
-    return _ATTACHMENT_TAG.sub("media ", text).replace("[[", "[ [")
+    return _DIRECTIVE_OPENING.sub("[ ", _ATTACHMENT_TAG.sub("media ", text))
 
 
 def shorten(text: str, limit: int = CHAT_WORD_LIMIT) -> str:
