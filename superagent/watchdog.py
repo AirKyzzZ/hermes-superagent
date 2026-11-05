@@ -4,13 +4,14 @@ import time
 from dataclasses import dataclass
 from typing import Protocol
 
-from .domain import Assignment, RepairAction, Report, Ticket, Verdict
+from .domain import Assignment, AssignmentStatus, RepairAction, Report, Ticket, Verdict
 from .framing import frame_untrusted
 from .router import Router
 from .store import Store
 from .worker import WorkerBackend, WorkerStopError
 
 _NO_ASSIGNMENT = "none"
+_LAST_WORDS_CHARS = 300
 
 
 @dataclass(frozen=True)
@@ -107,7 +108,8 @@ def apply_repair(
         )
         router.store.add_input(ticket.id, "watchdog", message, trusted=True)
         return
-    router.store.end_assignment(assignment.id)
+    if not router.store.end_assignment(assignment.id):
+        return
     router.backend.stop(assignment)
     if action is RepairAction.RESTART:
         router.start_worker(ticket)
@@ -129,6 +131,13 @@ def check_once(
             continue
         ticket = router.store.get_ticket(assignment.ticket_id)
         evidence = collect_evidence(router.store, router.backend, assignment, active_policy)
+        if router.store.get_assignment(assignment.id).status is not AssignmentStatus.RUNNING:
+            continue
+        if not evidence.alive and (output := router.backend.last_output(assignment)):
+            parked = _park_silent_exit(router, ticket, assignment, output)
+            if parked is not None:
+                results.append(parked)
+            continue
         judgement = judge_deterministically(evidence, active_policy) or _judge_semantically(
             active_judge, ticket, evidence
         )
@@ -177,6 +186,16 @@ def _repair_orphan(router: Router, ticket: Ticket, policy: WatchdogPolicy) -> Ch
     else:
         router.store.end_ticket(ticket.id)
     return CheckResult(_NO_ASSIGNMENT, ticket.id, Verdict.STUCK, action, reason)
+
+
+def _park_silent_exit(router: Router, ticket: Ticket, assignment: Assignment, output: str) -> CheckResult | None:
+    last_words = output[-_LAST_WORDS_CHARS:]
+    question = f"The worker exited without a final report. Its last output: {last_words}\nShould it run again?"
+    if not router.store.park_silent_exit(assignment.id, f"exited without a final report: {last_words}", question):
+        return None
+    reason = "worker exited without a final report, a person decides whether to run it again"
+    router.store.add_watchdog_event(assignment.id, ticket.id, Verdict.STUCK.value, RepairAction.PARK, reason)
+    return CheckResult(assignment.id, ticket.id, Verdict.STUCK, RepairAction.PARK, reason)
 
 
 def _judge_semantically(judge: DriftJudge, ticket: Ticket, evidence: Evidence) -> Judgement:

@@ -55,6 +55,7 @@ SCRIPTS = {
         Step("superagent_report", {"state": "progress", "summary": "started {id}"}),
         Step("superagent_report", {"state": "ready", "summary": "done {id}"}),
     ],
+    "quiet": [],
     "outsider": [
         Step("superagent_report", {"state": "ready", "summary": "forged {id}"}),
     ],

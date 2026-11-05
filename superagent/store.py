@@ -218,8 +218,11 @@ class Store:
             ).fetchall()
         return [row["ticket_id"] for row in rows]
 
-    def create_assignment(self, ticket_id: str) -> tuple[Assignment, str]:
+    def create_assignment(self, ticket_id: str) -> tuple[Assignment, str] | None:
         with self._connect() as connection:
+            status = connection.execute("SELECT status FROM tickets WHERE id = ?", (ticket_id,)).fetchone()
+            if status is None or status["status"] != TicketStatus.OPEN.value:
+                return None
             return _insert_assignment(connection, ticket_id)
 
     def resume_waiting_ticket(self, ticket_id: str) -> tuple[Assignment, str] | None:
@@ -237,12 +240,33 @@ class Store:
         with self._connect() as connection:
             connection.execute("UPDATE assignments SET pid = ? WHERE id = ?", (pid, assignment_id))
 
-    def end_assignment(self, assignment_id: str) -> None:
+    def end_assignment(self, assignment_id: str) -> bool:
         with self._connect() as connection:
-            connection.execute(
-                "UPDATE assignments SET status = ?, ended_at = ? WHERE id = ?",
-                (AssignmentStatus.ENDED.value, time.time(), assignment_id),
+            cursor = connection.execute(
+                "UPDATE assignments SET status = ?, ended_at = ? WHERE id = ? AND status = ?",
+                (AssignmentStatus.ENDED.value, time.time(), assignment_id, AssignmentStatus.RUNNING.value),
             )
+            return cursor.rowcount == 1
+
+    def park_silent_exit(self, assignment_id: str, summary: str, question: str) -> bool:
+        now = time.time()
+        with self._connect() as connection:
+            row = connection.execute("SELECT ticket_id FROM assignments WHERE id = ?", (assignment_id,)).fetchone()
+            cursor = connection.execute(
+                "UPDATE assignments SET status = ?, ended_at = ? WHERE id = ? AND status = ?",
+                (AssignmentStatus.ENDED.value, now, assignment_id, AssignmentStatus.RUNNING.value),
+            )
+            if row is None or cursor.rowcount != 1:
+                return False
+            connection.execute(
+                "INSERT INTO reports (assignment_id, ticket_id, state, summary, question, at) VALUES (?,?,?,?,?,?)",
+                (assignment_id, row["ticket_id"], ReportState.BLOCKED.value, summary, question, now),
+            )
+            connection.execute(
+                "UPDATE tickets SET status = ? WHERE id = ? AND status = ?",
+                (TicketStatus.WAITING.value, row["ticket_id"], TicketStatus.OPEN.value),
+            )
+            return True
 
     def assignment_is_current(self, assignment_id: str, token: str) -> bool:
         with self._connect() as connection:
@@ -484,14 +508,14 @@ class Store:
             ).fetchall()
         return [(row["fingerprint"], row["at"]) for row in reversed(rows)]
 
-    def take_admitted(self, source: str, actor: str, message: str, max_age_seconds: float) -> list[Trigger]:
+    def take_admitted(self, source: str, actor: str | None, message: str, max_age_seconds: float) -> list[Trigger]:
         now = time.time()
         spoken = message.strip()
         with self._connect() as connection:
             rows = connection.execute(
-                "SELECT * FROM triggers WHERE admission = ? AND assessed_at IS NULL AND source = ? AND actor = ? "
-                "AND received_at >= ? ORDER BY received_at",
-                (Admission.ACT.value, source, actor, now - max_age_seconds),
+                "SELECT * FROM triggers WHERE admission = ? AND assessed_at IS NULL AND source = ? "
+                "AND (? IS NULL OR actor = ?) AND received_at >= ? ORDER BY received_at",
+                (Admission.ACT.value, source, actor, actor, now - max_age_seconds),
             ).fetchall()
             matching = [row for row in rows if row["text"].strip() and spoken.endswith(row["text"].strip())]
             connection.executemany(

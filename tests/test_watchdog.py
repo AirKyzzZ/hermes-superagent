@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import pytest
 
-from superagent.domain import RepairAction, Report, ReportState, TicketStatus, Trigger, Verdict
+from superagent.domain import Assignment, RepairAction, Report, ReportState, TicketStatus, Trigger, Verdict
 from superagent.router import Router
 from superagent.store import StaleAssignmentError
 from superagent.watchdog import Judgement, WatchdogPolicy, check_once
@@ -272,3 +272,47 @@ def test_every_check_is_recorded(router: Router, backend: FakeBackend) -> None:
     report(router, backend, "working")
     result = check_once(router)[0]
     assert router.store.watchdog_events(result.ticket_id)[0][1] == "none"
+
+
+def test_a_worker_that_finishes_during_the_check_is_not_run_again(router: Router, backend: FakeBackend) -> None:
+    router.ingest(REQUEST)
+
+    def finishes_now(assignment: Assignment) -> None:
+        router.store.add_report(assignment.id, backend.started[-1][2], ReportState.READY, "done")
+
+    backend.on_alive_check = finishes_now
+    backend.alive = False
+    assert check_once(router) == []
+    assert len(backend.started) == 1
+    assert router.store.running_assignments() == []
+    assert router.store.live_tickets() == []
+
+
+def test_an_ended_ticket_never_gets_a_new_worker(router: Router, backend: FakeBackend) -> None:
+    router.ingest(REQUEST)
+    ticket = router.store.live_tickets()[0]
+    router.store.end_ticket(ticket.id)
+    assert router.start_worker(ticket) is None
+    assert len(backend.started) == 1
+
+
+def test_a_worker_that_exits_without_reporting_is_parked_for_a_person(router: Router, backend: FakeBackend) -> None:
+    router.ingest(REQUEST)
+    backend.alive = False
+    backend.output = "I opened a pull request that fixes the login bug."
+    result = check_once(router)[0]
+    assert result.action is RepairAction.PARK
+    assert len(backend.started) == 1
+    ticket = router.store.get_ticket(result.ticket_id)
+    assert ticket.status is TicketStatus.WAITING
+    [message] = [text for _, _, text in router.relay()]
+    assert message.startswith("Blocked: The worker exited without a final report.")
+    assert "opened a pull request" in message
+    assert check_once(router) == []
+
+
+def test_a_worker_that_dies_silently_is_still_restarted(router: Router, backend: FakeBackend) -> None:
+    router.ingest(REQUEST)
+    backend.alive = False
+    assert check_once(router)[0].action is RepairAction.RESTART
+    assert len(backend.started) == 2

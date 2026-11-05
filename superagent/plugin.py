@@ -24,6 +24,7 @@ logger = logging.getLogger(__name__)
 PLUGIN_NAME = "hermes-superagent"
 TOOLSET = "superagent"
 ADMITTED_MAX_AGE_SECONDS = 600.0
+WEBHOOK_SOURCE_PREFIX = "webhook:"
 
 ROUTER_PROMPT = (
     "You are the router of a super-agent. You talk to people on every channel, dispatch work and answer on "
@@ -153,6 +154,13 @@ class Plugin:
         try:
             trigger = trigger_from_event(event)
             router = self.runtime().router
+            if trigger.source.startswith(WEBHOOK_SOURCE_PREFIX):
+                source_rules = router.rules.sources.get(trigger.source)
+                via_router = source_rules is not None and source_rules.via_router
+                disposition = router.ingest(trigger, auto_dispatch=not via_router)
+                if via_router and disposition.outcome is Outcome.ADMITTED:
+                    return None
+                return {"action": "skip", "reason": f"superagent: {disposition.outcome.value}"}
             if trigger.text.startswith("/") and router.is_allowed(trigger):
                 return None
             disposition = router.ingest(trigger, auto_dispatch=False)
@@ -168,8 +176,13 @@ class Plugin:
     ) -> dict[str, str] | None:
         if self.role != ROLE_ROUTER:
             return None
+        sender = str(sender_id or "")
+        if platform == "webhook" and sender.startswith(WEBHOOK_SOURCE_PREFIX):
+            source, actor = sender, None
+        else:
+            source, actor = platform, sender
         admitted = self.runtime().store.take_admitted(
-            platform, str(sender_id or ""), _message_text(user_message), ADMITTED_MAX_AGE_SECONDS
+            source, actor, _message_text(user_message), ADMITTED_MAX_AGE_SECONDS
         )
         if not admitted:
             return None
@@ -272,16 +285,52 @@ def trigger_from_event(event: Any) -> Trigger:
     thread_id = str(source.thread_id or "")
     address = f"{platform}:{chat_id}:{thread_id}" if thread_id else f"{platform}:{chat_id}"
     message_id = event.message_id
+    trigger_id = f"{platform}:{chat_id}:{message_id}" if message_id else f"{platform}:{uuid.uuid4().hex}"
+    user_id = str(source.user_id or "")
+    if platform == "webhook" and user_id.startswith(WEBHOOK_SOURCE_PREFIX):
+        actor, is_bot, item = _webhook_author(getattr(event, "raw_message", None))
+        return Trigger(
+            id=trigger_id,
+            source=user_id,
+            thread=f"{user_id}:{item}" if item else "",
+            actor=user_id if actor is None else actor,
+            text=str(event.text or ""),
+            channel=address,
+            addressed=True,
+            is_bot=is_bot,
+        )
     return Trigger(
-        id=f"{platform}:{chat_id}:{message_id}" if message_id else f"{platform}:{uuid.uuid4().hex}",
+        id=trigger_id,
         source=platform,
         thread=address if thread_id else "",
-        actor=str(source.user_id or ""),
+        actor=user_id,
         text=str(event.text or ""),
         channel=address,
         addressed=True,
         is_bot=bool(source.is_bot),
     )
+
+
+def _webhook_author(payload: object) -> tuple[str | None, bool, str]:
+    if not isinstance(payload, Mapping):
+        return None, False, ""
+    repository = payload.get("repository")
+    repo = str(repository.get("full_name") or "") if isinstance(repository, Mapping) else ""
+    item = payload.get("issue") or payload.get("pull_request")
+    number = item.get("number") if isinstance(item, Mapping) else None
+    thread = f"{repo}#{number}" if repo and isinstance(number, int) else ""
+    nested = (payload.get(key) for key in ("comment", "review", "issue", "pull_request"))
+    authors = [item.get("user") for item in nested if isinstance(item, Mapping)]
+    author = next((user for user in authors if isinstance(user, Mapping)), None)
+    known = [user for user in (author, payload.get("sender")) if isinstance(user, Mapping)]
+    if not known:
+        return None, False, thread
+    logins = {str(user.get("login") or "") for user in known}
+    if len(logins) != 1 or "" in logins:
+        return "", False, thread
+    login = logins.pop()
+    is_bot = any(user.get("type") == "Bot" for user in known) or login.endswith("[bot]")
+    return login, is_bot, thread
 
 
 def _message_text(message: object) -> str:
