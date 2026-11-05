@@ -328,7 +328,7 @@ The rendered prompt becomes the goal, the comment's author is checked against `a
 | `[tick] deadline_seconds` | `600` | A CLI tick running longer is stopped. A tick that finds the lock held longer than this fails loudly instead of skipping |
 | `[tick] alert_after_seconds` | `300` | How long an error has to last before it's alerted |
 | `[heartbeat] argv` | none | Runs after every tick with no errors, such as a ping to an external uptime check, so a dead timer gets noticed from outside |
-| `[connectors.<name>] type` | required | `command` for now. A connector polls one tool into the item ledger |
+| `[connectors.<name>] type` | required | `command`, `github` or `agents`. A connector polls one tool into the item ledger |
 | `[connectors.<name>] every` | `5m` | How often it polls |
 | `[connectors.<name>] track` | `true` | `false` keeps its items, such as readings or events, without anyone owning them |
 | `[connectors.<name>] quiet_after` | off, required for delta sources | Warns when the source has had nothing new for this long |
@@ -339,6 +339,7 @@ The rendered prompt becomes the goal, the comment's author is checked against `a
 | `command`: `complete = false`, `overlap`, `backfill` | `true`, `10m`, `14d` | A delta source gets `{since}` (UTC, `2026-11-05T22:00:00Z`), `{since_epoch}` or `{since_date}` (`2026/11/05`) in its `argv`. It starts `backfill` ago and each window reaches `overlap` back into the previous one |
 | `[connectors.<name>] owned`, `channel`, `notify`, `notify_detail` | `false`, none, none, `false` (agents: `true`, none, `waiting`, `stuck`, `limited`, `gone`, `false`) | Owned items start as the owner's instead of new. When an item's `state` has been one in `notify` for two polls, one line goes to `channel`. It names the item and its state, and adds its redacted text only with `notify_detail` |
 | `agents`: `host`, `stall_after`, `python`, `timeout` | this machine, `20m`, `python3`, `30` | Reads every Claude Code session on a host from the hook's logs, over ssh when `host` is set, and turns each into an item with its state: working, waiting, stuck, limited, background, idle, gone or ended. `superagent agents` prints the board. Setup is in [the shadow install guide](docs/dogfood-install.md) |
+| `github`: `queries`, `gh`, `timeout`, `env` | assigned, review requested and mentioned, `gh`, `60`, none | Searches GitHub through `gh api` with your existing `gh` login. Each query must include `is:open`. Every page is read and the count must match GitHub's `total_count`, so a cut list fails the poll. Issues that leave a query are checked one by one, and only a closed one is closed |
 | `[watchdog] stall_after_seconds` | `900` | Silence that counts as stuck |
 | `[watchdog] repeat_limit` | `3` | Identical reports in a row that count as stuck |
 | `[watchdog] repeated_call_limit` | `5` | Identical tool calls and results in a row that count as stuck |

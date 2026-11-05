@@ -1,10 +1,7 @@
 from __future__ import annotations
 
 import json
-import os
 import re
-import signal
-import subprocess
 import time
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
@@ -12,6 +9,7 @@ from datetime import UTC, datetime
 
 from ..ledger import SourceItem, Upstream
 from . import ConnectorConfigError, ConnectorError, ConnectorSpec, Poll, duration
+from .process import run_json
 
 KEYS = frozenset(
     {
@@ -29,7 +27,6 @@ KEYS = frozenset(
         "backfill",
     }
 )
-_BASE_ENV = ("PATH", "HOME", "LANG", "LC_ALL", "TMPDIR", "USER", "XDG_CONFIG_HOME", "XDG_DATA_HOME")
 _PLACEHOLDER = re.compile(r"\{([^{}]+)\}")
 _CURSOR_PLACEHOLDERS = ("{since}", "{since_epoch}", "{since_date}")
 _ITEM_FIELDS = ("url", "due", "updated", "excerpt")
@@ -116,34 +113,7 @@ class CommandConnector:
         return SourceItem(external_id, title, upstream=upstream, meta=meta, **known)
 
     def _run(self, argv: Sequence[str]) -> object:
-        env = {name: os.environ[name] for name in (*_BASE_ENV, *self.env_names) if name in os.environ}
-        try:
-            process = subprocess.Popen(
-                list(argv),
-                stdin=subprocess.DEVNULL,
-                stdout=subprocess.PIPE,
-                stderr=subprocess.PIPE,
-                text=True,
-                env=env,
-                start_new_session=True,
-            )
-        except OSError as error:
-            raise ConnectorError(f"{argv[0]} could not run: {error}") from error
-        try:
-            stdout, stderr = process.communicate(timeout=self.timeout)
-        except subprocess.TimeoutExpired as error:
-            try:
-                os.killpg(process.pid, signal.SIGKILL)
-            except OSError:
-                pass
-            process.communicate()
-            raise ConnectorError(f"{argv[0]} took longer than {self.timeout:g}s") from error
-        if process.returncode != 0:
-            raise ConnectorError(f"{argv[0]} exited {process.returncode}: {stderr.strip()[-200:]}")
-        try:
-            return json.loads(stdout)
-        except ValueError as error:
-            raise ConnectorError(f"{argv[0]} did not print JSON: {error}") from error
+        return run_json(argv, self.env_names, self.timeout)
 
 
 def build(spec: ConnectorSpec) -> CommandConnector:
