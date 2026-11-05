@@ -4,9 +4,11 @@ import argparse
 import json
 import os
 import shutil
+import sqlite3
 import subprocess
 import sys
 import time
+import urllib.request
 import uuid
 from collections.abc import Callable
 from pathlib import Path
@@ -21,6 +23,7 @@ from superagent.domain import Trigger  # noqa: E402
 from superagent.runtime import Runtime, open_runtime  # noqa: E402
 
 PORT = 18999
+WEBHOOK_PORT = 18644
 WORKER_ARGV = ["hermes", "-p", "worker", "chat", "-Q", "--query-file", "{brief}", "-t", "terminal,file,superagent"]
 TURN_TIMEOUT = 90.0
 failures: list[str] = []
@@ -55,18 +58,29 @@ def write_home(home: Path, *, allow_same_user: bool) -> None:
     )
 
 
-def set_up_worker_profile(hermes_home: Path, home: Path) -> None:
-    created = hermes("profile", "create", "worker")
-    print("profile create:", created.returncode, created.stdout[-300:], created.stderr[-300:], flush=True)
-    profile = hermes_home / "profiles" / "worker"
+def create_profile(hermes_home: Path, name: str) -> Path:
+    created = hermes("profile", "create", name)
+    print(f"profile create {name}:", created.returncode, created.stderr[-300:], flush=True)
+    profile = hermes_home / "profiles" / name
     target = profile / "plugins" / "hermes-superagent"
     shutil.copytree(REPO, target, ignore=shutil.ignore_patterns(".git", "__pycache__", "assets", ".venv"))
-    enabled = hermes("-p", "worker", "plugins", "enable", "hermes-superagent")
-    print("plugins enable:", enabled.returncode, enabled.stdout[-300:], enabled.stderr[-300:], flush=True)
-    configure_worker(profile, home)
+    enabled = hermes("-p", name, "plugins", "enable", "hermes-superagent")
+    print(f"plugins enable {name}:", enabled.returncode, enabled.stderr[-300:], flush=True)
+    return profile
 
 
-def configure_worker(profile: Path, home: Path, *, tool_search: str = "auto", role: str = "worker") -> None:
+def set_up_worker_profile(hermes_home: Path, home: Path) -> None:
+    configure_worker(create_profile(hermes_home, "worker"), home)
+
+
+def configure_worker(
+    profile: Path,
+    home: Path,
+    *,
+    tool_search: str = "auto",
+    role: str = "worker",
+    extra: dict[str, Any] | None = None,
+) -> None:
     config_path = profile / "config.yaml"
     config: dict[str, Any] = yaml.safe_load(config_path.read_text(encoding="utf-8")) if config_path.exists() else {}
     config = config or {}
@@ -79,6 +93,7 @@ def configure_worker(profile: Path, home: Path, *, tool_search: str = "auto", ro
     config.setdefault("tools", {})["tool_search"] = {"enabled": tool_search}
     plugins = config.setdefault("plugins", {})
     plugins.setdefault("entries", {})["hermes-superagent"] = {"settings": {"role": role, "home": str(home)}}
+    config.update(extra or {})
     config_path.write_text(yaml.safe_dump(config), encoding="utf-8")
 
 
@@ -201,6 +216,85 @@ def scenario_stop(runtime: Runtime, log: Path) -> None:
     check("stop: the client process is gone", not runtime.router.backend.is_alive(assignment))
 
 
+def post_webhook(route: str, message: str) -> int:
+    request = urllib.request.Request(
+        f"http://127.0.0.1:{WEBHOOK_PORT}/webhooks/{route}",
+        data=json.dumps({"message": message}).encode(),
+        headers={"Content-Type": "application/json", "X-Request-ID": uuid.uuid4().hex},
+    )
+    with urllib.request.urlopen(request, timeout=30) as response:
+        return int(response.status)
+
+
+def webhook_is_up() -> bool:
+    try:
+        with urllib.request.urlopen(f"http://127.0.0.1:{WEBHOOK_PORT}/health", timeout=3) as response:
+            return bool(response.status == 200)
+    except OSError:
+        return False
+
+
+def stored_summaries(home: Path) -> list[str]:
+    database = home / "superagent.db"
+    if not database.exists():
+        return []
+    with sqlite3.connect(database) as connection:
+        return [row[0] for row in connection.execute("SELECT summary FROM reports")]
+
+
+def stage_router(work: Path, log: Path) -> None:
+    hermes_home = work / "router-home"
+    hermes_home.mkdir()
+    os.environ["HERMES_HOME"] = str(hermes_home)
+    home = work / "shared"
+    sent = work / "sent.tsv"
+    write_home(home, allow_same_user=False)
+    with (home / "superagent.toml").open("a", encoding="utf-8") as config:
+        argv = json.dumps(["python3", str(Path(__file__).with_name("outbound.py")), str(sent), "{channel}", "{text}"])
+        config.write(
+            f'\n[sources.webhook]\npolicy = "explicit_only"\nallow = ["webhook:inbox"]\n\n[outbound]\nargv = {argv}\n'
+        )
+    route = {"secret": "INSECURE_NO_AUTH", "prompt": "{message}"}
+    webhook = {
+        "enabled": True,
+        "extra": {"host": "127.0.0.1", "port": WEBHOOK_PORT, "routes": {"inbox": route, "stranger": route}},
+    }
+    configure_worker(
+        create_profile(hermes_home, "router"), home, role="router", extra={"platforms": {"webhook": webhook}}
+    )
+    configure_worker(create_profile(hermes_home, "worker"), home)
+    configure_worker(create_profile(hermes_home, "watchdog"), home, role="watchdog")
+    with (work / "host.log").open("ab") as host_log:
+        host = subprocess.Popen(
+            ["hermes", "gateway", "run"], stdin=subprocess.DEVNULL, stdout=host_log, stderr=subprocess.STDOUT
+        )
+    try:
+        check("router: the host gateway serves the webhook", wait_until(webhook_is_up, timeout=120.0))
+        post_webhook("stranger", "scenario=route id=stranger")
+        time.sleep(15)
+        check(
+            "router: a stranger's message never reaches a model", not turns(log, "stranger"), turns(log, "stranger")[:1]
+        )
+        post_webhook("inbox", "scenario=route id=asked")
+        finished = wait_until(lambda: "done routed-worker" in stored_summaries(home), timeout=180.0)
+        entries = turns(log, "asked")
+        check("router: the model is offered the admitted trigger", any(e.get("trigger") for e in entries), entries[:1])
+        results = [result for entry in entries for result in entry["tool_results"]]
+        check("router: terminal is refused", any("never executes" in r for r in results), results[:2])
+        check("router: the refused command never ran", not (work / "router-ran-asked").exists())
+        check("router: dispatch opens a ticket", any('"ticket"' in r for r in results), results)
+        check("router: the dispatched worker reports ready", finished, stored_summaries(home))
+        tick = hermes("-p", "watchdog", "superagent", "tick")
+        print("tick:", tick.returncode, tick.stdout[-600:], tick.stderr[-600:], flush=True)
+        check("watchdog: the tick runs from the CLI", tick.returncode == 0)
+        delivered = sent.read_text(encoding="utf-8") if sent.exists() else ""
+        check("watchdog: the result is relayed to the person", "Done: done routed-worker" in delivered, delivered)
+        check("watchdog: the relay goes back to the webhook chat", delivered.startswith("webhook:"), delivered)
+    finally:
+        host.terminate()
+        host.wait(timeout=30)
+
+
 def scenario_host_env() -> None:
     found = subprocess.run(["pgrep", "-f", "gateway run"], capture_output=True, text=True, check=False)
     pids = found.stdout.split()
@@ -211,7 +305,9 @@ def scenario_host_env() -> None:
 
 
 def show_logs(hermes_home: Path, work: Path) -> None:
-    for path in sorted(work.glob("**/worker.log")) + sorted(hermes_home.glob("**/logs/*.log")):
+    paths = sorted(work.glob("**/worker.log")) + sorted(work.glob("host.log"))
+    paths += sorted(hermes_home.glob("**/logs/*.log")) + sorted(work.glob("router-home/**/logs/*.log"))
+    for path in paths:
         text = path.read_text(encoding="utf-8", errors="replace")
         print(f"\n--- {path}\n{text[-3000:]}", flush=True)
     print("\n--- model log", flush=True)
@@ -259,6 +355,7 @@ def main() -> int:
         scenario_wander(opened)
         scenario_stop(opened, log)
         scenario_host_env()
+        stage_router(work, log)
     finally:
         show_logs(hermes_home, work)
         model.terminate()
