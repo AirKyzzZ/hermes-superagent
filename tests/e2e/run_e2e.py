@@ -218,7 +218,7 @@ def scenario_stop(runtime: Runtime, log: Path) -> None:
 
 def post_webhook(route: str, message: str) -> int:
     request = urllib.request.Request(
-        f"http://127.0.0.1:{WEBHOOK_PORT}/webhooks/{route}",
+        f"http://127.0.0.1:{WEBHOOK_PORT}/p/router/webhooks/{route}",
         data=json.dumps({"message": message}).encode(),
         headers={"Content-Type": "application/json", "X-Request-ID": uuid.uuid4().hex},
     )
@@ -259,6 +259,8 @@ def stage_router(work: Path, log: Path) -> None:
         "enabled": True,
         "extra": {"host": "127.0.0.1", "port": WEBHOOK_PORT, "routes": {"inbox": route, "stranger": route}},
     }
+    listener = {"platforms": {"webhook": {"enabled": True, "extra": {"host": "127.0.0.1", "port": WEBHOOK_PORT}}}}
+    (hermes_home / "config.yaml").write_text(yaml.safe_dump(listener), encoding="utf-8")
     configure_worker(
         create_profile(hermes_home, "router"), home, role="router", extra={"platforms": {"webhook": webhook}}
     )
