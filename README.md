@@ -14,7 +14,7 @@ A <a href="https://github.com/NousResearch/hermes-agent">Hermes Agent</a> plugin
 <a href="LICENSE"><img alt="MIT licence" src="https://img.shields.io/github/license/AirKyzzZ/hermes-superagent?style=flat-square&label=license&labelColor=14142a&color=1a10b8"></a>
 <a href="pyproject.toml"><img alt="Python 3.11 or newer" src="https://img.shields.io/badge/python-3.11%2B-1a10b8?style=flat-square&labelColor=14142a"></a>
 <a href="plugin.yaml"><img alt="Hermes plugin, requires 0.22.7 or newer" src="https://img.shields.io/badge/Hermes_plugin-%3E%3D0.22.7-1a10b8?style=flat-square&labelColor=14142a"></a>
-<a href="tests"><img alt="266 tests" src="https://img.shields.io/badge/tests-266-1a10b8?style=flat-square&labelColor=14142a"></a>
+<a href="tests"><img alt="299 tests" src="https://img.shields.io/badge/tests-299-1a10b8?style=flat-square&labelColor=14142a"></a>
 <a href="docs/hackathon.md"><img alt="Built for the Hermes Agent Plugin Hackathon" src="https://img.shields.io/badge/built_for-Hermes_Plugin_Hackathon-1a10b8?style=flat-square&labelColor=14142a"></a>
 </p>
 
@@ -363,6 +363,8 @@ Settings go under `plugins.entries.hermes-superagent.settings` in each profile's
 | `pre_llm_call` | Hands the router's model the admitted trigger ids |
 | `pre_tool_call` | Enforces each role's tool policy |
 | `post_tool_call` | Records worker activity for the watchdog |
+
+`hermes superagent ledger list`, `show`, `close`, `ignore` and `snooze` work on the item ledger, which keeps every item a source shows until someone closes it with a reason. Connectors that fill it are next, see the [dogfood design](docs/dogfood-design.md).
 
 </details>
 

@@ -8,10 +8,14 @@ import threading
 import time
 import uuid
 from collections.abc import Callable
+from dataclasses import asdict
+from datetime import datetime
 from pathlib import Path
 
+from .config import DB_FILENAME
 from .digest import build_digest, send_digest
 from .domain import ReportState, Trigger
+from .ledger import ItemState, Ledger, LedgerError
 from .reporting import identity_from_workdir, submit_report
 from .router import Assessor
 from .runtime import open_runtime, tick
@@ -45,6 +49,23 @@ def setup_parser(parser: argparse.ArgumentParser) -> None:
     outbox = commands.add_parser("outbox", help="list messages not delivered yet, or drop one")
     outbox.add_argument("--drop", type=int, default=None, metavar="SEQ", help="stop retrying this message")
     outbox.add_argument("--reason", default="dropped by an operator")
+    ledger = commands.add_parser("ledger", help="list, show, close, ignore or snooze tracked items")
+    ledger_commands = ledger.add_subparsers(dest="ledger_command", required=True)
+    listing = ledger_commands.add_parser("list", help="open items, or every item with --all")
+    listing.add_argument("--all", action="store_true")
+    listing.add_argument("--connector", default="")
+    listing.add_argument("--json", action="store_true")
+    show = ledger_commands.add_parser("show", help="one item and its full history")
+    show.add_argument("item", help="a handle such as it-7f3k, or a full id")
+    close = ledger_commands.add_parser("close", help="mark an item done")
+    close.add_argument("item")
+    close.add_argument("--reason", default="closed by the owner")
+    ignore = ledger_commands.add_parser("ignore", help="stop tracking an item, with a reason")
+    ignore.add_argument("item")
+    ignore.add_argument("--reason", required=True)
+    snooze = ledger_commands.add_parser("snooze", help="hide an item from reconciliation until a date")
+    snooze.add_argument("item")
+    snooze.add_argument("--until", required=True, help="ISO date or date and time, local time")
     report = commands.add_parser("report", help="report status from a worker directory, for agents outside Hermes")
     report.add_argument("--state", required=True, choices=_WORKER_STATES)
     report.add_argument("--summary", required=True)
@@ -69,6 +90,8 @@ def run(
     if home is None:
         print("--home is required outside Hermes", file=sys.stderr)
         return 2
+    if args.superagent_command == "ledger":
+        return run_ledger(args, Ledger(home / DB_FILENAME))
     runtime = open_runtime(home)
     if args.superagent_command == "digest":
         text = build_digest(runtime.store, time.time() - args.hours * 3600, args.hours)
@@ -165,6 +188,34 @@ def arm_deadline(seconds: float) -> threading.Timer:
     timer.daemon = True
     timer.start()
     return timer
+
+
+def run_ledger(args: argparse.Namespace, ledger: Ledger) -> int:
+    try:
+        if args.ledger_command == "list":
+            items = ledger.items(open_only=not args.all, connector=args.connector)
+            if args.json:
+                print(json.dumps([asdict(item) for item in items], indent=1))
+            else:
+                for item in items:
+                    print(f"{item.handle}  {item.state.value:<8} {item.connector:<12} {item.title}")
+            return 0
+        if args.ledger_command == "show":
+            item = ledger.get(args.item)
+            history = [asdict(event) for event in ledger.history(item.id)]
+            print(json.dumps({"item": asdict(item), "history": history}, indent=1))
+            return 0
+        if args.ledger_command == "close":
+            item = ledger.move(args.item, ItemState.DONE, "owner", args.reason)
+        elif args.ledger_command == "ignore":
+            item = ledger.move(args.item, ItemState.IGNORED, "owner", args.reason)
+        else:
+            item = ledger.snooze(args.item, datetime.fromisoformat(args.until).timestamp(), "owner")
+    except (LedgerError, ValueError) as error:
+        print(str(error), file=sys.stderr)
+        return 1
+    print(json.dumps({"item": item.handle, "state": item.state.value, "snoozed_until": item.snoozed_until}))
+    return 0
 
 
 def main(argv: list[str] | None = None) -> int:
