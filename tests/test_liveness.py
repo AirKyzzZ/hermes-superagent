@@ -240,7 +240,7 @@ def test_a_cli_tick_past_its_deadline_is_killed() -> None:
 @pytest.mark.parametrize(
     "extra",
     [
-        '[channels]\nalerts = "x"\nbrief = "y"\n',
+        '[channels]\nalerts = "x"\nnope = "y"\n',
         "[tick]\ndeadline_seconds = 0\n",
         '[tick]\ndeadline_seconds = "soon"\n',
     ],

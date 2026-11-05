@@ -14,7 +14,7 @@ A <a href="https://github.com/NousResearch/hermes-agent">Hermes Agent</a> plugin
 <a href="LICENSE"><img alt="MIT licence" src="https://img.shields.io/github/license/AirKyzzZ/hermes-superagent?style=flat-square&label=license&labelColor=14142a&color=1a10b8"></a>
 <a href="pyproject.toml"><img alt="Python 3.11 or newer" src="https://img.shields.io/badge/python-3.11%2B-1a10b8?style=flat-square&labelColor=14142a"></a>
 <a href="plugin.yaml"><img alt="Hermes plugin, requires 0.22.7 or newer" src="https://img.shields.io/badge/Hermes_plugin-%3E%3D0.22.7-1a10b8?style=flat-square&labelColor=14142a"></a>
-<a href="tests"><img alt="395 tests" src="https://img.shields.io/badge/tests-395-1a10b8?style=flat-square&labelColor=14142a"></a>
+<a href="tests"><img alt="405 tests" src="https://img.shields.io/badge/tests-405-1a10b8?style=flat-square&labelColor=14142a"></a>
 <a href="docs/hackathon.md"><img alt="Built for the Hermes Agent Plugin Hackathon" src="https://img.shields.io/badge/built_for-Hermes_Plugin_Hackathon-1a10b8?style=flat-square&labelColor=14142a"></a>
 </p>
 
@@ -328,6 +328,8 @@ The rendered prompt becomes the goal, the comment's author is checked against `a
 | `[tick] deadline_seconds` | `600` | A CLI tick running longer is stopped. A tick that finds the lock held longer than this fails loudly instead of skipping |
 | `[tick] alert_after_seconds` | `300` | How long an error has to last before it's alerted |
 | `[heartbeat] argv` | none | Runs after every tick with no errors, such as a ping to an external uptime check, so a dead timer gets noticed from outside |
+| `[channels] brief`, `[brief] hour`, `timezone` | none, `8`, `UTC` | The daily brief goes to `brief` on the first tick at or after `hour`, once a day, and catches up if the box was down. It lists what waits on you, what vanished from a source, what's new, what nobody touched for `stale_after`, what got ignored and why, and the day's readings. Every open item shows up unless it's snoozed, triaged and fresh, or a working session. `superagent brief` prints it now |
+| `[brief] stale_after` | `3d` | How long a triaged item can go unchanged before the brief lists it again |
 | `[connectors.<name>] type` | required | `command` for now. A connector polls one tool into the item ledger |
 | `[connectors.<name>] every` | `5m` | How often it polls |
 | `[connectors.<name>] track` | `true` | `false` keeps its items, such as readings or events, without anyone owning them |

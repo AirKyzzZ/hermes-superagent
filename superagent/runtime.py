@@ -9,8 +9,11 @@ import subprocess
 import time
 from collections.abc import Mapping
 from dataclasses import dataclass, replace
+from datetime import datetime
 from pathlib import Path
+from zoneinfo import ZoneInfo
 
+from .brief import BriefSettings, build_brief
 from .config import DB_FILENAME, WORKDIRS_DIRNAME, Config, load_config
 from .connectors import Connector, build_connector
 from .domain import Ticket
@@ -28,6 +31,7 @@ _TICK_LOCK_FILENAME = "tick.lock"
 IGNORED_TRIGGER_RETENTION_SECONDS = 7 * 24 * 3600.0
 POLL_BUDGET_SHARE = 0.5
 SOURCE_TICKET = "sources"
+BRIEF_TICKET = "brief"
 
 
 @dataclass(frozen=True)
@@ -164,6 +168,11 @@ def _run_phases(runtime: Runtime, judge: DriftJudge | None, assessor: Assessor |
     except Exception as error:
         logger.exception("polling failed")
         errors.append(f"poll: {error}")
+    try:
+        send_brief_when_due(runtime)
+    except Exception as error:
+        logger.exception("the brief failed")
+        errors.append(f"brief: {error}")
     if assessor is not None:
         try:
             tickets = runtime.router.assess_candidates(assessor)
@@ -203,6 +212,25 @@ def _run_phases(runtime: Runtime, judge: DriftJudge | None, assessor: Assessor |
             errors.append(f"heartbeat: {error}")
     texts = tuple(warning.text for warning in warnings)
     return TickResult(tuple(tickets), tuple(checks), tuple(delivered), tuple(errors), warnings=texts)
+
+
+def send_brief_when_due(runtime: Runtime, now: float | None = None) -> bool:
+    channel = runtime.config.brief_channel
+    if not channel:
+        return False
+    moment = time.time() if now is None else now
+    local = datetime.fromtimestamp(moment, ZoneInfo(runtime.config.brief_timezone))
+    if local.hour < runtime.config.brief_hour:
+        return False
+    day = local.date().isoformat()
+    if day in runtime.ledger.brief_days():
+        return False
+    since = runtime.ledger.last_brief() or moment - 86400
+    settings = BriefSettings(runtime.config.stale_after_seconds, runtime.config.brief_timezone)
+    text = build_brief(runtime.ledger, runtime.config.connectors, since, moment, settings)
+    runtime.store.queue_message(BRIEF_TICKET, channel, chat_safe(text))
+    runtime.ledger.record_brief(day)
+    return True
 
 
 def _raise_alerts(runtime: Runtime, errors: list[str], warnings: list[SourceWarning]) -> list[tuple[str, str, str]]:

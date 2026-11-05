@@ -29,6 +29,7 @@ CREATE TABLE IF NOT EXISTS item_events (
 );
 CREATE INDEX IF NOT EXISTS item_events_by_item ON item_events (item_id, seq);
 CREATE TABLE IF NOT EXISTS ledger_schema (version INTEGER NOT NULL);
+CREATE TABLE IF NOT EXISTS briefs (day TEXT PRIMARY KEY, built_at REAL NOT NULL);
 CREATE TABLE IF NOT EXISTS announcements (
     item_id TEXT NOT NULL, key TEXT NOT NULL, at REAL NOT NULL, PRIMARY KEY (item_id, key)
 );
@@ -431,6 +432,34 @@ class Ledger:
             )
         return cursor.rowcount == 1
 
+    def ignored_since(self, since: float) -> list[tuple[Item, ItemEvent]]:
+        with self._connect() as connection:
+            events = connection.execute(
+                "SELECT * FROM item_events WHERE to_state = ? AND (from_state IS NULL OR from_state != ?) AND at > ? "
+                "ORDER BY seq",
+                (ItemState.IGNORED.value, ItemState.IGNORED.value, since),
+            ).fetchall()
+        found: list[tuple[Item, ItemEvent]] = []
+        for event in events:
+            item = self.peek(event["item_id"])
+            if item is not None:
+                found.append((item, _event(event)))
+        return found
+
+    def last_brief(self) -> float | None:
+        with self._connect() as connection:
+            row = connection.execute("SELECT MAX(built_at) AS at FROM briefs").fetchone()
+        return row["at"] if row and row["at"] is not None else None
+
+    def brief_days(self) -> set[str]:
+        with self._connect() as connection:
+            return {row["day"] for row in connection.execute("SELECT day FROM briefs")}
+
+    def record_brief(self, day: str) -> bool:
+        with self._connect() as connection:
+            cursor = connection.execute("INSERT OR IGNORE INTO briefs VALUES (?, ?)", (day, time.time()))
+        return cursor.rowcount == 1
+
     def peek(self, identifier: str) -> Item | None:
         with self._connect() as connection:
             row = connection.execute("SELECT * FROM items WHERE id = ?", (identifier,)).fetchone()
@@ -462,18 +491,19 @@ class Ledger:
             events = connection.execute(
                 "SELECT * FROM item_events WHERE item_id = ? ORDER BY seq", (row["id"],)
             ).fetchall()
-        return [
-            ItemEvent(
-                event["at"],
-                event["actor"],
-                ItemState(event["from_state"]) if event["from_state"] else None,
-                ItemState(event["to_state"]),
-                event["area"],
-                event["note"],
-                json.loads(event["content"]) if event["content"] else None,
-            )
-            for event in events
-        ]
+        return [_event(event) for event in events]
+
+
+def _event(event: sqlite3.Row) -> ItemEvent:
+    return ItemEvent(
+        event["at"],
+        event["actor"],
+        ItemState(event["from_state"]) if event["from_state"] else None,
+        ItemState(event["to_state"]),
+        event["area"],
+        event["note"],
+        json.loads(event["content"]) if event["content"] else None,
+    )
 
 
 def _check_connector(connector: str) -> None:
