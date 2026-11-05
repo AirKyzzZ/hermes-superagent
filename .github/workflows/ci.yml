@@ -1,0 +1,53 @@
+name: ci
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+env:
+  HERMES_PIN: b200f5bc60e31588ba2cb60e288029c4a54ba5fa
+
+jobs:
+  checks:
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest]
+        python: ["3.11", "3.14"]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v6
+        with:
+          python-version: ${{ matrix.python }}
+      - run: uv run --group dev ruff check .
+      - run: uv run --group dev ruff format --check .
+      - run: uv run --group dev mypy
+      - run: uv run --group dev pytest -q
+
+  hermes-compat:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v6
+        with:
+          python-version: "3.14"
+      - name: Install Hermes at the pinned release
+        run: |
+          src="$RUNNER_TEMP/hermes-src"
+          git init -q "$src"
+          git -C "$src" fetch -q --depth 1 https://github.com/NousResearch/hermes-agent "$HERMES_PIN"
+          git -C "$src" checkout -q FETCH_HEAD
+          uv sync --project "$src" --frozen --no-dev
+          echo "$src/.venv/bin" >> "$GITHUB_PATH"
+          echo "HERMES_HOME=$RUNNER_TEMP/hermes-home" >> "$GITHUB_ENV"
+          mkdir -p "$RUNNER_TEMP/hermes-home"
+      - run: hermes --version
+      - name: Plugin doctor loads the plugin through real discovery
+        run: hermes plugins doctor . --ci
+      - name: Catalog validation
+        run: hermes plugins validate .

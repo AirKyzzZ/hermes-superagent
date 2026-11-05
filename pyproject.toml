@@ -1,0 +1,33 @@
+[project]
+name = "hermes-superagent"
+version = "0.1.0"
+description = "DeepSeek's Super-agent design as a Hermes Agent plugin"
+requires-python = ">=3.11"
+license = "MIT"
+dependencies = []
+
+[dependency-groups]
+dev = ["pytest>=8,<10", "ruff>=0.6,<1", "mypy>=1.11,<2", "pyyaml>=6,<7", "types-PyYAML"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "--import-mode=importlib -p no:cacheprovider"
+pythonpath = ["."]
+
+[tool.ruff]
+line-length = 120
+target-version = "py311"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "B", "UP"]
+
+[tool.mypy]
+strict = true
+python_version = "3.11"
+explicit_package_bases = true
+mypy_path = "."
+files = ["superagent"]
+
+[[tool.mypy.overrides]]
+module = "plugins.*"
+ignore_missing_imports = true
