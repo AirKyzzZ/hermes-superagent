@@ -338,3 +338,21 @@ def test_poll_time_is_recorded(tmp_path: Path) -> None:
     before = time.time()
     run(ledger, ScriptedConnector([snapshot("a")]))
     assert (ledger.source("tasks").last_ok or 0) >= before
+
+
+@pytest.mark.parametrize("external_id", ["--upload-pack=touch /tmp/x", "-rf", "a b", "a;b", ""])
+def test_unsafe_ids_never_reach_the_confirm_command(tmp_path: Path, external_id: str) -> None:
+    marker = tmp_path / "ran"
+    spec = command_spec(
+        source_file(tmp_path, []),
+        confirm_argv=[sys.executable, "-c", f"open({str(marker)!r}, 'w')", "{id}"],
+    )
+    with pytest.raises(ConnectorError, match="refusing"):
+        build_connector(spec).confirm(external_id)
+    assert not marker.exists()
+
+
+def test_a_safe_id_is_confirmed(tmp_path: Path) -> None:
+    script = "import json, sys; print(json.dumps({'state': 'closed' if sys.argv[1] == 'acme/app#7' else 'open'}))"
+    spec = command_spec(source_file(tmp_path, []), confirm_argv=[sys.executable, "-c", script, "{id}"])
+    assert build_connector(spec).confirm("acme/app#7") is Upstream.CLOSED

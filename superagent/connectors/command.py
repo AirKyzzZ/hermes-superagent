@@ -17,6 +17,7 @@ _PLACEHOLDER = re.compile(r"\{([^{}]+)\}")
 _ITEM_FIELDS = ("url", "due", "updated", "excerpt")
 _DEFAULT_CLOSED = ("closed", "done", "completed", "true", "merged")
 _MISSING = object()
+_SAFE_ID = re.compile(r"[A-Za-z0-9][A-Za-z0-9._:/#@+=-]*")
 
 
 @dataclass(frozen=True)
@@ -46,6 +47,8 @@ class CommandConnector:
     def confirm(self, external_id: str) -> Upstream:
         if not self.confirm_argv or "status" not in self.fields:
             return Upstream.UNKNOWN
+        if not _SAFE_ID.fullmatch(external_id):
+            raise ConnectorError(f"refusing to pass the id {external_id[:80]!r} to a command")
         output = self._run([part.replace("{id}", external_id) for part in self.confirm_argv])
         status = _render(output, self.fields["status"], required=False)
         if status is None:

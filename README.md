@@ -333,7 +333,7 @@ The rendered prompt becomes the goal, the comment's author is checked against `a
 | `[connectors.<name>] track` | `true` | `false` keeps its items, such as readings or events, without anyone owning them |
 | `[connectors.<name>] quiet_after` | off | Warns when the source has had nothing new for this long |
 | `command`: `argv`, `fields`, `items` | required | Runs `argv` and reads its JSON. `items` is the dotted path to the list. `fields` maps `id`, `title`, `url`, `due`, `status`, `excerpt` and any extra meta key to a dotted path or a `{path}` template |
-| `command`: `complete`, `confirm_argv` | `true`, none | A complete source returns everything open each time, so items it stops returning are marked gone. A snapshot that shrinks by half or more is held back until `superagent ledger accept <name>`. `confirm_argv` with `{id}` checks one vanished item's `status` |
+| `command`: `complete`, `confirm_argv` | `true`, none | A complete source returns everything open each time, so items it stops returning are marked gone. A snapshot that shrinks by half or more is held back until `superagent ledger accept <name>`. `confirm_argv` with `{id}` checks one vanished item's `status`. An id that starts with a symbol or holds anything outside letters, digits and `._:/#@+=-` is never passed to it |
 | `command`: `env`, `timeout`, `closed`, `overlap` | none, `60`, `closed`, `done`, `completed`, `true`, `merged`, `10m` | Variables passed through to the command, its timeout, the `status` values that mean closed, and how far each `{since}` cursor of a delta source reaches back |
 | `[watchdog] stall_after_seconds` | `900` | Silence that counts as stuck |
 | `[watchdog] repeat_limit` | `3` | Identical reports in a row that count as stuck |
