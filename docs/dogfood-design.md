@@ -6,6 +6,26 @@ hermes-superagent becomes the owner's real daily setup. It goes into their live 
 
 Everything below is generic. Any user enables only the sources and machines they have, and the plugin works with none.
 
+The goal is that the owner stops watching 15 sessions by hand.
+
+## Parity first, then beat it
+
+Step one is matching what the current setup already does well. Each capability gets measured against the old setup during shadow mode:
+
+| Capability | Today | Here | Parity means |
+| --- | --- | --- | --- |
+| Sweep mail, WhatsApp, Todoist, GitHub | Hermes sweeps on a schedule | Connectors into the ledger | Over a shadow week, every item the old sweeps caught is also in the ledger |
+| Status of every agent | Hermes over ssh and cmux, on request | The agents board | The board lists every session the old setup lists, in the same state |
+| Relaunch stuck agents | Relay scripts | The relaunch policy | Every session the old setup relaunched is flagged at least as early, and no relaunch hits a healthy session |
+| Detailed briefs for workers | Hermes writes them from what the owner types | The brief writer | In a blind comparison on real past tasks, the owner picks the new brief as often as the old one |
+
+Beating it means:
+- **Fewer misses:** the ledger and the reconciliation.
+- **Fewer surprises:** source health and stuck detection that fire before the owner notices.
+- **Better briefs:** briefs that carry context the owner would have had to dig up.
+
+The old setup's own sweep prompts, schedules, relay scripts and a few recent briefs are the baseline. Hermes provides them from the VPS, see the open questions.
+
 ## What exists and what's missing
 
 | Need | In the plugin today | Missing |
@@ -15,6 +35,8 @@ Everything below is generic. Any user enables only the sources and machines they
 | Reconciliation | A daily digest of tickets, escalations, record-mode rules and undelivered messages | Untouched, stale and vanished items. Source health |
 | Router | A strict `router` profile that never executes | A mode that's safe to enable in the owner's own profile, where every tool keeps working |
 | Workers | Hermes sessions on the same host, `python -m superagent report` for outside agents | Claude Code workers, and backends on other machines: tmux or cmux over ssh |
+| Agent status | The watchdog, only for workers it started | Every Claude Code session on every machine, with relaunch |
+| Briefs | A fixed template around the goal | A context pack, a challenged draft, a lint |
 | Channels | One channel per source (`notify`) and one digest channel | A channel per area, and splitting long messages for Discord |
 | Reliability | Outbox with retries, last-good config, watchdog with budgets, silent exits parked for a person | Per-source health, snapshot sanity checks, a heartbeat |
 | Setup | A README walkthrough | One install command, a guided `setup`, a `doctor` |
@@ -81,7 +103,8 @@ A connector polls one tool and returns items. Adding one means adding a file to 
 ```python
 class Connector(Protocol):
     def poll(self, cursor: str) -> Poll: ...
-    def confirm(self, external_id: str) -> Upstream | None: ...
+    def confirm(self, external_id: str) -> Upstream: ...
+
 
 @dataclass(frozen=True)
 class Poll:
@@ -203,12 +226,122 @@ Workers are Claude Code sessions on the owner's Max subscription, logged in on e
   An area or rule names a pool. When a pool is full, or ssh can't reach its host, the ticket waits under "Held" in every brief. It never fails the ticket and never moves it to a second machine behind the owner's back. Only a worker confirmed alive takes an item out of the reconciliation.
 - **Quota gate:** when the `codexbar` source reports the Claude quota under `min_quota`, new dispatches wait and the brief says how many are held.
 
+## Agents: status and relaunch
+
+Every Claude Code session on every machine is an item of the `agents` connector, whether or not the plugin started it. Sessions the owner opened by hand count too. That way, sessions get the ledger's guarantees for free:
+- a session waiting for the owner is `waiting` and shows in every brief;
+- a host that stops answering is a failing source.
+
+**Finding sessions:** each tick, the connector runs one read-only probe per host over ssh: `ssh host python3 - < probe.py`. Nothing gets installed on the host. The probe computes ages on the host itself, so clock drift between machines, such as a WSL2 clock after the PC sleeps, can't fake a stall.
+
+**Hooks, the source of truth:**
+- Claude Code's documented hooks each append one line to `~/.superagent/sessions/<session id>.jsonl`. The events are:
+  - `SessionStart`, `UserPromptSubmit`, `SessionEnd`;
+  - `PreToolUse`, `PostToolUse`, `PostToolUseFailure`;
+  - `PermissionRequest`, `Notification`;
+  - `Stop`, `StopFailure`, `SubagentStop`.
+- A line holds:
+  - the event and the host-local time;
+  - the working directory and the transcript path;
+  - the `claude` process id and its start time;
+  - `TMUX_PANE`, or the cmux variables that say which pane the session lives in.
+- State is computed from main-thread events only. Events that carry an `agent_id` come from subagents and only extend `working`.
+- Installing the hook block in each host's Claude Code settings is a setup step that shows the diff and needs the owner's yes for each machine.
+
+**Transcripts, board only:** sessions without hooks still show on the board, read from their transcripts. The probe only reads:
+- transcripts with `entrypoint` `cli`, which leaves out the SDK's headless runs;
+- files written in the last 24 hours;
+- message rows only, skipping metadata rows such as titles and PR links, which change the file's write time too.
+
+They're marked "inferred". They never become ledger items, and they're never relaunched.
+
+**States, hooked sessions only:**
+
+| State | Comes from |
+| --- | --- |
+| `working` | a main-thread prompt or tool event, or a running tool whose own timeout hasn't passed |
+| `background` | `Stop` with open `background_tasks`, or subagents still running |
+| `waiting` | `PermissionRequest`, `Notification`, a pending `AskUserQuestion` or `ExitPlanMode`, or `Stop` with nothing in the background |
+| `stuck` | working, with no main-thread event for `stall_after` (20 minutes by default), past any running tool's own `timeout`, and nothing open in the background |
+| `limited` | `StopFailure` with `rate_limit`, `overloaded` or another API error |
+| `ended` | `SessionEnd`, whatever the reason |
+| `gone` | the recorded process is dead, with no `SessionEnd`: a crash or a reboot |
+
+A pane belongs to the latest session that claimed it. `/clear` and `/resume` end one id and start another in the same pane, and the board follows them.
+
+A `waiting` session is a `waiting` item. Its excerpt is the session's last question, framed as data. It goes to the `agents` channel when it changes, and to every brief until it moves.
+
+**The board:**
+- `hermes superagent agents` prints every session with:
+  - its host, project and branch;
+  - its state, and how long it has been in it;
+  - the PR it opened, from the transcript's PR rows.
+- In shadow mode, the board posts to the `agents` channel on each change of state, never re-posting an unchanged board. It can also show the bottom of a pane, read with `tmux capture-pane`.
+
+**Relaunch:** off by default, and turned on per host with `relaunch = true`, because it types into the owner's terminals. It acts only on hooked sessions, and only in two cases:
+- **A `limited` session gets one `continue`,** once the quota has reset. Claude Code resumes by itself on claude.ai plans, so the nudge waits until Claude Code reports its own auto-resume as stale or disabled.
+- **A `gone` session is resumed** with `claude --resume <session id>`, in a new pane in the same directory. That happens only when its process is confirmed dead and no `SessionEnd` was ever recorded.
+
+Before any keystroke, the plugin checks three things, and escalates to the owner instead of typing when any fails:
+- the recorded process is a descendant of the pane's `pane_pid`;
+- it's the latest session to have claimed the pane;
+- `capture-pane` shows Claude's input box empty, with no dialog and no "Interrupted" mark.
+
+What relaunch leaves alone:
+- **`stuck`:** it only escalates. Pressing Esc to unstick a running tool is the owner's call.
+- **`waiting`:** never touched. It may hold a question or a permission.
+- **Interrupts and exits:** an Esc ends a turn without a `Stop` event, but the pane check sees "Interrupted", so the session is left as the owner left it. Ctrl-C and `/exit` record a `SessionEnd`, so they're never resumed.
+
+Each session has a budget, one nudge and one resume by default. Every relaunch is an item event, so `ledger show` has the full history. Relaunch only ever types the configured nudge text or the resume command.
+
+The old setup's relay scripts may relaunch in other cases. Those get added here once Hermes sends them, each with the same pane checks.
+
+## Briefs
+
+The orchestrator writes briefs that beat what the owner would type, because they carry context the owner would have had to dig up.
+
+1. **Context pack,** built in code with no model call. Every piece has a source id and a trust level:
+   - **Trusted, written by the owner:** Todoist tasks, their own comments, the area's `brief_notes`.
+   - **Trusted, from the repo:** agent instruction files (`AGENTS.md`, `CLAUDE.md`, `CONTRIBUTING.md`), given as paths, not copies.
+   - **Untrusted, everything else:**
+     - issue and PR bodies and comments by others;
+     - mail threads and chat messages;
+     - related ledger items, matched by thread, repo, sender, or a URL that shows up in several sources;
+     - earlier tickets on the item and how they ended.
+2. **Draft:** one structured model call. Each line cites one source id. It produces:
+   - the goal, and who asked;
+   - context, and acceptance criteria that can be tested;
+   - constraints, and what's out of scope;
+   - first steps, open questions and the report contract.
+3. **Challenge:** a second call acts as a skeptical senior engineer. It lists ambiguity, missing acceptance criteria, unstated assumptions and risk.
+4. **Revise:** a third call fixes the draft.
+5. **Lint, in code:**
+   - every line cites a source id that exists;
+   - quoted text is an exact substring of the piece it cites;
+   - at least one acceptance criterion;
+   - length bounds, and no secret-looking strings;
+   - every command, URL and host in the brief also appears in trusted text. That stops "setup needs `curl … | sh`" from a mail turning into an instruction.
+
+   A brief that fails lint is never dispatched. The owner gets it with the failures marked.
+
+**Approval:** a brief whose pack holds untrusted text needs the owner's approval before it's dispatched, whatever the rules say. Approval is one word in the `briefs` channel, or `ledger assign`. A brief built only from trusted text can be dispatched by a rule.
+
+**Cost:** briefs are written outside the tick by `hermes superagent briefs`, on its own timer. They're cached by a hash of the pack, and limited by `[briefs] daily_limit` (20 by default). They use the profile's own model through `ctx.llm`, so the spend shows on the owner's usual model account.
+
+**Shadow:** every item the reconciliation would assign gets the brief it would have received, posted to the `briefs` channel. The owner can set it next to what they'd have typed.
+
+**Parity test:**
+- Hermes provides at least 15 real past tasks, each with the message the owner typed and the brief that ran.
+- The new brief is built from the pack as it stood at dispatch time. Item events keep each content version, which makes that possible. The ticket being judged is left out.
+- Both briefs are rendered in the same format. The owner picks the better one without knowing which is which.
+- CI tests the pack builder, the lint and the flow with a fake model. Brief quality needs a live model, so it isn't claimed until it has been measured.
+
 ## Safety
 
 - **Read only:** built-in connectors call only list, search and get commands. A test checks every preset's argv against an allowlist of read verbs. The `command` connector runs what the owner writes and says so in its docs.
 - **No sending:** the only outbound path is the configured channels. Nothing replies to mail or WhatsApp, and nothing posts to issues except what a worker does in a repo it was assigned.
 - **Protected repos:** for `protected_repos` globs, such as repos where the owner reviews, the brief says to open a PR and never merge or push to the default branch. Claude Code also starts with `--disallowedTools` for merge and force-push commands. That's defence in depth only, because a shell can get around a prefix rule. The real guarantee is the forge's branch protection, and `doctor` warns when a protected repo doesn't have it.
-- **Scoped briefs:** one item (title, url, framed excerpt), the repo path, the rules and the report contract. No other ledger content, mail or credentials.
+- **Scoped briefs:** one item, its context pack, the repo path, the rules and the report contract. Never credentials. Untrusted text in a pack makes the brief wait for the owner's approval, and the lint rejects any command, URL or host that only untrusted text mentions.
 - **Untrusted sources never dispatch on their own:** `dispatch` is false by default for `gmail` and `whatsapp`, so a crafted email can't start a worker. The owner can still assign it.
 
 ## Where it runs
@@ -228,32 +361,47 @@ Workers are Claude Code sessions on the owner's Max subscription, logged in on e
 The current setup never breaks. The plugin never edits Hermes config, the old cron jobs or the relay scripts, and disabling it returns the owner to exactly what they had before.
 
 1. **Shadow:**
-   - Installed in the live profile with no role and `mode = "shadow"`. It polls, builds the ledger and posts a daily "what I would track and assign" brief to its own channel. Nothing else.
+   - Shadow starts as soon as the agents board ships (PR 6). Sources join it as their PRs land.
+   - Installed in the live profile with no role and `mode = "shadow"`. It polls, builds the ledger, and posts to its own channels:
+     - the agents board;
+     - a daily "what I would track and assign" brief;
+     - the briefs it would write.
+
+     Nothing else. Relaunch stays off.
    - The old setup keeps running. Hermes compares the brief and `hermes superagent ledger list --json` with what its sweeps caught. Each item the old setup missed gets noted as a win.
    - Exit: 7 days with the heartbeat green, no unexplained source failure, nothing the old setup tracked missing from the ledger, and noise the owner accepts.
 2. **Take over, one source at a time, in this order:** Todoist, GitHub, GitLab, then mail.
    - `mode = "live"` per connector: new items post to their area, the owner acts through the ledger tools, and the old sweep for that source is switched off.
    - Exit per source: a week with nothing missed.
-3. **Dispatch:** items go to workers.
+3. **Relaunch, then dispatch:** relaunch turns on host by host once the board's states match the old setup's. Dispatch then sends items to workers with the new briefs.
    - Order: the VPS first, then cmux on the Mac, then tmux on the PC, replacing the relay scripts one machine at a time.
 
 ## PR plan
 
-Each PR is small, ships with tests and keeps the plugin installable and catalog-ready. Shadow mode is complete after PR 10.
+Each PR is small and ships with tests. Before it merges, a reviewer pass hunts for loss paths, and `ruff format --check .` (which also checks code blocks in Markdown) runs locally. Every PR keeps the plugin installable and catalog-ready. Parity features come as early as the ledger allows: the agents board can go into shadow after PR 6, and the sweeps after PR 10.
 
 1. Inert install: CI proves a profile behaves the same with the plugin enabled and no role set. No tool is blocked, no message dropped and no tool added.
-2. Delivery you can trust: owner-facing messages never expire, a tick deadline, a stuck-tick alert, a heartbeat after full ticks, config problems as alerts. Invariants 7 to 9.
-3. Ledger: tables, states, events, `ledger list/show/close/ignore/snooze/accept` CLI. Invariants 1 and 2.
-4. Connector framework, `command` connector, polling in the tick, source health, snapshot completeness, quiet watermarks. Invariants 4 to 6.
-5. Triage rules, areas, backfill, and model suggestions under a timeout.
-6. Brief and reconciliation, area channels, message splitting, alerts, shadow mode. Invariant 3, tested on the delivered text.
-7. `todoist`, `github`, `gitlab`, each paginated to the end.
-8. `gmail` (several accounts, inbox snapshot), `gcal`, `ics`.
-9. `whatsapp` and the reading presets, from fixtures captured on the VPS.
-10. `setup`, `doctor` and `docs/dogfood-install.md` with the exact VPS steps. Catalog disclosure updated for connectors.
-11. `owner` role, ledger tools, per-source live mode.
-12. Claude Code workers: the report file contract on the local backend.
-13. ssh backends (tmux, cmux), pools, held items, protected repos, quota gate.
+2. The outbox never gives up on a message: retries with backoff, order kept within a channel, `superagent outbox` to list or drop.
+3. Alerts and liveness: an alerts channel, a tick deadline, a stuck-tick alert, a heartbeat after full ticks, config problems as alerts, Discord-sized message splitting. Invariants 7 to 9.
+4. Ledger: tables, states, events with content versions, `ledger list/show/close/ignore/snooze/accept` CLI. Invariants 1 and 2.
+5. Connector framework, `command` connector, polling in the tick, source health, snapshot completeness, quiet watermarks. Invariants 4 to 6.
+6. `agents` connector:
+   - the hook block and its per-host installer;
+   - the ssh probe and a read-only `capture-pane`;
+   - the transcript fallback;
+   - the board and the `agents` channel;
+   - a minimal `docs/dogfood-install.md`, so shadow can start.
+7. Relaunch policy, off by default: pane checks, budgets, escalation.
+8. Triage rules, areas, backfill, and model suggestions under a timeout.
+9. Brief and reconciliation, area channels, shadow mode. Invariant 3, tested on the delivered text.
+10. `todoist`, `github`, `gitlab`, each paginated to the end.
+11. `gmail` (several accounts, inbox snapshot), `gcal`, `ics`.
+12. `whatsapp` and the reading presets, from fixtures captured on the VPS.
+13. Brief writer: trust-tagged context pack, draft, challenge, revise, lint, approval, cache and budget. Shadow briefs go to `briefs`.
+14. `setup`, `doctor`, and the full install guide. Catalog disclosure updated.
+15. `owner` role, ledger tools, per-source live mode.
+16. Claude Code workers dispatched with the new briefs: the report file contract on the local backend.
+17. ssh dispatch backends (tmux, cmux), pools, held items, protected repos, quota gate.
 
 ## Open questions for the owner
 
@@ -261,7 +409,12 @@ Each PR is small, ships with tests and keeps the plugin installable and catalog-
 2. Todoist: an API token in an environment variable, or a CLI already on the VPS?
 3. Mail: the whole inbox per account, with promotions, social, updates and forums ignored by visible rules, closing a thread when it's archived? That only works if the inbox is kept small. If it isn't, which label or query should mean "track this"?
 4. Config stays TOML (see "Where it runs"). Is that fine, or is YAML worth depending on the parser that ships inside Hermes?
-5. From the VPS, through Hermes: `--help` and one scrubbed JSON sample for `gog` (mail and calendar), `wacli`, and the Zepp, Anki and CodexBar commands, plus the cmux commands the relay scripts run.
+5. From the VPS, through Hermes, all scrubbed of personal data:
+   - `--help` and one JSON sample each for `gog` (mail and calendar), `wacli`, and the Zepp, Anki and CodexBar commands.
+   - The parity baseline:
+     - today's sweep prompts and their schedules;
+     - the relay scripts, and how they spot and relaunch a stuck session;
+     - at least 15 recent tasks, each with the message the owner typed and the brief that ran.
 
 ## Not doing
 
