@@ -23,11 +23,13 @@ It runs four scenes: a request going through to a worker and back, a prompt inje
 
 **Early build.** The plugin passes `hermes plugins doctor` and `validate` in CI against Hermes v0.22.7, but a full run with a live model and gateway hasn't been done yet. Expect rough edges in these steps.
 
-Requires Hermes 0.22.7 or newer. Install and enable it in each profile:
+Requires Hermes 0.22.7 or newer, on macOS or Linux. Install and enable it in each profile:
 
 ```bash
-hermes profile create router && hermes profile create worker && hermes profile create watchdog
-hermes -p router plugins install AirKyzzZ/hermes-superagent
+for p in router worker watchdog; do
+  hermes profile create "$p"
+  hermes -p "$p" plugins install AirKyzzZ/hermes-superagent
+done
 ```
 
 Write `superagent.toml` in a directory the router and watchdog share:
@@ -49,7 +51,7 @@ text = "Reproduce reported bugs quietly, speak up only with a confirmed fix."
 mode = "record"                # logs what it would do until you switch it to "act"
 ```
 
-Then give each profile its role in `config.yaml`:
+Give the router and watchdog their role in each profile's `config.yaml`:
 
 ```yaml
 plugins:
@@ -58,6 +60,13 @@ plugins:
       settings:
         role: router           # or watchdog
         home: /path/to/shared/dir
+```
+
+Give the worker a sandbox in its own `config.yaml`. Without one, the plugin refuses it `terminal` and file tools, because a local worker runs as your user and could rewrite the router's config. Setting `allow_same_user = true` under `[worker]` overrides that if you accept the risk.
+
+```yaml
+terminal:
+  backend: docker
 ```
 
 Remove `terminal` and `file` from the router with `hermes -p router tools`, keep gateway credentials out of the worker profile, and schedule the watchdog:

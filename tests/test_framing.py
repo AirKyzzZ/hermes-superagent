@@ -24,6 +24,11 @@ def test_length_is_capped() -> None:
     assert framed.count("a") <= MAX_FRAMED_CHARS + 60
 
 
+def test_tail_mode_keeps_the_end() -> None:
+    framed = frame_untrusted("x", "a" * MAX_FRAMED_CHARS + "TAIL", nonce="n1", keep_tail=True)
+    assert "TAIL" in framed
+
+
 def test_trigger_label_names_the_actor() -> None:
     event = Trigger(id="1", source="github", thread="pr/1", actor="bob", text="hi")
     assert "github event from bob on pr/1" in frame_trigger(event, nonce="n1")

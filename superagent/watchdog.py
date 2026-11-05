@@ -10,14 +10,18 @@ from .router import Router
 from .store import Store
 from .worker import WorkerBackend
 
+_NO_ASSIGNMENT = "none"
+
 
 @dataclass(frozen=True)
 class WatchdogPolicy:
-    stall_after_seconds: float = 900
+    stall_after_seconds: float = 900.0
     repeat_limit: int = 3
     repeated_call_limit: int = 5
     nudge_budget: int = 1
     restart_budget: int = 1
+    orphan_after_seconds: float = 30.0
+    reap_grace_seconds: float = 30.0
 
 
 @dataclass(frozen=True)
@@ -118,6 +122,7 @@ def check_once(
 ) -> list[CheckResult]:
     active_judge = judge or NoDriftJudge()
     active_policy = policy or WatchdogPolicy()
+    _reap_finished(router, active_policy)
     results: list[CheckResult] = []
     for assignment in router.store.running_assignments():
         ticket = router.store.get_ticket(assignment.ticket_id)
@@ -130,11 +135,31 @@ def check_once(
             if judgement.verdict is Verdict.ON_TRACK
             else choose_repair(router.store, ticket, evidence, active_policy)
         )
-        router.store.add_watchdog_event(assignment, judgement.verdict.value, action, judgement.reason)
+        router.store.add_watchdog_event(assignment.id, ticket.id, judgement.verdict.value, action, judgement.reason)
         if action is not RepairAction.NONE:
             apply_repair(action, router, ticket, assignment, judgement)
         results.append(CheckResult(assignment.id, ticket.id, judgement.verdict, action, judgement.reason))
+    for ticket in router.store.orphaned_tickets(active_policy.orphan_after_seconds):
+        results.append(_repair_orphan(router, ticket, active_policy))
     return results
+
+
+def _reap_finished(router: Router, policy: WatchdogPolicy) -> None:
+    for assignment in router.store.assignments_to_reap(policy.reap_grace_seconds):
+        router.backend.stop(assignment)
+        router.store.mark_reaped(assignment.id)
+
+
+def _repair_orphan(router: Router, ticket: Ticket, policy: WatchdogPolicy) -> CheckResult:
+    reason = "open ticket has no running worker"
+    restarts = router.store.repair_count(ticket.id, RepairAction.RESTART)
+    action = RepairAction.RESTART if restarts < policy.restart_budget else RepairAction.ESCALATE
+    router.store.add_watchdog_event(_NO_ASSIGNMENT, ticket.id, Verdict.STUCK.value, action, reason)
+    if action is RepairAction.RESTART:
+        router.start_worker(ticket)
+    else:
+        router.store.end_ticket(ticket.id)
+    return CheckResult(_NO_ASSIGNMENT, ticket.id, Verdict.STUCK, action, reason)
 
 
 def _judge_semantically(judge: DriftJudge, ticket: Ticket, evidence: Evidence) -> Judgement:

@@ -61,7 +61,7 @@ class LlmDriftJudge:
 
     def judge(self, goal: str, reports: tuple[Report, ...]) -> Judgement:
         history = "\n".join(f"{report.state.value}: {report.summary}" for report in reports)
-        text = f"{frame_untrusted('goal', goal)}\n{frame_untrusted('worker reports', history)}"
+        text = f"{frame_untrusted('goal', goal)}\n{frame_untrusted('worker reports', history, keep_tail=True)}"
         try:
             result = self.llm.complete_structured(
                 instructions=_DRIFT_INSTRUCTIONS,

@@ -29,6 +29,7 @@ HUMAN_FACING_REPORT_STATES = frozenset({ReportState.READY, ReportState.BLOCKED, 
 
 class TicketStatus(StrEnum):
     OPEN = "open"
+    WAITING = "waiting"
     ENDED = "ended"
 
 

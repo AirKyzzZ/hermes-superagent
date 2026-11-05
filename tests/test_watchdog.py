@@ -146,6 +146,37 @@ def test_stale_worker_cannot_record_activity(router: Router, backend: FakeBacken
         router.store.record_activity(assignment.id, backend.started[0][2], "late")
 
 
+def test_worker_process_left_running_after_a_final_report_is_stopped(router: Router, backend: FakeBackend) -> None:
+    router.ingest(REQUEST)
+    assignment = router.store.running_assignments()[0]
+    router.store.add_report(assignment.id, backend.started[0][2], ReportState.READY, "done")
+    check_once(router, policy=WatchdogPolicy(reap_grace_seconds=3600))
+    assert backend.stopped == []
+    check_once(router, policy=WatchdogPolicy(reap_grace_seconds=0))
+    check_once(router, policy=WatchdogPolicy(reap_grace_seconds=0))
+    assert backend.stopped == [assignment.id]
+
+
+def test_open_ticket_without_a_worker_is_recovered_then_escalated(router: Router, backend: FakeBackend) -> None:
+    router.ingest(REQUEST)
+    assignment = router.store.running_assignments()[0]
+    router.store.end_assignment(assignment.id)
+    policy = WatchdogPolicy(orphan_after_seconds=-1)
+    assert check_once(router, policy=policy)[0].action is RepairAction.RESTART
+    assert len(backend.started) == 2
+    router.store.end_assignment(router.store.running_assignments()[0].id)
+    escalated = check_once(router, policy=policy)[0]
+    assert escalated.action is RepairAction.ESCALATE
+    assert router.store.get_ticket(escalated.ticket_id).status is TicketStatus.ENDED
+    assert "no running worker" in router.relay()[0][2]
+
+
+def test_a_recent_ticket_is_not_treated_as_orphaned(router: Router, backend: FakeBackend) -> None:
+    router.ingest(REQUEST)
+    router.store.end_assignment(router.store.running_assignments()[0].id)
+    assert check_once(router, policy=WatchdogPolicy(orphan_after_seconds=3600)) == []
+
+
 def test_every_check_is_recorded(router: Router, backend: FakeBackend) -> None:
     router.ingest(REQUEST)
     report(router, backend, "working")

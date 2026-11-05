@@ -5,7 +5,7 @@ import json
 import secrets
 import sqlite3
 import time
-from collections.abc import Iterator
+from collections.abc import Callable, Iterator
 from contextlib import contextmanager
 from dataclasses import asdict
 from pathlib import Path
@@ -41,7 +41,7 @@ CREATE TABLE IF NOT EXISTS subscriptions (
 );
 CREATE TABLE IF NOT EXISTS assignments (
     id TEXT PRIMARY KEY, ticket_id TEXT NOT NULL, attempt INTEGER NOT NULL, token_hash TEXT NOT NULL,
-    status TEXT NOT NULL, pid INTEGER, started_at REAL NOT NULL
+    status TEXT NOT NULL, pid INTEGER, started_at REAL NOT NULL, ended_at REAL, reaped_at REAL
 );
 CREATE TABLE IF NOT EXISTS reports (
     seq INTEGER PRIMARY KEY AUTOINCREMENT, assignment_id TEXT NOT NULL, ticket_id TEXT NOT NULL,
@@ -53,7 +53,7 @@ CREATE TABLE IF NOT EXISTS inputs (
 );
 CREATE TABLE IF NOT EXISTS outbox (
     seq INTEGER PRIMARY KEY AUTOINCREMENT, ticket_id TEXT NOT NULL, channel TEXT NOT NULL, text TEXT NOT NULL,
-    sent_at REAL
+    sent_at REAL, attempts INTEGER NOT NULL DEFAULT 0, failed_at REAL
 );
 CREATE TABLE IF NOT EXISTS activities (
     seq INTEGER PRIMARY KEY AUTOINCREMENT, assignment_id TEXT NOT NULL, fingerprint TEXT NOT NULL, at REAL NOT NULL
@@ -63,6 +63,11 @@ CREATE TABLE IF NOT EXISTS watchdog_events (
     verdict TEXT NOT NULL, action TEXT NOT NULL, reason TEXT NOT NULL, at REAL NOT NULL, relayed_at REAL
 );
 """
+
+
+BUSY_TIMEOUT_SECONDS = 5
+MAX_REPORT_CHARS = 2000
+_LIVE_STATUSES = (TicketStatus.OPEN.value, TicketStatus.WAITING.value)
 
 
 class StaleAssignmentError(PermissionError):
@@ -77,17 +82,25 @@ class Store:
     def __init__(self, path: Path) -> None:
         self.path = path
         path.parent.mkdir(parents=True, exist_ok=True)
-        with self._connect() as connection:
+        connection = sqlite3.connect(path, timeout=BUSY_TIMEOUT_SECONDS)
+        try:
+            connection.execute("PRAGMA journal_mode=WAL")
             connection.executescript(_SCHEMA)
+        finally:
+            connection.close()
 
     @contextmanager
     def _connect(self) -> Iterator[sqlite3.Connection]:
-        connection = sqlite3.connect(self.path, timeout=30)
+        connection = sqlite3.connect(self.path, timeout=BUSY_TIMEOUT_SECONDS, isolation_level=None)
         connection.row_factory = sqlite3.Row
-        connection.execute("PRAGMA journal_mode=WAL")
         try:
-            with connection:
-                yield connection
+            connection.execute("BEGIN IMMEDIATE")
+            yield connection
+            connection.execute("COMMIT")
+        except BaseException:
+            if connection.in_transaction:
+                connection.execute("ROLLBACK")
+            raise
         finally:
             connection.close()
 
@@ -120,18 +133,7 @@ class Store:
     def get_trigger(self, trigger_id: str) -> Trigger | None:
         with self._connect() as connection:
             row = connection.execute("SELECT * FROM triggers WHERE id = ?", (trigger_id,)).fetchone()
-        if row is None:
-            return None
-        return Trigger(
-            id=row["id"],
-            source=row["source"],
-            thread=row["thread"],
-            actor=row["actor"],
-            text=row["text"],
-            channel=row["channel"],
-            addressed=bool(row["addressed"]),
-            is_bot=bool(row["is_bot"]),
-        )
+        return _trigger_from_row(row) if row else None
 
     def create_ticket(self, goal: str, mandate: Mandate, channel: str, thread: str) -> tuple[Ticket, bool]:
         ticket_id = f"tk-{secrets.token_hex(4)}"
@@ -149,7 +151,8 @@ class Store:
                 ),
             )
             if cursor.rowcount == 1:
-                connection.execute("INSERT INTO subscriptions VALUES (?,?)", (thread, ticket_id))
+                if thread:
+                    connection.execute("INSERT INTO subscriptions VALUES (?,?)", (thread, ticket_id))
                 return Ticket(ticket_id, goal, mandate, channel, TicketStatus.OPEN), True
             row = connection.execute("SELECT * FROM tickets WHERE trigger_id = ?", (mandate.trigger_id,)).fetchone()
         return _ticket_from_row(row), False
@@ -176,16 +179,37 @@ class Store:
             rows = connection.execute(query + " ORDER BY created_at", args).fetchall()
         return [_ticket_from_row(row) for row in rows]
 
-    def end_ticket(self, ticket_id: str) -> None:
+    def live_tickets(self) -> list[Ticket]:
         with self._connect() as connection:
-            connection.execute("UPDATE tickets SET status = ? WHERE id = ?", (TicketStatus.ENDED.value, ticket_id))
+            rows = connection.execute(
+                "SELECT * FROM tickets WHERE status IN (?,?) ORDER BY created_at", _LIVE_STATUSES
+            ).fetchall()
+        return [_ticket_from_row(row) for row in rows]
+
+    def set_ticket_status(self, ticket_id: str, status: TicketStatus) -> None:
+        with self._connect() as connection:
+            connection.execute("UPDATE tickets SET status = ? WHERE id = ?", (status.value, ticket_id))
+
+    def end_ticket(self, ticket_id: str) -> None:
+        self.set_ticket_status(ticket_id, TicketStatus.ENDED)
+
+    def orphaned_tickets(self, older_than_seconds: float) -> list[Ticket]:
+        cutoff = time.time() - older_than_seconds
+        with self._connect() as connection:
+            rows = connection.execute(
+                "SELECT * FROM tickets t WHERE t.status = ? AND t.created_at <= ? AND NOT EXISTS "
+                "(SELECT 1 FROM assignments a WHERE a.ticket_id = t.id AND a.status = ?) AND NOT EXISTS "
+                "(SELECT 1 FROM assignments a WHERE a.ticket_id = t.id AND a.ended_at > ?) ORDER BY t.created_at",
+                (TicketStatus.OPEN.value, cutoff, AssignmentStatus.RUNNING.value, cutoff),
+            ).fetchall()
+        return [_ticket_from_row(row) for row in rows]
 
     def subscribers(self, thread: str) -> list[str]:
         with self._connect() as connection:
             rows = connection.execute(
                 "SELECT s.ticket_id FROM subscriptions s JOIN tickets t ON t.id = s.ticket_id "
-                "WHERE s.thread = ? AND t.status = ?",
-                (thread, TicketStatus.OPEN.value),
+                "WHERE s.thread = ? AND t.status IN (?,?)",
+                (thread, *_LIVE_STATUSES),
             ).fetchall()
         return [row["ticket_id"] for row in rows]
 
@@ -201,11 +225,12 @@ class Store:
                 + 1
             )
             connection.execute(
-                "UPDATE assignments SET status = ? WHERE ticket_id = ? AND status = ?",
-                (AssignmentStatus.ENDED.value, ticket_id, AssignmentStatus.RUNNING.value),
+                "UPDATE assignments SET status = ?, ended_at = ? WHERE ticket_id = ? AND status = ?",
+                (AssignmentStatus.ENDED.value, now, ticket_id, AssignmentStatus.RUNNING.value),
             )
             connection.execute(
-                "INSERT INTO assignments VALUES (?,?,?,?,?,?,?)",
+                "INSERT INTO assignments (id, ticket_id, attempt, token_hash, status, pid, started_at) "
+                "VALUES (?,?,?,?,?,?,?)",
                 (assignment_id, ticket_id, attempt, hash_token(token), AssignmentStatus.RUNNING.value, None, now),
             )
         return Assignment(assignment_id, ticket_id, attempt, AssignmentStatus.RUNNING, None, now), token
@@ -217,8 +242,25 @@ class Store:
     def end_assignment(self, assignment_id: str) -> None:
         with self._connect() as connection:
             connection.execute(
-                "UPDATE assignments SET status = ? WHERE id = ?", (AssignmentStatus.ENDED.value, assignment_id)
+                "UPDATE assignments SET status = ?, ended_at = ? WHERE id = ?",
+                (AssignmentStatus.ENDED.value, time.time(), assignment_id),
             )
+
+    def assignment_is_running(self, assignment_id: str) -> bool:
+        return self.get_assignment(assignment_id).status is AssignmentStatus.RUNNING
+
+    def assignments_to_reap(self, grace_seconds: float) -> list[Assignment]:
+        with self._connect() as connection:
+            rows = connection.execute(
+                "SELECT * FROM assignments WHERE status = ? AND reaped_at IS NULL AND pid IS NOT NULL "
+                "AND ended_at <= ?",
+                (AssignmentStatus.ENDED.value, time.time() - grace_seconds),
+            ).fetchall()
+        return [_assignment_from_row(row) for row in rows]
+
+    def mark_reaped(self, assignment_id: str) -> None:
+        with self._connect() as connection:
+            connection.execute("UPDATE assignments SET reaped_at = ? WHERE id = ?", (time.time(), assignment_id))
 
     def get_assignment(self, assignment_id: str) -> Assignment:
         with self._connect() as connection:
@@ -244,17 +286,19 @@ class Store:
                 raise StaleAssignmentError(f"bad credentials for assignment {assignment_id}")
             if row["status"] != AssignmentStatus.RUNNING.value:
                 raise StaleAssignmentError(f"assignment {assignment_id} has ended, report refused")
+            summary = summary[:MAX_REPORT_CHARS]
+            question = question[:MAX_REPORT_CHARS]
             connection.execute(
                 "INSERT INTO reports (assignment_id, ticket_id, state, summary, question, at) VALUES (?,?,?,?,?,?)",
                 (assignment_id, row["ticket_id"], state.value, summary, question, now),
             )
-            if state in FINAL_REPORT_STATES:
+            if state in FINAL_REPORT_STATES or state is ReportState.BLOCKED:
                 connection.execute(
-                    "UPDATE assignments SET status = ? WHERE id = ?", (AssignmentStatus.ENDED.value, assignment_id)
+                    "UPDATE assignments SET status = ?, ended_at = ? WHERE id = ?",
+                    (AssignmentStatus.ENDED.value, now, assignment_id),
                 )
-                connection.execute(
-                    "UPDATE tickets SET status = ? WHERE id = ?", (TicketStatus.ENDED.value, row["ticket_id"])
-                )
+                status = TicketStatus.WAITING if state is ReportState.BLOCKED else TicketStatus.ENDED
+                connection.execute("UPDATE tickets SET status = ? WHERE id = ?", (status.value, row["ticket_id"]))
         return Report(assignment_id, row["ticket_id"], state, summary, question, now)
 
     def reports_for(self, assignment_id: str, limit: int = 20) -> list[Report]:
@@ -269,25 +313,29 @@ class Store:
             rows = connection.execute("SELECT * FROM reports WHERE ticket_id = ? ORDER BY seq", (ticket_id,)).fetchall()
         return [_report_from_row(row) for row in rows]
 
-    def take_unrelayed_reports(self) -> list[Report]:
+    def move_to_outbox(
+        self, render_report: Callable[[Report], str | None], render_escalation: Callable[[str], str]
+    ) -> None:
+        now = time.time()
+        insert = "INSERT INTO outbox (ticket_id, channel, text) VALUES (?,?,?)"
         with self._connect() as connection:
-            rows = connection.execute("SELECT * FROM reports WHERE relayed_at IS NULL ORDER BY seq").fetchall()
-            connection.executemany(
-                "UPDATE reports SET relayed_at = ? WHERE seq = ?", [(time.time(), row["seq"]) for row in rows]
-            )
-        return [_report_from_row(row) for row in rows]
-
-    def take_unrelayed_escalations(self) -> list[tuple[str, str]]:
-        with self._connect() as connection:
-            rows = connection.execute(
-                "SELECT seq, ticket_id, reason FROM watchdog_events "
-                "WHERE relayed_at IS NULL AND action = ? ORDER BY seq",
+            reports = connection.execute(
+                "SELECT r.*, t.channel FROM reports r JOIN tickets t ON t.id = r.ticket_id "
+                "WHERE r.relayed_at IS NULL ORDER BY r.seq"
+            ).fetchall()
+            for row in reports:
+                text = render_report(_report_from_row(row))
+                if text is not None:
+                    connection.execute(insert, (row["ticket_id"], row["channel"], text))
+                connection.execute("UPDATE reports SET relayed_at = ? WHERE seq = ?", (now, row["seq"]))
+            escalations = connection.execute(
+                "SELECT e.seq, e.ticket_id, e.reason, t.channel FROM watchdog_events e "
+                "JOIN tickets t ON t.id = e.ticket_id WHERE e.relayed_at IS NULL AND e.action = ? ORDER BY e.seq",
                 (RepairAction.ESCALATE.value,),
             ).fetchall()
-            connection.executemany(
-                "UPDATE watchdog_events SET relayed_at = ? WHERE seq = ?", [(time.time(), row["seq"]) for row in rows]
-            )
-        return [(row["ticket_id"], row["reason"]) for row in rows]
+            for row in escalations:
+                connection.execute(insert, (row["ticket_id"], row["channel"], render_escalation(row["reason"])))
+                connection.execute("UPDATE watchdog_events SET relayed_at = ? WHERE seq = ?", (now, row["seq"]))
 
     def pending_candidates(self) -> list[Trigger]:
         with self._connect() as connection:
@@ -329,22 +377,26 @@ class Store:
             )
         return [(row["label"], row["text"], bool(row["trusted"])) for row in rows]
 
-    def add_outbox(self, ticket_id: str, channel: str, text: str) -> None:
-        with self._connect() as connection:
-            connection.execute(
-                "INSERT INTO outbox (ticket_id, channel, text) VALUES (?,?,?)", (ticket_id, channel, text)
-            )
-
     def pending_outbox(self) -> list[tuple[int, str, str, str]]:
         with self._connect() as connection:
             rows = connection.execute(
-                "SELECT seq, ticket_id, channel, text FROM outbox WHERE sent_at IS NULL ORDER BY seq"
+                "SELECT seq, ticket_id, channel, text FROM outbox "
+                "WHERE sent_at IS NULL AND failed_at IS NULL ORDER BY seq"
             ).fetchall()
         return [(row["seq"], row["ticket_id"], row["channel"], row["text"]) for row in rows]
 
     def mark_sent(self, seq: int) -> None:
         with self._connect() as connection:
             connection.execute("UPDATE outbox SET sent_at = ? WHERE seq = ?", (time.time(), seq))
+
+    def record_send_failure(self, seq: int, max_attempts: int) -> bool:
+        with self._connect() as connection:
+            connection.execute("UPDATE outbox SET attempts = attempts + 1 WHERE seq = ?", (seq,))
+            attempts = connection.execute("SELECT attempts FROM outbox WHERE seq = ?", (seq,)).fetchone()["attempts"]
+            if attempts < max_attempts:
+                return False
+            connection.execute("UPDATE outbox SET failed_at = ? WHERE seq = ?", (time.time(), seq))
+            return True
 
     def record_activity(self, assignment_id: str, token: str, fingerprint: str) -> None:
         with self._connect() as connection:
@@ -368,18 +420,19 @@ class Store:
             ).fetchall()
         return [(row["fingerprint"], row["at"]) for row in reversed(rows)]
 
-    def take_admitted(self) -> list[Trigger]:
+    def take_admitted(self, source: str, message: str) -> list[Trigger]:
         with self._connect() as connection:
             rows = connection.execute(
-                "SELECT id FROM triggers WHERE admission = ? AND assessed_at IS NULL ORDER BY received_at",
-                (Admission.ACT.value,),
+                "SELECT * FROM triggers WHERE admission = ? AND assessed_at IS NULL AND source = ? "
+                "ORDER BY received_at",
+                (Admission.ACT.value, source),
             ).fetchall()
+            matching = [row for row in rows if row["text"] and row["text"] in message]
             connection.executemany(
                 "UPDATE triggers SET assessed_at = ?, assessment = 'offered to router' WHERE id = ?",
-                [(time.time(), row["id"]) for row in rows],
+                [(time.time(), row["id"]) for row in matching],
             )
-        triggers = [self.get_trigger(row["id"]) for row in rows]
-        return [trigger for trigger in triggers if trigger is not None]
+        return [_trigger_from_row(row) for row in matching]
 
     def last_watchdog_at(self, assignment_id: str) -> float | None:
         with self._connect() as connection:
@@ -388,12 +441,14 @@ class Store:
             ).fetchone()
         return float(row["at"]) if row["at"] is not None else None
 
-    def add_watchdog_event(self, assignment: Assignment, verdict: str, action: RepairAction, reason: str) -> None:
+    def add_watchdog_event(
+        self, assignment_id: str, ticket_id: str, verdict: str, action: RepairAction, reason: str
+    ) -> None:
         with self._connect() as connection:
             connection.execute(
                 "INSERT INTO watchdog_events (assignment_id, ticket_id, verdict, action, reason, at) "
                 "VALUES (?,?,?,?,?,?)",
-                (assignment.id, assignment.ticket_id, verdict, action.value, reason, time.time()),
+                (assignment_id, ticket_id, verdict, action.value, reason, time.time()),
             )
 
     def repair_count(self, ticket_id: str, action: RepairAction) -> int:
@@ -410,6 +465,19 @@ class Store:
                 "SELECT verdict, action, reason FROM watchdog_events WHERE ticket_id = ? ORDER BY seq", (ticket_id,)
             ).fetchall()
         return [(row["verdict"], row["action"], row["reason"]) for row in rows]
+
+
+def _trigger_from_row(row: sqlite3.Row) -> Trigger:
+    return Trigger(
+        id=row["id"],
+        source=row["source"],
+        thread=row["thread"],
+        actor=row["actor"],
+        text=row["text"],
+        channel=row["channel"],
+        addressed=bool(row["addressed"]),
+        is_bot=bool(row["is_bot"]),
+    )
 
 
 def _ticket_from_row(row: sqlite3.Row) -> Ticket:

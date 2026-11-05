@@ -75,3 +75,17 @@ def test_goal_never_reaches_argv(tmp_path: Path) -> None:
         time.sleep(0.05)
     assert "dangerous" not in log.read_text()
     assert "--dangerous-flag" in (tmp_path / "w" / "tk-1" / "as-1" / "brief.md").read_text()
+
+
+def test_allow_same_user_reaches_the_worker_only_when_configured(tmp_path: Path) -> None:
+    script = tmp_path / "env.py"
+    script.write_text(PRINT_ENV, encoding="utf-8")
+    backend = SubprocessBackend(
+        [sys.executable, str(script), "{brief}"], tmp_path / "db", tmp_path / "w", allow_same_user=True
+    )
+    backend.start(ticket(), assignment(), "token")
+    log = tmp_path / "w" / "tk-1" / "as-1" / "worker.log"
+    deadline = time.time() + 10
+    while (not log.exists() or not log.read_text()) and time.time() < deadline:
+        time.sleep(0.05)
+    assert "SUPERAGENT_ALLOW_SAME_USER" in log.read_text()

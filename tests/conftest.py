@@ -39,11 +39,13 @@ text = "Reproduce reported bugs quietly."
 class FakeBackend:
     alive: bool = True
     started: list[tuple[str, str, str]] = field(default_factory=list)
+    contexts: list[str] = field(default_factory=list)
     stopped: list[str] = field(default_factory=list)
     on_stop: Callable[[str], None] | None = None
 
-    def start(self, ticket: Ticket, assignment: Assignment, token: str) -> int:
+    def start(self, ticket: Ticket, assignment: Assignment, token: str, context: str = "") -> int:
         self.started.append((ticket.id, assignment.id, token))
+        self.contexts.append(context)
         return 4242
 
     def is_alive(self, assignment: Assignment) -> bool:

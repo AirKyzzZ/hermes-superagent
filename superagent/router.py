@@ -1,5 +1,8 @@
 from __future__ import annotations
 
+import logging
+import re
+import subprocess
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass
 from enum import StrEnum
@@ -17,12 +20,16 @@ from .domain import (
     TicketStatus,
     Trigger,
 )
-from .framing import frame_trigger
+from .framing import frame_trigger, frame_untrusted
 from .gate import RuleMode, Rules, SemanticRule, SourcePolicy, gate
 from .store import Store
 from .worker import WorkerBackend
 
+logger = logging.getLogger(__name__)
+
 CHAT_WORD_LIMIT = 100
+MAX_SEND_ATTEMPTS = 5
+_ATTACHMENT_TAG = re.compile(r"media:", re.IGNORECASE)
 
 
 class Outcome(StrEnum):
@@ -71,7 +78,7 @@ class Router:
             return Disposition(Outcome.DUPLICATE, "trigger already recorded")
         subscribers = self.store.subscribers(trigger.thread)
         if subscribers and self._may_reach_workers(trigger):
-            return self._pass_through(trigger, subscribers, trusted=self._is_allowed(trigger))
+            return self._pass_through(trigger, subscribers)
         if decision.admission is Admission.IGNORE:
             return Disposition(Outcome.IGNORED, decision.reason)
         if decision.admission is Admission.CANDIDATE:
@@ -82,12 +89,17 @@ class Router:
         return Disposition(Outcome.DISPATCHED, decision.reason, (ticket.id,))
 
     def dispatch(self, trigger_id: str, goal: str) -> Ticket:
-        trigger = self.store.get_trigger(trigger_id)
-        if trigger is None:
-            raise NotAdmittedError(f"unknown trigger: {trigger_id}")
-        if self.store.admission_of(trigger_id) is not Admission.ACT:
-            raise NotAdmittedError(f"trigger {trigger_id} was not admitted by the gate")
-        return self._open_ticket(trigger, goal, Strength.EXPLICIT)
+        return self._open_ticket(self._admitted_trigger(trigger_id), goal, Strength.EXPLICIT)
+
+    def forward(self, trigger_id: str, ticket_id: str) -> Ticket:
+        trigger = self._admitted_trigger(trigger_id)
+        ticket = self.store.get_ticket(ticket_id)
+        if ticket.status is TicketStatus.ENDED:
+            raise ValueError(f"ticket {ticket_id} has ended, dispatch a new one")
+        self.store.add_input(ticket_id, f"{trigger.source}:{trigger.actor}", frame_trigger(trigger), trusted=True)
+        self.store.mark_assessed(trigger_id, f"forwarded to {ticket_id}")
+        self._resume_if_waiting(ticket)
+        return self.store.get_ticket(ticket_id)
 
     def assess_candidates(self, assessor: Assessor) -> list[Ticket]:
         batch = self.store.pending_candidates()
@@ -110,31 +122,52 @@ class Router:
         return tickets
 
     def relay(self, send: Sender | None = None) -> list[tuple[str, str, str]]:
-        for report in self.store.take_unrelayed_reports():
-            self._relay_report(report)
-        for ticket_id, reason in self.store.take_unrelayed_escalations():
-            ticket = self.store.get_ticket(ticket_id)
-            self.store.add_outbox(ticket_id, ticket.channel, shorten(f"Needs you: {reason}"))
+        self.store.move_to_outbox(_render_report, _render_escalation)
         delivered: list[tuple[str, str, str]] = []
         for seq, ticket_id, channel, text in self.store.pending_outbox():
             if send is not None:
-                send(channel, text)
+                try:
+                    send(channel, text)
+                except (subprocess.SubprocessError, OSError) as error:
+                    gave_up = self.store.record_send_failure(seq, MAX_SEND_ATTEMPTS)
+                    logger.warning("send to %s failed (gave up: %s): %s", channel, gave_up, error)
+                    continue
             self.store.mark_sent(seq)
             delivered.append((ticket_id, channel, text))
         return delivered
 
     def status(self) -> list[dict[str, str]]:
         lines = []
-        for ticket in self.store.list_tickets(TicketStatus.OPEN):
+        for ticket in self.store.live_tickets():
             reports = self.store.ticket_reports(ticket.id)
             lines.append(
                 {
                     "ticket": ticket.id,
                     "goal": shorten(ticket.goal),
+                    "status": ticket.status.value,
                     "state": reports[-1].state.value if reports else "starting",
                 }
             )
         return lines
+
+    def is_allowed(self, trigger: Trigger) -> bool:
+        rules = self.rules.sources.get(trigger.source)
+        return rules is not None and trigger.actor in rules.allow
+
+    def start_worker(self, ticket: Ticket) -> Assignment:
+        context = self._restart_context(ticket)
+        assignment, token = self.store.create_assignment(ticket.id)
+        pid = self.backend.start(ticket, assignment, token, context)
+        self.store.set_assignment_pid(assignment.id, pid)
+        return self.store.get_assignment(assignment.id)
+
+    def _admitted_trigger(self, trigger_id: str) -> Trigger:
+        trigger = self.store.get_trigger(trigger_id)
+        if trigger is None:
+            raise NotAdmittedError(f"unknown trigger: {trigger_id}")
+        if self.store.admission_of(trigger_id) is not Admission.ACT:
+            raise NotAdmittedError(f"trigger {trigger_id} was not admitted by the gate")
+        return trigger
 
     def _open_ticket(self, trigger: Trigger, goal: str, strength: Strength) -> Ticket:
         mandate = Mandate(self.rules.version, goal, strength, trigger.actor, trigger.source, trigger.id)
@@ -143,37 +176,51 @@ class Router:
             self.start_worker(ticket)
         return ticket
 
-    def start_worker(self, ticket: Ticket) -> Assignment:
-        assignment, token = self.store.create_assignment(ticket.id)
-        pid = self.backend.start(ticket, assignment, token)
-        self.store.set_assignment_pid(assignment.id, pid)
-        return self.store.get_assignment(assignment.id)
-
-    def _pass_through(self, trigger: Trigger, subscribers: list[str], *, trusted: bool) -> Disposition:
+    def _pass_through(self, trigger: Trigger, subscribers: list[str]) -> Disposition:
         framed = frame_trigger(trigger)
+        trusted = self.is_allowed(trigger)
         for ticket_id in subscribers:
             self.store.add_input(ticket_id, f"{trigger.source}:{trigger.actor}", framed, trusted=trusted)
+            if trusted:
+                self._resume_if_waiting(self.store.get_ticket(ticket_id))
+        self.store.mark_assessed(trigger.id, "passed through")
         return Disposition(Outcome.PASSED_THROUGH, "thread has a live subscriber", tuple(subscribers))
 
-    def _relay_report(self, report: Report) -> None:
-        if report.state not in HUMAN_FACING_REPORT_STATES:
-            return
-        ticket = self.store.get_ticket(report.ticket_id)
-        text = report.question if report.question else report.summary
-        prefix = "Done" if report.state is ReportState.READY else report.state.value.capitalize()
-        self.store.add_outbox(report.ticket_id, ticket.channel, shorten(f"{prefix}: {text}"))
+    def _resume_if_waiting(self, ticket: Ticket) -> None:
+        if ticket.status is TicketStatus.WAITING:
+            self.store.set_ticket_status(ticket.id, TicketStatus.OPEN)
+            self.start_worker(ticket)
+
+    def _restart_context(self, ticket: Ticket) -> str:
+        parts = [text for _, text, _ in self.store.take_inputs(ticket.id)]
+        reports = self.store.ticket_reports(ticket.id)
+        if reports:
+            parts.insert(0, frame_untrusted("what the last worker reported", reports[-1].summary, keep_tail=True))
+        return "\n".join(parts)
 
     def _may_reach_workers(self, trigger: Trigger) -> bool:
         rules = self.rules.sources.get(trigger.source)
         if rules is None or rules.policy is SourcePolicy.IGNORE or trigger.is_bot:
             return False
-        return self._is_allowed(trigger) or rules.pass_strangers
+        return self.is_allowed(trigger) or rules.pass_strangers
 
-    def _is_allowed(self, trigger: Trigger) -> bool:
-        rules = self.rules.sources.get(trigger.source)
-        return rules is not None and trigger.actor in rules.allow
+
+def chat_safe(text: str) -> str:
+    return _ATTACHMENT_TAG.sub("media ", text).replace("[[", "[ [")
 
 
 def shorten(text: str, limit: int = CHAT_WORD_LIMIT) -> str:
     words = text.split()
     return text if len(words) <= limit else " ".join(words[:limit]) + " ..."
+
+
+def _render_report(report: Report) -> str | None:
+    if report.state not in HUMAN_FACING_REPORT_STATES:
+        return None
+    text = report.question if report.question else report.summary
+    prefix = "Done" if report.state is ReportState.READY else report.state.value.capitalize()
+    return chat_safe(shorten(f"{prefix}: {text}"))
+
+
+def _render_escalation(reason: str) -> str:
+    return chat_safe(shorten(f"Needs you: {reason}"))

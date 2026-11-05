@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import tomllib
-from dataclasses import dataclass
+from dataclasses import dataclass, fields
 from pathlib import Path
 
 from .gate import Rules, RulesError, parse_rules
@@ -18,6 +18,7 @@ class Config:
     worker_argv: tuple[str, ...]
     send_argv: tuple[str, ...]
     watchdog: WatchdogPolicy
+    allow_same_user: bool = False
 
 
 class ConfigError(ValueError):
@@ -38,17 +39,15 @@ def parse_config(raw: str) -> Config:
     send_argv = tuple(data.get("outbound", {}).get("argv", ()))
     defaults = WatchdogPolicy()
     section = data.get("watchdog", {})
+    known = {field.name for field in fields(WatchdogPolicy)}
+    if unknown := set(section) - known:
+        raise ConfigError(f"unknown [watchdog] keys: {sorted(unknown)}")
     try:
-        policy = WatchdogPolicy(
-            stall_after_seconds=float(section.get("stall_after_seconds", defaults.stall_after_seconds)),
-            repeat_limit=int(section.get("repeat_limit", defaults.repeat_limit)),
-            repeated_call_limit=int(section.get("repeated_call_limit", defaults.repeated_call_limit)),
-            nudge_budget=int(section.get("nudge_budget", defaults.nudge_budget)),
-            restart_budget=int(section.get("restart_budget", defaults.restart_budget)),
-        )
+        policy = WatchdogPolicy(**{key: type(getattr(defaults, key))(value) for key, value in section.items()})
     except (TypeError, ValueError) as error:
         raise ConfigError(f"invalid [watchdog] section: {error}") from error
-    return Config(rules, worker_argv, send_argv, policy)
+    allow_same_user = bool(data.get("worker", {}).get("allow_same_user", False))
+    return Config(rules, worker_argv, send_argv, policy, allow_same_user)
 
 
 def load_config(home: Path) -> Config:

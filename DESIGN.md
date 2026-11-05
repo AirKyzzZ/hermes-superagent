@@ -17,14 +17,14 @@ Nothing here touches Hermes core or imports its internals. Everything goes throu
 
 | DeepSeek module | Hermes primitive | In the slice |
 | --- | --- | --- |
-| **Router:** resident, talks to people, never executes | A `router` profile running the gateway. `post_gateway_admission` takes every admitted message, `pre_llm_call` hands the model admitted trigger ids, the model calls `superagent_dispatch`. `pre_tool_call` blocks every tool outside a short allowlist. Remove `terminal` and `file` from the profile too with `hermes -p router tools`: a plugin can't set that, and the hook leaves their schemas visible | yes |
-| **Workers:** isolated, one task each, report only to the router | One OS process per ticket: `hermes -p worker chat -Q --query-file <brief> -t <toolsets>`. The profile gives it its own credentials and tools. `superagent_report` is its only way out | yes, scripted workers in the demo |
-| **Threads and pass-through** | A subscription table. An allowed person's follow-up goes straight to the subscribed worker in its next report result, with no router model call (`{"action": "handled"}`) | yes |
+| **Router:** resident, talks to people, never executes | A `router` profile running the gateway. `pre_gateway_dispatch` gates every inbound message before Hermes handles it, `pre_llm_call` hands the model admitted trigger ids, the model calls `superagent_dispatch`. `pre_tool_call` blocks every tool outside a short allowlist. Remove `terminal` and `file` from the profile too with `hermes -p router tools`: a plugin can't set that, and the hook leaves their schemas visible | yes |
+| **Workers:** isolated, one task each, report only to the router | One OS process per ticket: `hermes -p worker chat -Q --query-file <brief> -t <toolsets>`. The profile gives it its own credentials, tools and sandboxed terminal backend. `superagent_report` is its only way out. `blocked` parks the ticket until a person answers, then a new worker resumes with the answer | yes, scripted workers in the demo |
+| **Threads and pass-through** | A subscription table, for real threads only. An allowed person's follow-up goes straight to the subscribed worker in its next report result, with no router model call (`{"action": "skip"}`). Outside a thread the message reaches the router, which can pass it on with `superagent_forward` | yes |
 | **Trigger fast path** | `gate()`: pure code over source, sender and bot lists from `superagent.toml`. It never reads the message text | yes |
 | **Trigger slow path** | `ctx.llm.complete_structured` with no tools, one batch per tick, team rules written in prose. A rule starts in `record` mode and only logs what it would have done | yes, tested with a fake LLM |
 | **Sources** | Chat through the gateway, anything else through `hermes superagent ingest` | chat and CLI, webhooks next |
 | **Multi-channel output** | The router relays through a configured command such as `hermes send --to {channel} {text}`, capped at 100 words | yes |
-| **Watchdog:** external, scheduled | A separate process: `hermes superagent tick` from any scheduler, or the `watchdog` automation blueprint in a `watchdog` profile. Code checks for a dead process, silence, identical reports and repeated tool calls. `ctx.llm` judges goal drift. Repairs go nudge, restart, escalate, within a budget | yes |
+| **Watchdog:** external, scheduled | A separate process: `hermes superagent tick` from any scheduler, or the `watchdog` automation blueprint in a `watchdog` profile. Code checks for a dead process, silence, identical reports, repeated tool calls and open tickets with no worker, and stops processes that outlive their assignment. `ctx.llm` judges goal drift. Repairs go nudge, restart, escalate, within a budget | yes |
 | **Bring your own machine** | `python -m superagent report` lets an agent outside Hermes report like any worker | report command yes, tmux backend next |
 
 ### Primitives we chose not to build on yet
@@ -53,19 +53,27 @@ Event content is attacker-controlled, and framing is only a mitigation. So every
 
 | Threat | Control | Residual risk |
 | --- | --- | --- |
-| Prompt injection through a trigger | The gate looks only at source and sender, never content. `Router.dispatch` refuses any trigger the gate did not admit, so a fooled model cannot start work. Event text is framed with a random fence | An allowed person who pastes hostile text still gets it in front of the model, and the model writes the goal |
+| Prompt injection through a trigger | The gate looks only at source and sender, never content, and runs in `pre_gateway_dispatch`, before a stranger's text can reach a running turn. `Router.dispatch` and `forward` refuse any trigger the gate did not admit, so a fooled model cannot start work. Event text is framed with a random fence | An allowed person who pastes hostile text still gets it in front of the model, and the model writes the goal |
 | Router tricked into executing | `pre_tool_call` allowlist, which Hermes fails closed on error or timeout, plus operator-removed toolsets | Another plugin calling `ctx.dispatch_tool` skips the hook |
-| Stranger steering a worker through a subscribed thread | Strangers and bots are dropped before workers by default. `pass_strangers` opts a source in, framed and marked as having no authority | With the opt-in, a worker still reads hostile text |
-| Worker compromised by what it reads | One profile per role, scoped toolsets, an env allowlist so no secrets or YOLO settings are inherited, no outbound tools. Run the worker profile without gateway credentials | A worker with `terminal` can do what its profile's credentials allow. Use a sandboxed terminal backend and scoped tokens |
-| Forged or late reports | Per-assignment token, hashed at rest, read from the env by the tool so it is not in the prompt. A restart ends the old assignment and its reports are refused | A worker can read its own env, but the token only covers its own assignment |
-| Worker report steering the router | Relay is code and the router model is not in that path. The drift judge sees reports framed as data | The text reaches people verbatim, capped at 100 words |
+| Stranger steering a worker through a subscribed thread | Strangers and bots are dropped before workers by default. `pass_strangers` opts a source in, framed and marked as having no authority, and a stranger can never resume a parked ticket | With the opt-in, a worker still reads hostile text |
+| Worker compromised by what it reads | **The boundary is the sandbox.** On a local terminal backend a worker runs as the router's OS user, so it could rewrite `superagent.toml` (whose commands the watchdog runs) and the database. The plugin therefore blocks `terminal`, file and code tools in a worker unless the profile uses a sandboxed backend such as docker, or the operator sets `allow_same_user` and accepts that. Workers also get an env allowlist, so no secrets or YOLO settings are inherited, and no outbound tools | This is a denylist over Hermes tools, not a full sandbox. The report command for agents outside Hermes has no such guard, so those agents need their own. A sandboxed worker can still do what its own credentials allow, so scope them |
+| Forged or late reports | Per-assignment token, hashed at rest, read from the env by the tool so it is not in the prompt. A worker is fenced before it is stopped, then its reports and every tool call are refused | Only holds while the worker can't reach the database, see above. A worker can read its own env, but the token only covers its own assignment |
+| Worker report steering the router or exfiltrating files | Relay is code and the router model is not in that path. `MEDIA:` tags and `[[` directives are neutralised, since `hermes send` would otherwise upload the file a report names. The drift judge sees reports framed as data, most recent first when truncated | Report text reaches people otherwise verbatim, capped at 100 words |
 | Watchdog as a high-value target | The judge has no tools and can only return `on_track` or `drifting`, so a fooled judge costs one bounded repair. It cannot widen a mandate or edit rules. A broken judge never triggers a repair | A hostile report can cause a spurious nudge or restart, up to the budget |
 | Credentials | The plugin holds none. Model calls use `ctx.llm`, outbound uses the configured command | Depends on the operator's profile setup |
 | Attention abuse | Quiet by default, record-only proactive rules, progress never reaches people | Tuning rules stays the team's job |
 
+If the gate itself fails, the message is dropped and logged rather than let through, so a person gets silence during that failure.
+
 ## Known limits
 
-Single host: the store is SQLite and `stop` works by local process group, with a start-time check against PID reuse. A failed send retries on the next tick, so a crash between send and mark can deliver a message twice. A restarted worker starts from its brief and doesn't resume its session.
+- Single host, macOS and Linux only: the store is SQLite, and `stop` works by local process group, with a start-time check against PID reuse.
+- A failed send retries on later ticks, up to five times per message, so a crash between send and mark can deliver a message twice.
+- A restarted worker starts from its brief plus the last report and pending messages. It doesn't resume its session.
+- Hermes gives hooks no mention flag, so chat messages count as addressed and rely on the adapter's own mention rules. Semantic rules therefore apply to listed bots and `ingest` sources for now.
+- Under `plugins.isolation: host`, Hermes skips `hermes superagent`, so use `python -m superagent` there.
+- `hermes plugins validate` passes with one scanner caution: the invisible-character regex in `framing.py`, which is the sanitizer itself.
+- Not yet run end to end with a live model and gateway. Tests use a fake host written from the documented API, and CI loads the plugin through real Hermes discovery.
 
 ## How this differs from the catalog
 

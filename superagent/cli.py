@@ -61,7 +61,7 @@ def run(
             thread=args.thread,
             actor=args.actor,
             text=args.text,
-            channel=args.channel,
+            channel=args.channel or args.thread,
             addressed=args.addressed,
             is_bot=args.bot,
         )
@@ -93,10 +93,12 @@ def run(
                     for check in result.checks
                 ],
                 "delivered": [{"channel": channel, "text": text} for _, channel, text in result.delivered],
+                "errors": list(result.errors),
+                "skipped": result.skipped,
             }
         )
     )
-    return 0
+    return 1 if result.errors else 0
 
 
 def main(argv: list[str] | None = None) -> int:
