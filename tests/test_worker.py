@@ -1,9 +1,12 @@
 from __future__ import annotations
 
 import os
+import subprocess
 import sys
 import time
 from pathlib import Path
+
+import pytest
 
 from superagent.domain import Assignment, AssignmentStatus, Mandate, Strength, Ticket, TicketStatus
 from superagent.worker import SubprocessBackend
@@ -41,6 +44,24 @@ def test_stop_kills_a_worker_that_ignores_sigterm(tmp_path: Path) -> None:
     while backend.is_alive(running) and time.time() < deadline:
         time.sleep(0.05)
     assert not backend.is_alive(running)
+
+
+def test_stop_tolerates_a_worker_that_already_exited(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr("superagent.worker._STOP_GRACE_SECONDS", 0.2)
+    started_at = time.time()
+    zombie = subprocess.Popen([sys.executable, "-c", "pass"], start_new_session=True)
+    deadline = time.time() + 10
+    while (
+        "Z" not in subprocess.run(["ps", "-o", "stat=", "-p", str(zombie.pid)], capture_output=True, text=True).stdout
+    ):
+        assert time.time() < deadline
+        time.sleep(0.05)
+    backend = SubprocessBackend(["worker", "{brief}"], tmp_path / "db", tmp_path / "w")
+    exited = Assignment("as-1", "tk-1", 1, AssignmentStatus.RUNNING, zombie.pid, started_at)
+    try:
+        backend.stop(exited)
+    finally:
+        zombie.wait()
 
 
 def test_worker_env_is_an_allowlist(tmp_path: Path) -> None:

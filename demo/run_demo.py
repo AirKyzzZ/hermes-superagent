@@ -45,9 +45,11 @@ def external_tick(home: Path) -> dict[str, list[dict[str, str]]]:
         [sys.executable, "-m", "superagent", "--home", str(home), "tick"],
         capture_output=True,
         text=True,
-        check=True,
+        check=False,
         env=env,
     )
+    if done.returncode != 0:
+        raise RuntimeError(f"tick failed: {done.stdout} {done.stderr}")
     result: dict[str, list[dict[str, str]]] = json.loads(done.stdout)
     for check in result["checks"]:
         color = GREEN if check["action"] == "none" else RED

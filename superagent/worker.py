@@ -136,5 +136,6 @@ class SubprocessBackend:
                 os.killpg(assignment.pid, 0)
                 time.sleep(_STOP_POLL_SECONDS)
             os.killpg(assignment.pid, signal.SIGKILL)
-        except ProcessLookupError:
+        # macOS raises EPERM, not ESRCH, when the group's only member is an unreaped zombie.
+        except (ProcessLookupError, PermissionError):
             return
