@@ -47,13 +47,13 @@ DeepSeek's article puts the limit at three to five active sessions: past that, a
 ## Architecture
 
 ```mermaid
-%%{init: {"theme":"base","themeVariables":{"fontFamily":"Inter, system-ui, sans-serif","fontSize":"15px","primaryColor":"#1a10b8","primaryTextColor":"#ffffff","primaryBorderColor":"#a9a9cc","lineColor":"#8a8ab8","textColor":"#ffffff","clusterBkg":"#14142a","clusterBorder":"#4a4a78","titleColor":"#f4f4fd","edgeLabelBackground":"#14142a"}}}%%
+%%{init: {"theme":"base","layout":"dagre","flowchart":{"wrappingWidth":420,"nodeSpacing":36,"rankSpacing":44},"themeVariables":{"fontFamily":"Inter, system-ui, sans-serif","fontSize":"15px","primaryColor":"#1a10b8","primaryTextColor":"#ffffff","primaryBorderColor":"#a9a9cc","lineColor":"#8a8ab8","textColor":"#ffffff","clusterBkg":"#14142a","clusterBorder":"#4a4a78","titleColor":"#f4f4fd","edgeLabelBackground":"#14142a"}}}%%
 flowchart TB
     people(["People on chat"])
     events(["Events: superagent ingest"])
 
     subgraph routerProfile["Router profile"]
-        gate{{"Gate<br/>source and sender, never the text"}}
+        gate(["Gate<br/>source and sender, never the text"])
         router["Router<br/>talks and dispatches, never executes"]
     end
 
