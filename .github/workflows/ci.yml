@@ -65,4 +65,4 @@ jobs:
         with:
           pin: ${{ env.HERMES_PIN }}
       - name: Real Hermes, fake model
-        run: python tests/e2e/run_e2e.py --work "$RUNNER_TEMP/e2e"
+        run: '"$RUNNER_TEMP/hermes-src/.venv/bin/python" tests/e2e/run_e2e.py --work "$RUNNER_TEMP/e2e"'
