@@ -47,7 +47,7 @@ DeepSeek's article puts the limit at three to five active sessions: past that, a
 ## Architecture
 
 ```mermaid
-%%{init: {"theme":"base","layout":"dagre","flowchart":{"wrappingWidth":420,"nodeSpacing":36,"rankSpacing":44},"themeVariables":{"fontFamily":"Inter, system-ui, sans-serif","fontSize":"15px","primaryColor":"#1a10b8","primaryTextColor":"#ffffff","primaryBorderColor":"#a9a9cc","lineColor":"#8a8ab8","textColor":"#ffffff","clusterBkg":"#14142a","clusterBorder":"#4a4a78","titleColor":"#f4f4fd","edgeLabelBackground":"#14142a"}}}%%
+%%{init: {"theme":"base","layout":"dagre","flowchart":{"wrappingWidth":420,"nodeSpacing":36,"rankSpacing":44},"themeVariables":{"primaryColor":"#1a10b8","primaryTextColor":"#ffffff","primaryBorderColor":"#a9a9cc","lineColor":"#8a8ab8","textColor":"#ffffff","clusterBkg":"#14142a","clusterBorder":"#4a4a78","titleColor":"#f4f4fd","edgeLabelBackground":"#14142a"}}}%%
 flowchart TB
     people(["People on chat"])
     events(["Events: superagent ingest"])
@@ -85,7 +85,7 @@ The router's model only sees requests the gate admitted. Workers can't reach peo
 ### One task
 
 ```mermaid
-%%{init: {"theme":"base","sequence":{"mirrorActors":false},"themeVariables":{"fontFamily":"Inter, system-ui, sans-serif","fontSize":"15px","primaryColor":"#1a10b8","primaryTextColor":"#ffffff","primaryBorderColor":"#a9a9cc","lineColor":"#8a8ab8","textColor":"#ffffff","actorBkg":"#1a10b8","actorBorder":"#a9a9cc","actorTextColor":"#ffffff","actorLineColor":"#8a8ab8","signalColor":"#a9a9cc","signalTextColor":"#ffffff","labelBoxBkgColor":"#0a0a9a","labelBoxBorderColor":"#a9a9cc","labelTextColor":"#ffffff","loopTextColor":"#ffffff"}}}%%
+%%{init: {"theme":"base","sequence":{"mirrorActors":false,"diagramMarginY":48},"themeVariables":{"primaryColor":"#1a10b8","primaryTextColor":"#ffffff","primaryBorderColor":"#a9a9cc","lineColor":"#8a8ab8","textColor":"#ffffff","actorBkg":"#1a10b8","actorBorder":"#a9a9cc","actorTextColor":"#ffffff","actorLineColor":"#8a8ab8","signalColor":"#a9a9cc","signalTextColor":"#ffffff","labelBoxBkgColor":"#0a0a9a","labelBoxBorderColor":"#a9a9cc","labelTextColor":"#ffffff","loopTextColor":"#ffffff"}}}%%
 sequenceDiagram
     participant person as Person
     participant gate as Gate
@@ -121,7 +121,7 @@ sequenceDiagram
 ### Watchdog
 
 ```mermaid
-%%{init: {"theme":"base","themeVariables":{"fontFamily":"Inter, system-ui, sans-serif","fontSize":"15px","primaryColor":"#1a10b8","primaryTextColor":"#ffffff","primaryBorderColor":"#a9a9cc","lineColor":"#8a8ab8","textColor":"#ffffff","transitionColor":"#8a8ab8","transitionLabelColor":"#ffffff","stateLabelColor":"#ffffff","stateBkg":"#1a10b8","labelBackgroundColor":"#14142a","edgeLabelBackground":"#14142a","specialStateColor":"#8a8ab8","innerEndBackground":"#8a8ab8"}}}%%
+%%{init: {"theme":"base","layout":"dagre","themeVariables":{"primaryColor":"#1a10b8","primaryTextColor":"#ffffff","primaryBorderColor":"#a9a9cc","lineColor":"#8a8ab8","textColor":"#ffffff","transitionColor":"#8a8ab8","transitionLabelColor":"#ffffff","stateLabelColor":"#ffffff","stateBkg":"#1a10b8","labelBackgroundColor":"#14142a","edgeLabelBackground":"#14142a","specialStateColor":"#8a8ab8","innerEndBackground":"#8a8ab8"}}}%%
 stateDiagram-v2
     direction LR
     [*] --> Running
