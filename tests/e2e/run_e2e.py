@@ -231,8 +231,8 @@ def scenario_stop(runtime: Runtime, log: Path) -> None:
     check("stop: the client process is gone", not runtime.router.backend.is_alive(assignment))
 
 
-def post_webhook(route: str, message: str) -> int:
-    return post_json(route, {"message": message}, {"X-Request-ID": uuid.uuid4().hex})
+def post_webhook(route: str, message: str, profile: str = "router") -> int:
+    return post_json(route, {"message": message}, {"X-Request-ID": uuid.uuid4().hex}, profile)
 
 
 def post_github_comment(login: str, body: str) -> int:
@@ -247,9 +247,9 @@ def post_github_comment(login: str, body: str) -> int:
     return post_json("github", payload, headers)
 
 
-def post_json(route: str, payload: dict[str, Any], headers: dict[str, str]) -> int:
+def post_json(route: str, payload: dict[str, Any], headers: dict[str, str], profile: str = "router") -> int:
     request = urllib.request.Request(
-        f"http://127.0.0.1:{WEBHOOK_PORT}/p/router/webhooks/{route}",
+        f"http://127.0.0.1:{WEBHOOK_PORT}/p/{profile}/webhooks/{route}",
         data=json.dumps(payload).encode(),
         headers={"Content-Type": "application/json", **headers},
     )
@@ -377,7 +377,7 @@ def stage_router(work: Path, log: Path) -> None:
 
 
 def scenario_inert(log: Path, work: Path) -> None:
-    post_webhook("plain", "scenario=inert id=owner-plain")
+    post_webhook("plain", "scenario=inert id=owner-plain", profile="owner")
     ran = wait_until(lambda: (work / "inert-owner-plain").exists(), timeout=120.0)
     entries = turns(log, "owner-plain")
     offered = sorted({tool for entry in entries for tool in entry["tools"] if tool.startswith("superagent")})
