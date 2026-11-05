@@ -22,7 +22,7 @@ from superagent.runtime import Runtime, open_runtime  # noqa: E402
 
 PORT = 18999
 WORKER_ARGV = ["hermes", "-p", "worker", "chat", "-Q", "--query-file", "{brief}", "-t", "terminal,file,superagent"]
-TURN_TIMEOUT = 240.0
+TURN_TIMEOUT = 90.0
 failures: list[str] = []
 
 
@@ -215,8 +215,7 @@ def main() -> int:
         scenario_stop(open_runtime(open_home), log)
         scenario_host_env()
     finally:
-        if failures:
-            show_logs(hermes_home, work)
+        show_logs(hermes_home, work)
         model.terminate()
     print(f"\n{len(failures)} failure(s)" + (": " + "; ".join(failures) if failures else ""), flush=True)
     return 1 if failures else 0
