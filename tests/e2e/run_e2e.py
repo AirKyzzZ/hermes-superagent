@@ -254,16 +254,16 @@ def stage_router(work: Path, log: Path) -> None:
         config.write(
             f'\n[sources.webhook]\npolicy = "explicit_only"\nallow = ["webhook:inbox"]\n\n[outbound]\nargv = {argv}\n'
         )
-    route = {"secret": "INSECURE_NO_AUTH", "prompt": "{message}"}
-    webhook = {
-        "enabled": True,
-        "extra": {"host": "127.0.0.1", "port": WEBHOOK_PORT, "routes": {"inbox": route, "stranger": route}},
+    route = {"secret": "INSECURE_NO_AUTH", "prompt": "{message}", "profile": "router"}
+    routes = {"inbox": route, "stranger": route}
+    listener = {
+        "gateway": {"multiplex_profiles": True},
+        "platforms": {
+            "webhook": {"enabled": True, "extra": {"host": "127.0.0.1", "port": WEBHOOK_PORT, "routes": routes}}
+        },
     }
-    listener = {"platforms": {"webhook": {"enabled": True, "extra": {"host": "127.0.0.1", "port": WEBHOOK_PORT}}}}
     (hermes_home / "config.yaml").write_text(yaml.safe_dump(listener), encoding="utf-8")
-    configure_worker(
-        create_profile(hermes_home, "router"), home, role="router", extra={"platforms": {"webhook": webhook}}
-    )
+    configure_worker(create_profile(hermes_home, "router"), home, role="router")
     configure_worker(create_profile(hermes_home, "worker"), home)
     configure_worker(create_profile(hermes_home, "watchdog"), home, role="watchdog")
     interpreter = Path(shutil.which("hermes") or "hermes").resolve().parent / "python"
