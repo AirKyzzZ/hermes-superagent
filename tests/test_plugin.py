@@ -15,7 +15,7 @@ import yaml
 
 from superagent.config import DB_FILENAME, WORKDIRS_DIRNAME
 from superagent.domain import Mandate, Report, ReportState, Strength, Trigger, Verdict
-from superagent.gate import SemanticRule
+from superagent.gate import RuleMode, SemanticRule
 from superagent.judges import LlmAssessor, LlmDriftJudge
 from superagent.store import Store
 from superagent.worker import write_identity
@@ -486,6 +486,21 @@ def test_assessor_requires_rules_and_a_usable_answer() -> None:
     answer = {"decisions": [{"trigger_id": "t", "rule": "r", "goal": "g"}]}
     picked = LlmAssessor(FakeLlm(answer)).assess([event], [rule])
     assert picked[0].rule == "r"
+
+
+def test_one_malformed_decision_does_not_lose_the_others() -> None:
+    answer = {
+        "decisions": [
+            {"trigger_id": "c1", "rule": "silent-fix", "goal": "fix it"},
+            {"trigger_id": "c2", "rule": "silent-fix"},
+        ]
+    }
+    assessor = LlmAssessor(FakeLlm(answer))
+    rule = SemanticRule("silent-fix", "Reproduce reported bugs quietly.", RuleMode.RECORD)
+    decided = assessor.assess(
+        [Trigger("c1", "github", "", "alice", "bug"), Trigger("c2", "github", "", "alice", "bug")], [rule]
+    )
+    assert [item.trigger_id for item in decided] == ["c1"]
 
 
 GITHUB_SOURCE = """

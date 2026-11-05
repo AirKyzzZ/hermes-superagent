@@ -29,6 +29,8 @@ logger = logging.getLogger(__name__)
 
 CHAT_WORD_LIMIT = 100
 MAX_SEND_ATTEMPTS = 5
+MAX_ASSESS_BATCH = 20
+ASSESS_ATTEMPTS = 3
 OFFER_VALID_SECONDS = 3600.0
 _ATTACHMENT_TAG = re.compile(r"media:", re.IGNORECASE)
 _DIRECTIVE_OPENING = re.compile(r"\[(?=\[)")
@@ -121,11 +123,16 @@ class Router:
         return self.store.get_ticket(ticket_id)
 
     def assess_candidates(self, assessor: Assessor) -> list[Ticket]:
-        batch = self.store.pending_candidates()
+        batch = self.store.pending_candidates(MAX_ASSESS_BATCH)
         active_rules = list(self.rules.semantic)
         if not batch:
             return []
-        assessments = {item.trigger_id: item for item in assessor.assess(batch, active_rules)}
+        try:
+            decided = assessor.assess(batch, active_rules)
+        except Exception:
+            self.store.record_assessment_failure([trigger.id for trigger in batch], ASSESS_ATTEMPTS)
+            raise
+        assessments = {item.trigger_id: item for item in decided}
         modes = {rule.name: rule.mode for rule in active_rules}
         tickets: list[Ticket] = []
         for trigger in batch:

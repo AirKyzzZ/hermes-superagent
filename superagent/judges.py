@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import logging
 from collections.abc import Sequence
+from dataclasses import replace
 from typing import Any, Protocol
 
 from .domain import Report, Trigger, Verdict
@@ -12,6 +13,7 @@ from .router import Assessment
 from .watchdog import Judgement
 
 logger = logging.getLogger(__name__)
+_EVENT_TEXT_CHARS = 2000
 
 _DRIFT_SCHEMA = {
     "type": "object",
@@ -88,19 +90,28 @@ class LlmAssessor:
         if not rules:
             return []
         catalogue = json.dumps([{"name": rule.name, "text": rule.text} for rule in rules], indent=1)
-        events = "\n".join(f"trigger_id={trigger.id}\n{frame_trigger(trigger)}" for trigger in batch)
+        events = "\n".join(
+            f"trigger_id={trigger.id}\n{frame_trigger(replace(trigger, text=trigger.text[:_EVENT_TEXT_CHARS]))}"
+            for trigger in batch
+        )
         result = self.llm.complete_structured(
             instructions=_ASSESS_INSTRUCTIONS + catalogue,
             input=[{"type": "text", "text": events}],
             json_schema=_ASSESS_SCHEMA,
             purpose="superagent.triggers.assess",
             temperature=0.0,
-            max_tokens=800,
+            max_tokens=2000,
         )
         parsed = result.parsed
         if not isinstance(parsed, dict):
             raise ValueError("assessor returned nothing usable")
-        return [
-            Assessment(str(item["trigger_id"]), str(item["rule"]), str(item["goal"]))
-            for item in parsed.get("decisions", [])
-        ]
+        decisions = parsed.get("decisions")
+        if not isinstance(decisions, list):
+            raise ValueError("assessor returned no decisions list")
+        assessments = []
+        for item in decisions:
+            if isinstance(item, dict) and all(isinstance(item.get(key), str) for key in ("trigger_id", "rule", "goal")):
+                assessments.append(Assessment(item["trigger_id"], item["rule"], item["goal"]))
+            else:
+                logger.warning("ignoring a malformed assessor decision: %r", item)
+        return assessments

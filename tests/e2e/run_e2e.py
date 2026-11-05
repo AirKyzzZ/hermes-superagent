@@ -347,6 +347,16 @@ def stage_router(work: Path, log: Path) -> None:
         check(
             "github: the result goes to the team channel", "discord:team\tDone: done gh-worker" in delivered, delivered
         )
+        config_path = home / "superagent.toml"
+        good = config_path.read_text(encoding="utf-8")
+        config_path.write_text(good.replace('policy = "explicit_only"', 'policy = "explicit_only', 1), encoding="utf-8")
+        post_github_comment("alice", "scenario=routed id=gh-after-typo")
+        survived = wait_until(lambda: "done gh-after-typo" in stored_summaries(home), timeout=180.0)
+        check("config: a broken edit keeps the last good config running", survived, stored_summaries(home))
+        broken_tick = hermes("-p", "watchdog", "superagent", "tick")
+        loud = broken_tick.returncode != 0 and "last good config" in broken_tick.stdout
+        check("config: every tick fails loudly until it's fixed", loud, broken_tick.stdout[-500:])
+        config_path.write_text(good, encoding="utf-8")
     finally:
         host.terminate()
         host.wait(timeout=30)
