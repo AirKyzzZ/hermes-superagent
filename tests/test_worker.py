@@ -102,6 +102,49 @@ def test_stop_kills_a_child_that_outlives_its_leader(tmp_path: Path) -> None:
     pytest.fail("child survived stop")
 
 
+def test_stop_refuses_a_leaderless_group_too_old_to_identify(tmp_path: Path) -> None:
+    pid_file = tmp_path / "child.pid"
+    leader = subprocess.Popen(
+        ["/bin/sh", "-c", f"sleep 60 >/dev/null 2>&1 & echo $! > {pid_file}; exit 0"], start_new_session=True
+    )
+    leader.wait()
+    child = int(pid_file.read_text())
+    backend = SubprocessBackend(["worker", "{brief}"], tmp_path / "db", tmp_path / "w")
+    stale = Assignment("as-1", "tk-1", 1, AssignmentStatus.RUNNING, leader.pid, time.time() - 86400)
+    try:
+        with pytest.raises(WorkerStopError, match="too old"):
+            backend.stop(stale)
+        os.kill(child, 0)
+    finally:
+        os.kill(child, 9)
+
+
+def test_stop_refuses_when_it_cannot_read_a_live_process(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    live = subprocess.Popen([sys.executable, "-c", "import time; time.sleep(30)"], start_new_session=True)
+    monkeypatch.setattr("superagent.worker._process_started_at", lambda pid: None)
+    backend = SubprocessBackend(["worker", "{brief}"], tmp_path / "db", tmp_path / "w")
+    try:
+        with pytest.raises(WorkerStopError, match="could not read"):
+            backend.stop(Assignment("as-1", "tk-1", 1, AssignmentStatus.RUNNING, live.pid, time.time()))
+        assert live.poll() is None
+    finally:
+        live.kill()
+        live.wait()
+
+
+def test_stop_reports_a_group_that_survives_sigkill(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    sent: list[int] = []
+    monkeypatch.setattr("superagent.worker.os.killpg", lambda group, signum: sent.append(signum))
+    monkeypatch.setattr("superagent.worker._group_has_live_member", lambda group: True)
+    monkeypatch.setattr("superagent.worker._process_started_at", lambda pid: 1000.0)
+    monkeypatch.setattr("superagent.worker._STOP_GRACE_SECONDS", 0.0)
+    monkeypatch.setattr("superagent.worker._KILL_GRACE_SECONDS", 0.0)
+    backend = SubprocessBackend(["worker", "{brief}"], tmp_path / "db", tmp_path / "w")
+    with pytest.raises(WorkerStopError, match="survived"):
+        backend.stop(Assignment("as-1", "tk-1", 1, AssignmentStatus.RUNNING, 4242, 1000.0))
+    assert len(sent) == 2
+
+
 def test_stop_leaves_a_reused_pid_alone(tmp_path: Path) -> None:
     other = subprocess.Popen([sys.executable, "-c", "import time; time.sleep(30)"], start_new_session=True)
     try:

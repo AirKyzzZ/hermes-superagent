@@ -99,6 +99,36 @@ def test_a_worker_that_cannot_be_stopped_escalates_without_a_second_worker(
     assert "could not stop a worker" in router.relay()[0][2]
 
 
+def test_an_unstoppable_worker_escalates_once(router: Router, backend: FakeBackend) -> None:
+    router.ingest(REQUEST)
+    report(router, backend, "same", 3)
+    check_once(router)
+    report(router, backend, "same", 1)
+
+    def denied(assignment_id: str) -> None:
+        raise WorkerStopError("process group 1 is still running")
+
+    backend.on_stop = denied
+    check_once(router, policy=WatchdogPolicy(reap_grace_seconds=-1))
+    check_once(router, policy=WatchdogPolicy(reap_grace_seconds=-1))
+    assert len(router.relay()) == 1
+
+
+def test_reaper_failure_leaves_a_running_replacement_alone(router: Router, backend: FakeBackend) -> None:
+    router.ingest(REQUEST)
+    ticket = router.store.list_tickets()[0]
+    router.start_worker(ticket)
+
+    def denied(assignment_id: str) -> None:
+        raise WorkerStopError("process group 1 is still running")
+
+    backend.on_stop = denied
+    check_once(router, policy=WatchdogPolicy(reap_grace_seconds=-1))
+    assert router.store.get_ticket(ticket.id).status is TicketStatus.OPEN
+    assert len(router.store.running_assignments()) == 1
+    assert "could not stop a worker" in router.relay()[0][2]
+
+
 def test_one_unstoppable_finished_worker_does_not_block_the_checks(router: Router, backend: FakeBackend) -> None:
     router.ingest(REQUEST)
     assignment = router.store.running_assignments()[0]
