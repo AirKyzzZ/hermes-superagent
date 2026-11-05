@@ -19,8 +19,9 @@ import yaml
 REPO = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(REPO))
 
-from superagent.domain import Trigger  # noqa: E402
+from superagent.domain import RepairAction, Trigger  # noqa: E402
 from superagent.runtime import Runtime, open_runtime  # noqa: E402
+from superagent.watchdog import WatchdogPolicy, check_once  # noqa: E402
 
 PORT = 18999
 WEBHOOK_PORT = 18644
@@ -149,6 +150,19 @@ def scenario_guard(runtime: Runtime, log: Path, work: Path) -> None:
     check("guard: terminal is refused on a local backend", any("same OS user" in r for r in results), results[:2])
     check("guard: the blocked command never ran", not (work / "guard-guarded").exists())
     check("guard: the worker can still report", "ready" in report_states(runtime, ticket))
+
+
+def scenario_quiet(runtime: Runtime, log: Path) -> None:
+    ticket = start_task(runtime, "scenario=quiet id=quiet")
+    assignment = next(a for a in runtime.store.running_assignments() if a.ticket_id == ticket)
+    exited = wait_until(lambda: not runtime.router.backend.is_alive(assignment), timeout=120.0)
+    check("quiet: the worker ends its turn without reporting", exited)
+    patient = WatchdogPolicy(stall_after_seconds=3600, orphan_after_seconds=3600)
+    parked = [result for result in check_once(runtime.router, policy=patient) if result.ticket_id == ticket]
+    check("quiet: the watchdog parks it for a person", [r.action for r in parked] == [RepairAction.PARK], parked)
+    questions = [report.question for report in runtime.store.ticket_reports(ticket)]
+    check("quiet: the question carries the worker's last words", any("finished" in q for q in questions), questions)
+    check("quiet: the task is not run a second time", len(turns(log, "quiet")) == 1, turns(log, "quiet"))
 
 
 def scenario_fence(runtime: Runtime, log: Path, work: Path) -> None:
@@ -397,6 +411,7 @@ def main() -> int:
         scenario_overlap(guarded, log)
         configure_worker(hermes_home / "profiles" / "worker", guarded_home, tool_search="off")
         scenario_guard(guarded, log, work)
+        scenario_quiet(guarded, log)
         scenario_fence(guarded, log, work)
         scenario_outsider(guarded, log, work)
         scenario_role_unset(guarded, log, work, hermes_home / "profiles" / "worker", guarded_home)

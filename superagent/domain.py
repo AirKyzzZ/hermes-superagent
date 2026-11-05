@@ -49,6 +49,7 @@ class RepairAction(StrEnum):
     NUDGE = "nudge"
     RESTART = "restart"
     ESCALATE = "escalate"
+    PARK = "park"
 
 
 @dataclass(frozen=True)
