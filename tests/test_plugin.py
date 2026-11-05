@@ -111,6 +111,7 @@ class FakeEvent:
     source: FakeSource
     text: str = "please fix the bug"
     message_id: str | None = "1"
+    raw_message: object = None
 
 
 def inbound(ctx: FakeContext, **source: Any) -> Any:
@@ -485,3 +486,92 @@ def test_assessor_requires_rules_and_a_usable_answer() -> None:
     answer = {"decisions": [{"trigger_id": "t", "rule": "r", "goal": "g"}]}
     picked = LlmAssessor(FakeLlm(answer)).assess([event], [rule])
     assert picked[0].rule == "r"
+
+
+GITHUB_SOURCE = """
+[sources."webhook:github"]
+policy = "explicit_only"
+allow = ["alice", "webhook:alerts"]
+notify = "discord:team"
+"""
+
+
+def webhook_router(home: Path) -> FakeContext:
+    ctx = registered("router", home)
+    config = CONFIG.replace(
+        '["hermes", "chat", "--query-file", "{brief}"]', f'["{sys.executable}", "-c", "pass", "{{brief}}"]'
+    )
+    (home / "superagent.toml").write_text(config + GITHUB_SOURCE, encoding="utf-8")
+    return ctx
+
+
+def github_delivery(ctx: FakeContext, *, login: str = "alice", kind: str = "User", route: str = "github") -> Any:
+    payload = {
+        "action": "created",
+        "issue": {"number": 7, "title": "Flaky checkout test"},
+        "comment": {"body": "please look at the flaky test"},
+        "repository": {"full_name": "acme/app"},
+        "sender": {"login": login, "type": kind},
+    }
+    source = FakeSource(platform="webhook", chat_id=secrets.token_hex(4), user_id=f"webhook:{route}")
+    event = FakeEvent(source, "Fix the flaky checkout test in acme/app#7", None, payload)
+    return ctx.hooks["pre_gateway_dispatch"](event=event, gateway=object(), session_store=object())
+
+
+def test_allowed_github_event_starts_work_without_the_router_model(tmp_path: Path) -> None:
+    ctx = webhook_router(tmp_path)
+    assert github_delivery(ctx)["action"] == "skip"
+    store = Store(tmp_path / DB_FILENAME)
+    [ticket] = store.live_tickets()
+    assert ticket.channel == "discord:team"
+    assert ticket.goal == "Fix the flaky checkout test in acme/app#7"
+    assert ticket.mandate.actor == "alice"
+    assert store.subscribers("github:acme/app#7") == [ticket.id]
+    assert offered(ctx) is None
+
+
+@pytest.mark.parametrize(("login", "kind"), [("mallory", "User"), ("dependabot[bot]", "Bot"), ("alice", "Bot")])
+def test_github_event_from_anyone_else_is_dropped(tmp_path: Path, login: str, kind: str) -> None:
+    ctx = webhook_router(tmp_path)
+    assert github_delivery(ctx, login=login, kind=kind)["action"] == "skip"
+    assert Store(tmp_path / DB_FILENAME).live_tickets() == []
+
+
+def test_webhook_without_a_sender_is_known_by_its_route(tmp_path: Path) -> None:
+    ctx = webhook_router(tmp_path)
+    source = FakeSource(platform="webhook", chat_id="d9", user_id="webhook:alerts")
+    event = FakeEvent(source, "disk almost full", None, {"alert": "disk"})
+    ctx.hooks["pre_gateway_dispatch"](event=event, gateway=object(), session_store=object())
+    assert Store(tmp_path / DB_FILENAME).live_tickets() == []
+    (tmp_path / "superagent.toml").write_text(
+        (tmp_path / "superagent.toml").read_text()
+        + '\n[sources."webhook:alerts"]\npolicy = "explicit_only"\nallow = ["webhook:alerts"]\n',
+        encoding="utf-8",
+    )
+    ctx.hooks["pre_gateway_dispatch"](
+        event=FakeEvent(source, "disk almost full", "2", {}), gateway=object(), session_store=object()
+    )
+    assert [ticket.goal for ticket in Store(tmp_path / DB_FILENAME).live_tickets()] == ["disk almost full"]
+
+
+def test_a_route_cannot_pose_as_a_chat_platform(tmp_path: Path) -> None:
+    ctx = webhook_router(tmp_path)
+    assert github_delivery(ctx, login="u-alice", route="discord")["action"] == "skip"
+    assert Store(tmp_path / DB_FILENAME).live_tickets() == []
+
+
+def test_a_webhook_source_can_ask_the_router_instead(tmp_path: Path) -> None:
+    ctx = webhook_router(tmp_path)
+    (tmp_path / "superagent.toml").write_text(
+        (tmp_path / "superagent.toml").read_text()
+        + '\n[sources."webhook:inbox"]\npolicy = "explicit_only"\nallow = ["webhook:inbox"]\nvia_router = true\n',
+        encoding="utf-8",
+    )
+    source = FakeSource(platform="webhook", chat_id="d3", user_id="webhook:inbox")
+    event = FakeEvent(source, "please fix the bug", "5", {"sender": {"login": "mallory"}})
+    assert ctx.hooks["pre_gateway_dispatch"](event=event, gateway=object(), session_store=object()) is None
+    assert Store(tmp_path / DB_FILENAME).live_tickets() == []
+    injected = ctx.hooks["pre_llm_call"](
+        user_message="please fix the bug", platform="webhook", sender_id="webhook:inbox"
+    )
+    assert "trigger_id=webhook:d3:5" in injected["context"]

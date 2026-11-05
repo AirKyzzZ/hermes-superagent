@@ -14,7 +14,7 @@ A <a href="https://github.com/NousResearch/hermes-agent">Hermes Agent</a> plugin
 <a href="LICENSE"><img alt="MIT licence" src="https://img.shields.io/github/license/AirKyzzZ/hermes-superagent?style=flat-square&label=license&labelColor=14142a&color=1a10b8"></a>
 <a href="pyproject.toml"><img alt="Python 3.11 or newer" src="https://img.shields.io/badge/python-3.11%2B-1a10b8?style=flat-square&labelColor=14142a"></a>
 <a href="plugin.yaml"><img alt="Hermes plugin, requires 0.22.7 or newer" src="https://img.shields.io/badge/Hermes_plugin-%3E%3D0.22.7-1a10b8?style=flat-square&labelColor=14142a"></a>
-<a href="tests"><img alt="187 tests" src="https://img.shields.io/badge/tests-187-1a10b8?style=flat-square&labelColor=14142a"></a>
+<a href="tests"><img alt="194 tests" src="https://img.shields.io/badge/tests-194-1a10b8?style=flat-square&labelColor=14142a"></a>
 <a href="docs/hackathon.md"><img alt="Built for the Hermes Agent Plugin Hackathon" src="https://img.shields.io/badge/built_for-Hermes_Plugin_Hackathon-1a10b8?style=flat-square&labelColor=14142a"></a>
 </p>
 
@@ -51,7 +51,7 @@ A prompt or skill can only ask a model to stay in its lane. Here the gate, the t
 ```mermaid
 flowchart TB
     people(["People on chat"])
-    events(["Events: superagent ingest"])
+    events(["GitHub and other webhooks, superagent ingest"])
 
     subgraph routerProfile["Router profile"]
         gate(["Gate<br/>source and sender, never the text"])
@@ -88,7 +88,7 @@ flowchart TB
 %%{init: {"theme":"base","layout":"dagre","flowchart":{"wrappingWidth":420,"nodeSpacing":36,"rankSpacing":44},"themeVariables":{"primaryColor":"#1a10b8","primaryTextColor":"#ffffff","primaryBorderColor":"#a9a9cc","lineColor":"#8a8ab8","textColor":"#ffffff","clusterBkg":"#14142a","clusterBorder":"#4a4a78","titleColor":"#f4f4fd","edgeLabelBackground":"#14142a"}}}%%
 ```
 
-On the gateway, the router's model only sees messages the gate let through, plus an allowed person's `/` commands that Hermes turns into a turn, such as skills. An addressed event from an allowed sender through `superagent ingest` skips that model: code opens the ticket, with the event text as the goal. In the documented setup workers have no messaging tools, so their reports go to the store and code relays them.
+On the gateway, the router's model only sees messages the gate let through, plus an allowed person's `/` commands that Hermes turns into a turn, such as skills. A webhook or `superagent ingest` event from an allowed sender skips that model: code opens the ticket, with the event text as the goal. In the documented setup workers have no messaging tools, so their reports go to the store and code relays them.
 
 ### One task
 
@@ -278,6 +278,32 @@ Questions, results, failures and escalations reach people on the next tick. Prog
 
 Hermes defers plugin tools behind `tool_call` by default, and that works. Set `tools.tool_search.enabled: off` in a profile to hand its model the tools directly.
 
+To take work from GitHub, add a route to Hermes's webhook platform in the default profile's `config.yaml`, with the secret you set on the GitHub webhook:
+
+```yaml
+platforms:
+  webhook:
+    enabled: true
+    extra:
+      routes:
+        github:
+          secret: "the-secret-you-gave-github"
+          events: ["issue_comment"]
+          prompt: "Handle this comment on {repository.full_name}#{issue.number}: {comment.body}"
+          profile: router
+```
+
+Then say who may start work from it in `superagent.toml`:
+
+```toml
+[sources."webhook:github"]
+policy = "explicit_only"
+allow = ["your-github-login"]
+notify = "discord:YOUR_CHANNEL_ID"
+```
+
+The rendered prompt becomes the goal, the sender's login is checked against `allow`, and the issue becomes the task's thread, so later comments from allowed people reach the running worker. Results go to `notify`.
+
 </details>
 
 ## Configuration
@@ -290,6 +316,8 @@ Hermes defers plugin tools behind `tool_call` by default, and that works. Set `t
 | `[sources.<name>] allow` | `[]` | People who may address the agent |
 | `[sources.<name>] bots` | `[]` | Bots whose events can become candidates on a `candidate` source |
 | `[sources.<name>] pass_strangers` | `false` | Lets strangers' thread messages reach a worker, framed and with no authority |
+| `[sources.<name>] notify` | none | Channel that gets this source's results and escalations instead of the event's own, such as `discord:123` |
+| `[sources."webhook:<route>"] via_router` | `false` | Lets the router's model read this webhook's events instead of starting work directly |
 | `[[semantic]] name`, `text` | required | A team rule, written in plain language |
 | `[[semantic]] mode` | `record` | `record` only logs, `act` opens a ticket |
 | `[worker] argv` | required | Command for one worker, must reference `{brief}` |
@@ -385,7 +413,8 @@ If the gate itself fails, the message is dropped and logged, so a person gets si
 - [x] Workers proven end to end on real Hermes with a fake model
 - [x] The router's chat path, from gateway message to relay, proven the same way
 - [ ] First live run with a model and gateway
-- [ ] GitHub, email and calendar sources
+- [x] GitHub and other webhook sources
+- [ ] Email and calendar sources
 - [ ] tmux and cmux backends for coding agents, then a Kanban backend
 - [ ] Event ledger with a digest and morning sweep
 - [ ] Demo video

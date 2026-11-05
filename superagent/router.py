@@ -198,7 +198,9 @@ class Router:
 
     def _open_ticket(self, trigger: Trigger, goal: str, strength: Strength) -> Ticket:
         mandate = Mandate(self.rules.version, goal, strength, trigger.actor, trigger.source, trigger.id)
-        ticket, created = self.store.create_ticket(goal, mandate, trigger.channel, trigger.thread)
+        source = self.rules.sources.get(trigger.source)
+        channel = source.notify if source is not None and source.notify else trigger.channel
+        ticket, created = self.store.create_ticket(goal, mandate, channel, trigger.thread)
         if created:
             self.start_worker(ticket)
         return ticket

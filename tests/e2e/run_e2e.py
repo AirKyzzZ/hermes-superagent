@@ -217,10 +217,26 @@ def scenario_stop(runtime: Runtime, log: Path) -> None:
 
 
 def post_webhook(route: str, message: str) -> int:
+    return post_json(route, {"message": message}, {"X-Request-ID": uuid.uuid4().hex})
+
+
+def post_github_comment(login: str, body: str) -> int:
+    payload = {
+        "action": "created",
+        "issue": {"number": 7, "title": "Flaky checkout test"},
+        "comment": {"body": body},
+        "repository": {"full_name": "acme/app"},
+        "sender": {"login": login, "type": "User"},
+    }
+    headers = {"X-GitHub-Event": "issue_comment", "X-GitHub-Delivery": uuid.uuid4().hex}
+    return post_json("github", payload, headers)
+
+
+def post_json(route: str, payload: dict[str, Any], headers: dict[str, str]) -> int:
     request = urllib.request.Request(
         f"http://127.0.0.1:{WEBHOOK_PORT}/p/router/webhooks/{route}",
-        data=json.dumps({"message": message}).encode(),
-        headers={"Content-Type": "application/json", "X-Request-ID": uuid.uuid4().hex},
+        data=json.dumps(payload).encode(),
+        headers={"Content-Type": "application/json", **headers},
     )
     with urllib.request.urlopen(request, timeout=30) as response:
         return int(response.status)
@@ -252,10 +268,13 @@ def stage_router(work: Path, log: Path) -> None:
     with (home / "superagent.toml").open("a", encoding="utf-8") as config:
         argv = json.dumps(["python3", str(Path(__file__).with_name("outbound.py")), str(sent), "{channel}", "{text}"])
         config.write(
-            f'\n[sources.webhook]\npolicy = "explicit_only"\nallow = ["webhook:inbox"]\n\n[outbound]\nargv = {argv}\n'
+            f'\n[sources."webhook:inbox"]\npolicy = "explicit_only"\nallow = ["webhook:inbox"]\nvia_router = true\n'
+            f'\n[sources."webhook:github"]\npolicy = "explicit_only"\nallow = ["alice"]\nnotify = "discord:team"\n'
+            f"\n[outbound]\nargv = {argv}\n"
         )
     route = {"secret": "INSECURE_NO_AUTH", "prompt": "{message}", "profile": "router"}
-    routes = {"inbox": route, "stranger": route}
+    github = {"secret": "INSECURE_NO_AUTH", "prompt": "{comment.body}", "profile": "router"}
+    routes = {"inbox": route, "stranger": route, "github": github}
     listener = {
         "gateway": {"multiplex_profiles": True},
         "platforms": {
@@ -294,12 +313,26 @@ def stage_router(work: Path, log: Path) -> None:
         check("router: the refused command never ran", not (work / "router-ran-asked").exists())
         check("router: dispatch opens a ticket", any('"ticket"' in r for r in results), results)
         check("router: the dispatched worker reports ready", finished, stored_summaries(home))
+        post_github_comment("mallory", "scenario=routed id=gh-stranger")
+        post_github_comment("alice", "scenario=routed id=gh-worker")
+        github_done = wait_until(lambda: "done gh-worker" in stored_summaries(home), timeout=180.0)
+        check("github: an allowed person's comment starts a worker", github_done, stored_summaries(home))
+        check(
+            "github: a stranger's comment starts nothing", not turns(log, "gh-stranger"), turns(log, "gh-stranger")[:1]
+        )
+        check(
+            "github: the router's model never reads the event",
+            not any("clarify" in entry["tools"] for entry in turns(log, "gh-worker")),
+        )
         tick = hermes("-p", "watchdog", "superagent", "tick")
         print("tick:", tick.returncode, tick.stdout[-600:], tick.stderr[-600:], flush=True)
         check("watchdog: the tick runs from the CLI", tick.returncode == 0)
         delivered = sent.read_text(encoding="utf-8") if sent.exists() else ""
         check("watchdog: the result is relayed to the person", "Done: done routed-worker" in delivered, delivered)
         check("watchdog: the relay goes back to the webhook chat", delivered.startswith("webhook:"), delivered)
+        check(
+            "github: the result goes to the team channel", "discord:team\tDone: done gh-worker" in delivered, delivered
+        )
     finally:
         host.terminate()
         host.wait(timeout=30)

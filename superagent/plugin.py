@@ -4,6 +4,7 @@ import json
 import logging
 import uuid
 from collections.abc import Callable, Mapping
+from dataclasses import replace
 from pathlib import Path
 from typing import Any
 
@@ -24,6 +25,7 @@ logger = logging.getLogger(__name__)
 PLUGIN_NAME = "hermes-superagent"
 TOOLSET = "superagent"
 ADMITTED_MAX_AGE_SECONDS = 600.0
+WEBHOOK_SOURCE_PREFIX = "webhook:"
 
 ROUTER_PROMPT = (
     "You are the router of a super-agent. You talk to people on every channel, dispatch work and answer on "
@@ -153,6 +155,12 @@ class Plugin:
         try:
             trigger = trigger_from_event(event)
             router = self.runtime().router
+            if trigger.source.startswith(WEBHOOK_SOURCE_PREFIX):
+                source_rules = router.rules.sources.get(trigger.source)
+                if source_rules is None or not source_rules.via_router:
+                    disposition = router.ingest(trigger, auto_dispatch=True)
+                    return {"action": "skip", "reason": f"superagent: {disposition.outcome.value}"}
+                trigger = replace(trigger, actor=trigger.source, is_bot=False)
             if trigger.text.startswith("/") and router.is_allowed(trigger):
                 return None
             disposition = router.ingest(trigger, auto_dispatch=False)
@@ -168,8 +176,10 @@ class Plugin:
     ) -> dict[str, str] | None:
         if self.role != ROLE_ROUTER:
             return None
+        sender = str(sender_id or "")
+        source = sender if platform == "webhook" and sender.startswith(WEBHOOK_SOURCE_PREFIX) else platform
         admitted = self.runtime().store.take_admitted(
-            platform, str(sender_id or ""), _message_text(user_message), ADMITTED_MAX_AGE_SECONDS
+            source, sender, _message_text(user_message), ADMITTED_MAX_AGE_SECONDS
         )
         if not admitted:
             return None
@@ -271,16 +281,44 @@ def trigger_from_event(event: Any) -> Trigger:
     thread_id = str(source.thread_id or "")
     address = f"{platform}:{chat_id}:{thread_id}" if thread_id else f"{platform}:{chat_id}"
     message_id = event.message_id
+    trigger_id = f"{platform}:{chat_id}:{message_id}" if message_id else f"{platform}:{uuid.uuid4().hex}"
+    user_id = str(source.user_id or "")
+    if platform == "webhook" and user_id.startswith(WEBHOOK_SOURCE_PREFIX):
+        actor, is_bot, thread = _webhook_sender(getattr(event, "raw_message", None))
+        return Trigger(
+            id=trigger_id,
+            source=user_id,
+            thread=thread,
+            actor=actor or user_id,
+            text=str(event.text or ""),
+            channel=address,
+            addressed=True,
+            is_bot=is_bot,
+        )
     return Trigger(
-        id=f"{platform}:{chat_id}:{message_id}" if message_id else f"{platform}:{uuid.uuid4().hex}",
+        id=trigger_id,
         source=platform,
         thread=address if thread_id else "",
-        actor=str(source.user_id or ""),
+        actor=user_id,
         text=str(event.text or ""),
         channel=address,
         addressed=True,
         is_bot=bool(source.is_bot),
     )
+
+
+def _webhook_sender(payload: object) -> tuple[str, bool, str]:
+    if not isinstance(payload, Mapping):
+        return "", False, ""
+    sender = payload.get("sender")
+    login = str(sender.get("login") or "") if isinstance(sender, Mapping) else ""
+    is_bot = isinstance(sender, Mapping) and (sender.get("type") == "Bot" or login.endswith("[bot]"))
+    repository = payload.get("repository")
+    repo = str(repository.get("full_name") or "") if isinstance(repository, Mapping) else ""
+    item = payload.get("issue") or payload.get("pull_request")
+    number = item.get("number") if isinstance(item, Mapping) else None
+    thread = f"github:{repo}#{number}" if repo and isinstance(number, int) else ""
+    return login, is_bot, thread
 
 
 def _message_text(message: object) -> str:
