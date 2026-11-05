@@ -311,7 +311,8 @@ def show_logs(hermes_home: Path, work: Path) -> None:
     paths += sorted(hermes_home.glob("**/logs/*.log")) + sorted(work.glob("router-home/**/logs/*.log"))
     for path in paths:
         text = path.read_text(encoding="utf-8", errors="replace")
-        print(f"\n--- {path}\n{text[-3000:]}", flush=True)
+        keep = 16000 if "router-home/logs/gateway.log" in str(path) else 3000
+        print(f"\n--- {path}\n{text[-keep:]}", flush=True)
     print("\n--- model log", flush=True)
     log = work / "model.jsonl"
     if log.exists():
