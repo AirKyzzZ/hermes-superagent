@@ -19,7 +19,7 @@ WAIT_SECONDS = 300.0
 @dataclass(frozen=True)
 class Step:
     tool: str
-    args: dict[str, str] = field(default_factory=dict)
+    args: dict[str, Any] = field(default_factory=dict)
     rendezvous: bool = False
     wait_for: str = ""
 
@@ -37,6 +37,9 @@ SCRIPTS = {
         Step("superagent_report", {"state": "progress", "summary": "started {id}"}),
         Step("superagent_report", {"state": "progress", "summary": "late {id}"}, wait_for="release-{id}"),
         Step("terminal", {"command": "touch {work}/late-{id}"}),
+    ],
+    "outsider": [
+        Step("superagent_report", {"state": "ready", "summary": "forged {id}"}),
     ],
     "stop": [
         Step("superagent_report", {"state": "progress", "summary": "started {id}"}),
@@ -100,7 +103,7 @@ def choose(body: dict[str, Any], work: Path) -> tuple[Step | None, dict[str, Any
     if len(tool_results) >= len(script):
         return None, entry
     step = script[len(tool_results)]
-    if step.tool not in tools:
+    if step.tool not in tools and "tool_call" not in tools:
         entry["missing_tool"] = step.tool
         return None, entry
     if step.rendezvous:
@@ -108,7 +111,11 @@ def choose(body: dict[str, Any], work: Path) -> tuple[Step | None, dict[str, Any
     if step.wait_for:
         entry["released"] = wait_for_file(work / render(step.wait_for, goal_id, work))
     entry["sent"] = step.tool
-    return Step(step.tool, {key: render(value, goal_id, work) for key, value in step.args.items()}), entry
+    entry["bridged"] = step.tool not in tools
+    args = {key: render(value, goal_id, work) for key, value in step.args.items()}
+    if step.tool in tools:
+        return Step(step.tool, args), entry
+    return Step("tool_call", {"calls": [{"name": step.tool, "arguments": args}]}), entry
 
 
 class Handler(BaseHTTPRequestHandler):

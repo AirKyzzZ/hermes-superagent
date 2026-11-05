@@ -1,6 +1,8 @@
 from __future__ import annotations
 
+import json
 import os
+import stat
 import subprocess
 import sys
 import time
@@ -9,7 +11,7 @@ from pathlib import Path
 import pytest
 
 from superagent.domain import Assignment, AssignmentStatus, Mandate, Strength, Ticket, TicketStatus
-from superagent.worker import SubprocessBackend, WorkerStopError
+from superagent.worker import IDENTITY_FILENAME, SubprocessBackend, WorkerStopError, write_identity
 
 STUBBORN = (
     "import signal, time\nsignal.signal(signal.SIGTERM, signal.SIG_IGN)\nopen('ready', 'w').close()\ntime.sleep(60)\n"
@@ -29,7 +31,7 @@ def assignment(pid: int | None = None) -> Assignment:
 def test_stop_kills_a_worker_that_ignores_sigterm(tmp_path: Path) -> None:
     script = tmp_path / "stubborn.py"
     script.write_text(STUBBORN, encoding="utf-8")
-    backend = SubprocessBackend([sys.executable, str(script), "{brief}"], tmp_path / "db", tmp_path / "w")
+    backend = SubprocessBackend([sys.executable, str(script), "{brief}"], tmp_path / "w")
     started = assignment()
     pid = backend.start(ticket(), started, "token")
     running = Assignment(started.id, started.ticket_id, 1, started.status, pid, started.started_at)
@@ -56,7 +58,7 @@ def test_stop_tolerates_a_worker_that_already_exited(tmp_path: Path, monkeypatch
     ):
         assert time.time() < deadline
         time.sleep(0.05)
-    backend = SubprocessBackend(["worker", "{brief}"], tmp_path / "db", tmp_path / "w")
+    backend = SubprocessBackend(["worker", "{brief}"], tmp_path / "w")
     exited = Assignment("as-1", "tk-1", 1, AssignmentStatus.RUNNING, zombie.pid, started_at)
     try:
         backend.stop(exited)
@@ -72,7 +74,7 @@ def test_stop_reports_a_group_it_is_not_allowed_to_signal(tmp_path: Path, monkey
     live = subprocess.Popen([sys.executable, "-c", "import time; time.sleep(30)"], start_new_session=True)
     try:
         monkeypatch.setattr("superagent.worker.os.killpg", denied)
-        backend = SubprocessBackend(["worker", "{brief}"], tmp_path / "db", tmp_path / "w")
+        backend = SubprocessBackend(["worker", "{brief}"], tmp_path / "w")
         running = Assignment("as-1", "tk-1", 1, AssignmentStatus.RUNNING, live.pid, started_at)
         with pytest.raises(WorkerStopError, match="still running"):
             backend.stop(running)
@@ -90,7 +92,7 @@ def test_stop_kills_a_child_that_outlives_its_leader(tmp_path: Path) -> None:
     )
     leader.wait()
     child = int(pid_file.read_text())
-    backend = SubprocessBackend(["worker", "{brief}"], tmp_path / "db", tmp_path / "w")
+    backend = SubprocessBackend(["worker", "{brief}"], tmp_path / "w")
     backend.stop(Assignment("as-1", "tk-1", 1, AssignmentStatus.RUNNING, leader.pid, started_at))
     deadline = time.time() + 5
     while time.time() < deadline:
@@ -109,7 +111,7 @@ def test_stop_refuses_a_leaderless_group_too_old_to_identify(tmp_path: Path) -> 
     )
     leader.wait()
     child = int(pid_file.read_text())
-    backend = SubprocessBackend(["worker", "{brief}"], tmp_path / "db", tmp_path / "w")
+    backend = SubprocessBackend(["worker", "{brief}"], tmp_path / "w")
     stale = Assignment("as-1", "tk-1", 1, AssignmentStatus.RUNNING, leader.pid, time.time() - 86400)
     try:
         with pytest.raises(WorkerStopError, match="too old"):
@@ -122,7 +124,7 @@ def test_stop_refuses_a_leaderless_group_too_old_to_identify(tmp_path: Path) -> 
 def test_stop_refuses_when_it_cannot_read_a_live_process(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     live = subprocess.Popen([sys.executable, "-c", "import time; time.sleep(30)"], start_new_session=True)
     monkeypatch.setattr("superagent.worker._process_started_at", lambda pid: None)
-    backend = SubprocessBackend(["worker", "{brief}"], tmp_path / "db", tmp_path / "w")
+    backend = SubprocessBackend(["worker", "{brief}"], tmp_path / "w")
     try:
         with pytest.raises(WorkerStopError, match="could not read"):
             backend.stop(Assignment("as-1", "tk-1", 1, AssignmentStatus.RUNNING, live.pid, time.time()))
@@ -139,7 +141,7 @@ def test_stop_reports_a_group_that_survives_sigkill(tmp_path: Path, monkeypatch:
     monkeypatch.setattr("superagent.worker._process_started_at", lambda pid: 1000.0)
     monkeypatch.setattr("superagent.worker._STOP_GRACE_SECONDS", 0.0)
     monkeypatch.setattr("superagent.worker._KILL_GRACE_SECONDS", 0.0)
-    backend = SubprocessBackend(["worker", "{brief}"], tmp_path / "db", tmp_path / "w")
+    backend = SubprocessBackend(["worker", "{brief}"], tmp_path / "w")
     with pytest.raises(WorkerStopError, match="survived"):
         backend.stop(Assignment("as-1", "tk-1", 1, AssignmentStatus.RUNNING, 4242, 1000.0))
     assert len(sent) == 2
@@ -148,7 +150,7 @@ def test_stop_reports_a_group_that_survives_sigkill(tmp_path: Path, monkeypatch:
 def test_stop_leaves_a_reused_pid_alone(tmp_path: Path) -> None:
     other = subprocess.Popen([sys.executable, "-c", "import time; time.sleep(30)"], start_new_session=True)
     try:
-        backend = SubprocessBackend(["worker", "{brief}"], tmp_path / "db", tmp_path / "w")
+        backend = SubprocessBackend(["worker", "{brief}"], tmp_path / "w")
         backend.stop(Assignment("as-1", "tk-1", 1, AssignmentStatus.RUNNING, other.pid, time.time() - 3600))
         assert other.poll() is None
     finally:
@@ -162,7 +164,7 @@ def test_worker_env_is_an_allowlist(tmp_path: Path) -> None:
     try:
         script = tmp_path / "env.py"
         script.write_text(PRINT_ENV, encoding="utf-8")
-        backend = SubprocessBackend([sys.executable, str(script), "{brief}"], tmp_path / "db", tmp_path / "w")
+        backend = SubprocessBackend([sys.executable, str(script), "{brief}"], tmp_path / "w")
         backend.start(ticket(), assignment(), "token")
         log = tmp_path / "w" / "tk-1" / "as-1" / "worker.log"
         deadline = time.time() + 10
@@ -174,13 +176,14 @@ def test_worker_env_is_an_allowlist(tmp_path: Path) -> None:
         del os.environ["HERMES_YOLO_MODE"]
     assert "hunter2" not in output
     assert "HERMES_YOLO_MODE" not in output
-    assert "SUPERAGENT_TOKEN" in output
+    assert "SUPERAGENT_" not in output
+    assert "token" not in output
 
 
 def test_goal_never_reaches_argv(tmp_path: Path) -> None:
     script = tmp_path / "argv.py"
     script.write_text("import sys; print(sys.argv)", encoding="utf-8")
-    backend = SubprocessBackend([sys.executable, str(script), "{brief}"], tmp_path / "db", tmp_path / "w")
+    backend = SubprocessBackend([sys.executable, str(script), "{brief}"], tmp_path / "w")
     backend.start(ticket("--dangerous-flag; rm -rf /"), assignment(), "token")
     log = tmp_path / "w" / "tk-1" / "as-1" / "worker.log"
     deadline = time.time() + 10
@@ -190,15 +193,8 @@ def test_goal_never_reaches_argv(tmp_path: Path) -> None:
     assert "--dangerous-flag" in (tmp_path / "w" / "tk-1" / "as-1" / "brief.md").read_text()
 
 
-def test_allow_same_user_reaches_the_worker_only_when_configured(tmp_path: Path) -> None:
-    script = tmp_path / "env.py"
-    script.write_text(PRINT_ENV, encoding="utf-8")
-    backend = SubprocessBackend(
-        [sys.executable, str(script), "{brief}"], tmp_path / "db", tmp_path / "w", allow_same_user=True
-    )
-    backend.start(ticket(), assignment(), "token")
-    log = tmp_path / "w" / "tk-1" / "as-1" / "worker.log"
-    deadline = time.time() + 10
-    while (not log.exists() or not log.read_text()) and time.time() < deadline:
-        time.sleep(0.05)
-    assert "SUPERAGENT_ALLOW_SAME_USER" in log.read_text()
+def test_identity_is_written_for_the_worker_only(tmp_path: Path) -> None:
+    write_identity(tmp_path, "tk-1", "as-1", "secret", 2)
+    identity = tmp_path / IDENTITY_FILENAME
+    assert stat.S_IMODE(identity.stat().st_mode) == 0o600
+    assert json.loads(identity.read_text()) == {"assignment": "as-1", "ticket": "tk-1", "token": "secret", "attempt": 2}

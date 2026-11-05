@@ -43,9 +43,7 @@ class TickResult:
 def open_runtime(home: Path) -> Runtime:
     config = load_config(home)
     db_path = home / DB_FILENAME
-    backend = SubprocessBackend(
-        config.worker_argv, db_path, home / WORKDIRS_DIRNAME, allow_same_user=config.allow_same_user
-    )
+    backend = SubprocessBackend(config.worker_argv, home / WORKDIRS_DIRNAME)
     return Runtime(home, config, Router(Store(db_path), config.rules, backend))
 
 

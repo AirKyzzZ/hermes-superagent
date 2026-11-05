@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import os
 import signal
 import sys
 import time
@@ -10,9 +9,8 @@ from types import FrameType
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from superagent.domain import ReportState  # noqa: E402
-from superagent.reporting import identity_from_env, submit_report  # noqa: E402
+from superagent.reporting import identity_from_workdir, submit_report  # noqa: E402
 from superagent.store import StaleAssignmentError  # noqa: E402
-from superagent.worker import ENV_ATTEMPT  # noqa: E402
 
 
 def say(text: str) -> None:
@@ -20,7 +18,7 @@ def say(text: str) -> None:
 
 
 def honest(goal: str) -> None:
-    identity = identity_from_env()
+    identity = identity_from_workdir(Path.cwd())
     for summary in ("reading the auth module", "reproduced the redirect loop", "fix written, tests pass"):
         submit_report(identity, ReportState.PROGRESS, summary)
         time.sleep(0.15)
@@ -28,7 +26,7 @@ def honest(goal: str) -> None:
 
 
 def stuck() -> None:
-    identity = identity_from_env()
+    identity = identity_from_workdir(Path.cwd())
     terminated: list[int] = []
 
     def on_term(signum: int, frame: FrameType | None) -> None:
@@ -50,7 +48,7 @@ def stuck() -> None:
 def main() -> None:
     brief = Path(sys.argv[1]).read_text(encoding="utf-8")
     goal = brief.split("## Task\n", 1)[1].split("\n\n## Rules", 1)[0]
-    attempt = int(os.environ[ENV_ATTEMPT])
+    attempt = identity_from_workdir(Path.cwd()).attempt
     if "impossible" in goal or ("flaky" in goal and attempt == 1):
         stuck()
         return

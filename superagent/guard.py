@@ -8,10 +8,19 @@ TOOL_REPORT = "superagent_report"
 TOOL_TICK = "superagent_tick"
 TOOL_FORWARD = "superagent_forward"
 
-ROUTER_ALLOWED_TOOLS = frozenset(
-    {TOOL_DISPATCH, TOOL_FORWARD, TOOL_STATUS, "memory", "session_search", "skills_list", "skill_view", "clarify"}
-)
-WATCHDOG_ALLOWED_TOOLS = frozenset({TOOL_TICK, TOOL_STATUS, "skills_list", "skill_view"})
+# Hermes defers plugin tools behind these bridges by default, and runs this hook again for each tool they call.
+TOOL_SEARCH_BRIDGES = frozenset({"tool_search", "tool_describe", "tool_call"})
+ROUTER_ALLOWED_TOOLS = TOOL_SEARCH_BRIDGES | {
+    TOOL_DISPATCH,
+    TOOL_FORWARD,
+    TOOL_STATUS,
+    "memory",
+    "session_search",
+    "skills_list",
+    "skill_view",
+    "clarify",
+}
+WATCHDOG_ALLOWED_TOOLS = TOOL_SEARCH_BRIDGES | {TOOL_TICK, TOOL_STATUS, "skills_list", "skill_view"}
 WORKER_BLOCKED_TOOLS = frozenset(
     {TOOL_DISPATCH, TOOL_FORWARD, TOOL_TICK, TOOL_STATUS, "send_message", "cronjob_manage"}
 )

@@ -66,7 +66,7 @@ def set_up_worker_profile(hermes_home: Path, home: Path) -> None:
     configure_worker(profile, home)
 
 
-def configure_worker(profile: Path, home: Path) -> None:
+def configure_worker(profile: Path, home: Path, *, tool_search: str = "auto") -> None:
     config_path = profile / "config.yaml"
     config: dict[str, Any] = yaml.safe_load(config_path.read_text(encoding="utf-8")) if config_path.exists() else {}
     config = config or {}
@@ -76,6 +76,7 @@ def configure_worker(profile: Path, home: Path) -> None:
         "default": "fake",
         "api_key": "not-a-real-key",
     }
+    config.setdefault("tools", {})["tool_search"] = {"enabled": tool_search}
     plugins = config.setdefault("plugins", {})
     plugins.setdefault("entries", {})["hermes-superagent"] = {"settings": {"role": "worker", "home": str(home)}}
     config_path.write_text(yaml.safe_dump(config), encoding="utf-8")
@@ -112,10 +113,14 @@ def scenario_overlap(runtime: Runtime, log: Path) -> None:
     tickets = {goal_id: start_task(runtime, f"scenario=report id={goal_id}") for goal_id in ("alpha", "beta")}
     for goal_id, ticket in tickets.items():
         wait_until(lambda t=ticket: "ready" in report_states(runtime, t))
-        check(f"{goal_id}: sees superagent_report", any("superagent_report" in e["tools"] for e in turns(log, goal_id)))
+        check(
+            f"{goal_id}: can call superagent_report",
+            any(e.get("sent") == "superagent_report" for e in turns(log, goal_id)),
+        )
         check(f"{goal_id}: finishes with a stored ready report", "ready" in report_states(runtime, ticket))
         summaries = [report.summary for report in runtime.store.ticket_reports(ticket)]
         check(f"{goal_id}: reports land on its own ticket", all(goal_id in s for s in summaries), summaries)
+    check("deferred plugin tools work through the bridge", any(e.get("bridged") for e in turns(log, "alpha")))
     check(
         "two workers run at the same time",
         all(any(e.get("overlapped") for e in turns(log, goal_id)) for goal_id in tickets),
@@ -141,6 +146,25 @@ def scenario_fence(runtime: Runtime, log: Path, work: Path) -> None:
     wait_until(lambda: len(turns(log, "fenced")) >= 4, timeout=120.0)
     check("fence: a late report is not stored", len(report_states(runtime, ticket)) == before)
     check("fence: a late tool call never runs", not (work / "late-fenced").exists())
+
+
+def scenario_outsider(runtime: Runtime, log: Path, work: Path) -> None:
+    brief = work / "outsider.md"
+    brief.write_text("scenario=outsider id=forged", encoding="utf-8")
+    subprocess.run(
+        ["hermes", "-p", "worker", "chat", "-Q", "--query-file", str(brief), "-t", "terminal,file,superagent"],
+        cwd=work,
+        stdin=subprocess.DEVNULL,
+        capture_output=True,
+        timeout=TURN_TIMEOUT,
+        check=False,
+    )
+    results = [result for entry in turns(log, "forged") for result in entry["tool_results"]]
+    check("outsider: a session outside a worker directory is refused", any("workers" in r for r in results), results)
+    stored = [
+        report.summary for ticket in runtime.store.live_tickets() for report in runtime.store.ticket_reports(ticket.id)
+    ]
+    check("outsider: the forged report is not stored", not any("forged" in summary for summary in stored), stored)
 
 
 def scenario_stop(runtime: Runtime, log: Path) -> None:
@@ -209,9 +233,11 @@ def main() -> int:
     try:
         guarded = open_runtime(guarded_home)
         scenario_overlap(guarded, log)
+        configure_worker(hermes_home / "profiles" / "worker", guarded_home, tool_search="off")
         scenario_guard(guarded, log, work)
         scenario_fence(guarded, log, work)
-        configure_worker(hermes_home / "profiles" / "worker", open_home)
+        scenario_outsider(guarded, log, work)
+        configure_worker(hermes_home / "profiles" / "worker", open_home, tool_search="off")
         scenario_stop(open_runtime(open_home), log)
         scenario_host_env()
     finally:

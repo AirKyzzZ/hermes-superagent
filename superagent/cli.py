@@ -8,7 +8,7 @@ from collections.abc import Callable
 from pathlib import Path
 
 from .domain import ReportState, Trigger
-from .reporting import identity_from_env, submit_report
+from .reporting import identity_from_workdir, submit_report
 from .router import Assessor
 from .runtime import open_runtime, tick
 from .watchdog import DriftJudge
@@ -30,7 +30,7 @@ def setup_parser(parser: argparse.ArgumentParser) -> None:
     ingest.add_argument("--channel", default="")
     ingest.add_argument("--addressed", action="store_true")
     ingest.add_argument("--bot", action="store_true")
-    report = commands.add_parser("report", help="report status as a worker, for agents outside Hermes")
+    report = commands.add_parser("report", help="report status from a worker directory, for agents outside Hermes")
     report.add_argument("--state", required=True, choices=_WORKER_STATES)
     report.add_argument("--summary", required=True)
     report.add_argument("--question", default="")
@@ -44,7 +44,11 @@ def run(
     assessor: Assessor | None = None,
 ) -> int:
     if args.superagent_command == "report":
-        print(json.dumps(submit_report(identity_from_env(), ReportState(args.state), args.summary, args.question)))
+        print(
+            json.dumps(
+                submit_report(identity_from_workdir(Path.cwd()), ReportState(args.state), args.summary, args.question)
+            )
+        )
         return 0
     home = args.home or (default_home() if default_home else None)
     if home is None:

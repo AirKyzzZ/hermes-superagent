@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import importlib.util
 import json
+import secrets
 import sys
 from collections.abc import Callable
 from dataclasses import dataclass, field
@@ -12,19 +13,12 @@ from typing import Any
 import pytest
 import yaml
 
+from superagent.config import DB_FILENAME, WORKDIRS_DIRNAME
 from superagent.domain import Mandate, Report, ReportState, Strength, Trigger, Verdict
 from superagent.gate import SemanticRule
 from superagent.judges import LlmAssessor, LlmDriftJudge
 from superagent.store import Store
-from superagent.worker import (
-    ENV_ALLOW_SAME_USER,
-    ENV_ASSIGNMENT,
-    ENV_DB,
-    ENV_ROLE,
-    ENV_TICKET,
-    ENV_TOKEN,
-    ROLE_WORKER,
-)
+from superagent.worker import write_identity
 
 ROOT = Path(__file__).resolve().parent.parent
 CONFIG = """
@@ -72,6 +66,10 @@ class FakeContext:
     blueprints: list[str] = field(default_factory=list)
     sections: dict[str, Callable[..., str]] = field(default_factory=dict)
     llm: FakeLlm = field(default_factory=FakeLlm)
+    cwd: str = ""
+
+    def session_cwd(self) -> str:
+        return self.cwd
 
     def get_config(self, key: str, default: Any = None) -> Any:
         return self.settings.get(key, default)
@@ -161,20 +159,30 @@ def test_router_keeps_its_own_tools(tmp_path: Path) -> None:
     assert ctx.hooks["pre_tool_call"](tool_name="memory", args={}, task_id="t") is None
 
 
+def use_terminal_backend(monkeypatch: pytest.MonkeyPatch, backend: str) -> None:
+    config = ModuleType("hermes_cli.config")
+    config.load_config_readonly = lambda: {"terminal": {"backend": backend}}  # type: ignore[attr-defined]
+    monkeypatch.setitem(sys.modules, "hermes_cli", ModuleType("hermes_cli"))
+    monkeypatch.setitem(sys.modules, "hermes_cli.config", config)
+
+
+def worker_session(home: Path, store: Store) -> tuple[str, str]:
+    mandate = Mandate("v", "g", Strength.EXPLICIT, "a", "chat", secrets.token_hex(4))
+    ticket, _ = store.create_ticket("g", mandate, "chat:1", "")
+    assignment, token = store.create_assignment(ticket.id)
+    workdir = home / WORKDIRS_DIRNAME / ticket.id / assignment.id
+    workdir.mkdir(parents=True)
+    write_identity(workdir, ticket.id, assignment.id, token, assignment.attempt)
+    return str(workdir), assignment.id
+
+
 @pytest.fixture
 def worker_ctx(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> tuple[FakeContext, Store, str]:
-    ctx = registered("", tmp_path)
-    store = Store(tmp_path / "w.db")
-    mandate = Mandate("v", "g", Strength.EXPLICIT, "a", "chat", "t1")
-    ticket, _ = store.create_ticket("g", mandate, "chat:1", "th")
-    assignment, token = store.create_assignment(ticket.id)
-    monkeypatch.setenv(ENV_ROLE, ROLE_WORKER)
-    monkeypatch.setenv(ENV_ASSIGNMENT, assignment.id)
-    monkeypatch.setenv(ENV_TOKEN, token)
-    monkeypatch.setenv(ENV_TICKET, ticket.id)
-    monkeypatch.setenv(ENV_DB, str(store.path))
-    monkeypatch.setenv("TERMINAL_ENV", "docker")
-    return ctx, store, assignment.id
+    ctx = registered("worker", tmp_path)
+    store = Store(tmp_path / DB_FILENAME)
+    ctx.cwd, assignment_id = worker_session(tmp_path, store)
+    use_terminal_backend(monkeypatch, "docker")
+    return ctx, store, assignment_id
 
 
 def test_worker_cannot_speak_or_dispatch(worker_ctx: tuple[FakeContext, Store, str]) -> None:
@@ -189,18 +197,65 @@ def test_worker_cannot_speak_or_dispatch(worker_ctx: tuple[FakeContext, Store, s
 def test_unsandboxed_worker_cannot_touch_the_host(
     worker_ctx: tuple[FakeContext, Store, str], monkeypatch: pytest.MonkeyPatch, tool: str
 ) -> None:
-    monkeypatch.setenv("TERMINAL_ENV", "local")
+    use_terminal_backend(monkeypatch, "local")
     decision = worker_ctx[0].hooks["pre_tool_call"](tool_name=tool, args={}, task_id="t")
     assert decision["action"] == "block"
     assert "allow_same_user" in decision["message"]
 
 
 def test_operator_can_accept_the_same_user_risk(
-    worker_ctx: tuple[FakeContext, Store, str], monkeypatch: pytest.MonkeyPatch
+    worker_ctx: tuple[FakeContext, Store, str], monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
-    monkeypatch.setenv("TERMINAL_ENV", "local")
-    monkeypatch.setenv(ENV_ALLOW_SAME_USER, "1")
+    use_terminal_backend(monkeypatch, "local")
+    (tmp_path / "superagent.toml").write_text(CONFIG + "allow_same_user = true\n", encoding="utf-8")
     assert worker_ctx[0].hooks["pre_tool_call"](tool_name="terminal", args={}, task_id="t") is None
+
+
+def test_session_outside_a_worker_directory_gets_no_tools(
+    worker_ctx: tuple[FakeContext, Store, str], tmp_path: Path
+) -> None:
+    ctx = worker_ctx[0]
+    ctx.cwd = str(tmp_path)
+    assert ctx.hooks["pre_tool_call"](tool_name="memory", args={}, task_id="t")["action"] == "block"
+    assert "error" in json.loads(ctx.tools["superagent_report"]["handler"]({"state": "ready", "summary": "x"}))
+
+
+def test_worker_directory_from_another_home_is_refused(
+    worker_ctx: tuple[FakeContext, Store, str], tmp_path: Path
+) -> None:
+    ctx = worker_ctx[0]
+    other_home = tmp_path / "other"
+    other_home.mkdir()
+    ctx.cwd, _ = worker_session(other_home, Store(other_home / DB_FILENAME))
+    assert ctx.hooks["pre_tool_call"](tool_name="memory", args={}, task_id="t")["action"] == "block"
+
+
+def test_concurrent_sessions_report_as_themselves(worker_ctx: tuple[FakeContext, Store, str], tmp_path: Path) -> None:
+    ctx, store, first = worker_ctx
+    first_cwd = ctx.cwd
+    second_cwd, second = worker_session(tmp_path, store)
+    handler = ctx.tools["superagent_report"]["handler"]
+    ctx.cwd = second_cwd
+    handler({"state": "progress", "summary": "from second"})
+    ctx.cwd = first_cwd
+    handler({"state": "progress", "summary": "from first"})
+    assert [report.summary for report in store.reports_for(first)] == ["from first"]
+    assert [report.summary for report in store.reports_for(second)] == ["from second"]
+
+
+@pytest.mark.parametrize(("role", "tool"), [("router", "superagent_dispatch"), ("watchdog", "superagent_tick")])
+def test_deferred_tools_stay_reachable_through_the_bridge(tmp_path: Path, role: str, tool: str) -> None:
+    pre_tool_call = registered(role, tmp_path).hooks["pre_tool_call"]
+    assert pre_tool_call(tool_name="tool_search", args={}, task_id="t") is None
+    assert pre_tool_call(tool_name="tool_call", args={"calls": [{"name": tool}]}, task_id="t") is None
+    assert pre_tool_call(tool_name="terminal", args={}, task_id="t")["action"] == "block"
+
+
+def test_environment_cannot_change_a_profile_role(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("SUPERAGENT_ROLE", "worker")
+    ctx = registered("router", tmp_path)
+    assert ctx.hooks["pre_tool_call"](tool_name="terminal", args={}, task_id="t")["action"] == "block"
+    assert inbound(ctx, user_id="u-mallory")["action"] == "skip"
 
 
 def test_fenced_worker_loses_every_tool(worker_ctx: tuple[FakeContext, Store, str]) -> None:
@@ -310,7 +365,7 @@ def test_dispatch_tool_only_works_in_the_router(tmp_path: Path) -> None:
 def test_report_tool_outside_a_worker_fails_visibly(tmp_path: Path) -> None:
     ctx = registered("", tmp_path)
     answer = json.loads(ctx.tools["superagent_report"]["handler"]({"state": "ready", "summary": "x"}))
-    assert "not running as a superagent worker" in answer["error"]
+    assert "not a superagent worker directory" in answer["error"]
 
 
 def report_of(summary: str) -> Report:
