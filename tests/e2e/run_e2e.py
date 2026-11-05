@@ -284,11 +284,15 @@ def stage_router(work: Path, log: Path) -> None:
         config.write(
             f'\n[sources."webhook:inbox"]\npolicy = "explicit_only"\nallow = ["webhook:inbox"]\nvia_router = true\n'
             f'\n[sources."webhook:github"]\npolicy = "explicit_only"\nallow = ["alice"]\nnotify = "discord:team"\n'
+            f'\n[sources."webhook:ci"]\npolicy = "candidate"\nbots = ["github-actions[bot]"]\n'
+            f'\n[digest]\nchannel = "discord:team"\n'
             f"\n[outbound]\nargv = {argv}\n"
+            f'\n[[semantic]]\nname = "ci-watch"\ntext = "Look into failing CI runs on main."\nmode = "record"\n'
         )
     route = {"secret": "INSECURE_NO_AUTH", "prompt": "{message}", "profile": "router"}
     github = {"secret": "INSECURE_NO_AUTH", "prompt": "{comment.body}", "profile": "router"}
-    routes = {"inbox": route, "stranger": route, "github": github}
+    ci = {"secret": "INSECURE_NO_AUTH", "prompt": "CI {workflow_run.name} ended with {workflow_run.conclusion}"}
+    routes = {"inbox": route, "stranger": route, "github": github, "ci": {**ci, "profile": "router"}}
     listener = {
         "gateway": {"multiplex_profiles": True},
         "platforms": {
@@ -357,6 +361,7 @@ def stage_router(work: Path, log: Path) -> None:
         check("config: every tick fails loudly until it's fixed", loud, broken_tick.stdout[-500:])
         config_path.write_text(good, encoding="utf-8")
         scenario_cancel(open_runtime(home), log, work, sent)
+        scenario_digest(sent)
     finally:
         host.terminate()
         host.wait(timeout=30)
@@ -393,6 +398,27 @@ def scenario_cancel(runtime: Runtime, log: Path, work: Path, sent: Path) -> None
     hermes("-p", "watchdog", "superagent", "tick")
     delivered = sent.read_text(encoding="utf-8") if sent.exists() else ""
     check("cancel: the person is told", "Cancelled [" in delivered, delivered[-400:])
+
+
+def scenario_digest(sent: Path) -> None:
+    payload = {
+        "action": "completed",
+        "workflow_run": {"name": "tests", "conclusion": "failure"},
+        "repository": {"full_name": "acme/app"},
+        "sender": {"login": "github-actions[bot]", "type": "Bot"},
+    }
+    post_json("ci", payload, {"X-GitHub-Event": "workflow_run", "X-GitHub-Delivery": uuid.uuid4().hex})
+    time.sleep(5)
+    assessed = hermes("-p", "watchdog", "superagent", "tick")
+    print("assess tick:", assessed.returncode, assessed.stdout[-400:], assessed.stderr[-400:], flush=True)
+    digest = hermes("-p", "watchdog", "superagent", "digest", "--send")
+    print("digest:", digest.returncode, digest.stdout[-1200:], digest.stderr[-400:], flush=True)
+    check("digest: a CI bot event is assessed, not acted on", "Investigate the failing CI run" in digest.stdout)
+    check("digest: it names the record-mode rule", "ci-watch, 1:" in digest.stdout, digest.stdout[-600:])
+    check("digest: it lists finished work", "Done (" in digest.stdout)
+    hermes("-p", "watchdog", "superagent", "tick")
+    delivered = sent.read_text(encoding="utf-8") if sent.exists() else ""
+    check("digest: it reaches the digest channel", "discord:team\tSuperagent, last 24 hours" in delivered)
 
 
 def scenario_host_env() -> None:

@@ -113,6 +113,19 @@ def text_of(message: dict[str, Any]) -> str:
     return str(content or "")
 
 
+def structured_reply(text: str) -> str | None:
+    if "You decide which environment events match a team rule" in text:
+        rule = re.search(r'"name": "([^"]+)"', text)
+        decisions = [
+            {"trigger_id": trigger_id, "rule": rule.group(1) if rule else "", "goal": "Investigate the failing CI run"}
+            for trigger_id in dict.fromkeys(TRIGGER.findall(text))
+        ]
+        return json.dumps({"decisions": decisions})
+    if "You watch one worker for goal drift" in text:
+        return json.dumps({"verdict": "on_track", "reason": "the reports serve the goal"})
+    return None
+
+
 def choose(body: dict[str, Any], work: Path) -> tuple[Step | None, dict[str, Any]]:
     messages = body.get("messages") or []
     tools = sorted(tool.get("function", {}).get("name", "") for tool in body.get("tools") or [])
@@ -123,6 +136,9 @@ def choose(body: dict[str, Any], work: Path) -> tuple[Step | None, dict[str, Any
     entry: dict[str, Any] = {"at": time.time(), "tools": tools, "tool_results": tool_results}
     if match is None or not tools:
         entry["kind"] = "auxiliary"
+        reply = structured_reply(" ".join(text_of(message) for message in messages))
+        if reply is not None:
+            entry.update(kind="structured", reply=reply)
         return None, entry
     scenario, goal_id = match.groups()
     entry.update(kind="turn", scenario=scenario, id=goal_id, step=len(tool_results))
@@ -186,13 +202,14 @@ class Handler(BaseHTTPRequestHandler):
                 "type": "function",
                 "function": {"name": step.tool, "arguments": json.dumps(step.args)},
             }
+        reply = str(entry.get("reply") or "finished")
         if body.get("stream"):
-            self._stream(completion, tool_call)
+            self._stream(completion, tool_call, reply)
         else:
-            self._complete(completion, tool_call)
+            self._complete(completion, tool_call, reply)
 
-    def _complete(self, completion: str, tool_call: dict[str, Any] | None) -> None:
-        message: dict[str, Any] = {"role": "assistant", "content": None if tool_call else "finished"}
+    def _complete(self, completion: str, tool_call: dict[str, Any] | None, reply: str) -> None:
+        message: dict[str, Any] = {"role": "assistant", "content": None if tool_call else reply}
         if tool_call:
             message["tool_calls"] = [tool_call]
         self._send_json(
@@ -206,7 +223,7 @@ class Handler(BaseHTTPRequestHandler):
             }
         )
 
-    def _stream(self, completion: str, tool_call: dict[str, Any] | None) -> None:
+    def _stream(self, completion: str, tool_call: dict[str, Any] | None, reply: str) -> None:
         self.send_response(200)
         self.send_header("Content-Type", "text/event-stream")
         self.send_header("Cache-Control", "no-cache")
@@ -227,7 +244,7 @@ class Handler(BaseHTTPRequestHandler):
             chunk({"role": "assistant", "tool_calls": [{"index": 0, **tool_call}]})
             chunk({}, "tool_calls")
         else:
-            chunk({"role": "assistant", "content": "finished"})
+            chunk({"role": "assistant", "content": reply})
             chunk({}, "stop")
         self.wfile.write(b"data: [DONE]\n\n")
         self.wfile.flush()

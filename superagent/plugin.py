@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import logging
+import time
 import uuid
 from collections.abc import Callable, Mapping
 from pathlib import Path
@@ -9,9 +10,19 @@ from typing import Any
 
 from .cli import run, setup_parser
 from .config import load_config
+from .digest import DigestError, build_digest, send_digest
 from .domain import ReportState, Trigger
 from .framing import frame_trigger
-from .guard import TOOL_CANCEL, TOOL_DISPATCH, TOOL_FORWARD, TOOL_REPORT, TOOL_STATUS, TOOL_TICK, blocked_reason
+from .guard import (
+    TOOL_CANCEL,
+    TOOL_DIGEST,
+    TOOL_DISPATCH,
+    TOOL_FORWARD,
+    TOOL_REPORT,
+    TOOL_STATUS,
+    TOOL_TICK,
+    blocked_reason,
+)
 from .judges import LlmAssessor, LlmDriftJudge
 from .reporting import NotAWorkerError, WorkerIdentity, identity_from_workdir, record_tool_activity, submit_report
 from .router import NotAdmittedError, Outcome
@@ -77,6 +88,17 @@ CANCEL_SCHEMA = {
             "ticket_id": {"type": "string", "description": "Id of the ticket to stop."},
         },
         "required": ["trigger_id", "ticket_id"],
+    },
+}
+DIGEST_SCHEMA = {
+    "name": TOOL_DIGEST,
+    "description": "Summarise recent work, questions waiting on people and what record-mode rules would have started.",
+    "parameters": {
+        "type": "object",
+        "properties": {
+            "hours": {"type": "number", "description": "How far back to look. Defaults to 24."},
+            "send": {"type": "boolean", "description": "Also queue it for the [digest] channel."},
+        },
     },
 }
 STATUS_SCHEMA = {
@@ -243,6 +265,22 @@ class Plugin:
             return _error(f"cancel failed: {error}")
         return json.dumps({"ticket": ticket.id, "status": ticket.status.value})
 
+    def digest_tool(self, args: Mapping[str, Any], **kwargs: Any) -> str:
+        if self.role != ROLE_WATCHDOG:
+            return _error("superagent_digest only works in the watchdog")
+        try:
+            hours = float(args.get("hours") or 24.0)
+            runtime = self.runtime()
+            text = build_digest(runtime.store, time.time() - hours * 3600, hours)
+            if args.get("send"):
+                send_digest(runtime.store, runtime.config.digest_channel, text)
+        except (DigestError, ValueError) as error:
+            return _error(str(error))
+        except Exception as error:
+            logger.exception("digest failed")
+            return _error(f"digest failed: {error}")
+        return json.dumps({"digest": text, "sent": bool(args.get("send"))})
+
     def status_tool(self, args: Mapping[str, Any], **kwargs: Any) -> str:
         try:
             runtime = self.runtime()
@@ -389,6 +427,9 @@ def register(ctx: Any) -> None:
         TOOL_CANCEL, TOOLSET, CANCEL_SCHEMA, plugin.cancel_tool, check_fn=_tool_available(plugin, ROLE_ROUTER)
     )
     ctx.register_tool(
+        TOOL_DIGEST, TOOLSET, DIGEST_SCHEMA, plugin.digest_tool, check_fn=_tool_available(plugin, ROLE_WATCHDOG)
+    )
+    ctx.register_tool(
         TOOL_STATUS,
         TOOLSET,
         STATUS_SCHEMA,
@@ -422,4 +463,14 @@ def register(ctx: Any) -> None:
         "Otherwise reply with nothing.",
         slots=[{"name": "every", "type": "text", "label": "Check every N minutes", "default": "5"}],
         tags=["superagent", "watchdog"],
+    )
+    ctx.register_automation_blueprint(
+        "digest",
+        title="Super-agent digest",
+        description="Each morning, send what got done, what waits on people and what record-mode rules would do.",
+        category="work",
+        schedule_template="0 {hour} * * *",
+        prompt_template="Call superagent_digest with send set to true. Reply with nothing.",
+        slots=[{"name": "hour", "type": "text", "label": "Hour of the day", "default": "8"}],
+        tags=["superagent", "digest"],
     )

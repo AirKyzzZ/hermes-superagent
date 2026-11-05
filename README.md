@@ -38,7 +38,7 @@ DeepSeek's article puts the limit at three to five active sessions: past that, a
 
 - **Continuous:** you talk to one router on the channels you already use.
 - **Efficient:** each task gets its own worker, so a new request never waits for an old one.
-- **Proactive:** events pass a gate on who sent them, then rules your team writes in plain language.
+- **Proactive:** events pass a gate on who sent them, then rules your team writes in plain language. A daily digest shows what each rule in record mode would have started, so you switch it to `act` only once it's right.
 - **Persistent:** state lives in SQLite, and a scheduled process outside the workers checks that the work is really moving.
 
 A prompt or skill can only ask a model to stay in its lane. Here the gate, the tool allowlist, fencing and the watchdog process are code the model can't talk its way past, which is why this has to be a plugin.
@@ -323,6 +323,7 @@ The rendered prompt becomes the goal, the comment's author is checked against `a
 | `[worker] argv` | required | Command for one worker, must reference `{brief}` |
 | `[worker] allow_same_user` | `false` | Allows host tools in a worker with no sandbox |
 | `[outbound] argv` | none | Delivery command using `{channel}` and `{text}`. Without it nothing is sent, and messages are still marked sent. A failed send fails the tick, and a message is dropped after five tries |
+| `[digest] channel` | none | Where `superagent digest --send` and the daily digest blueprint deliver |
 | `[watchdog] stall_after_seconds` | `900` | Silence that counts as stuck |
 | `[watchdog] repeat_limit` | `3` | Identical reports in a row that count as stuck |
 | `[watchdog] repeated_call_limit` | `5` | Identical tool calls and results in a row that count as stuck |
@@ -353,6 +354,7 @@ Settings go under `plugins.entries.hermes-superagent.settings` in each profile's
 | `superagent_status` | Router lists live tickets |
 | `superagent_report` | Worker reports progress, blocked, ready, failed or dropped |
 | `superagent_tick` | Watchdog assesses candidates, checks workers and relays |
+| `superagent_digest` | Watchdog summarises recent work, waiting questions and what record-mode rules would have started |
 | `pre_gateway_dispatch` | Runs the gate before Hermes handles a message, fails closed |
 | `pre_llm_call` | Hands the router's model the admitted trigger ids |
 | `pre_tool_call` | Enforces each role's tool policy |
@@ -413,6 +415,7 @@ If the gate itself fails, the message is dropped and logged, so a person gets si
 - [x] Guard hooks, runnable demo, CI against real Hermes discovery
 - [x] Workers proven end to end on real Hermes with a fake model
 - [x] Cancel on request, and a task label on every message
+- [x] A daily digest, including what record-mode rules would have done
 - [x] The router's chat path, from gateway message to relay, proven the same way
 - [ ] First live run with a model and gateway
 - [x] GitHub and other webhook sources

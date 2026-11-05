@@ -40,7 +40,7 @@ Router dispatch, one worker per ticket, status back to the router, a gate with r
 ## What it leaves out
 
 - Kanban, tmux and cmux worker backends, and reading a worker's screen as progress evidence.
-- Email and calendar sources, and the event ledger with its digest and morning sweep.
+- Email and calendar sources, and a full event ledger. The digest covers results, waiting questions, escalations and record-mode rule decisions, not every event.
 - Speculative execution, and waking the router model when a worker finishes (`ctx.inject_message`). Relay is code for now.
 - Memory updates from worker conclusions, and a desktop panel.
 - A watchdog that edits prompts or rules at runtime. DeepSeek's can. Ours can't, on purpose: see below.
