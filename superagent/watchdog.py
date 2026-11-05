@@ -125,6 +125,8 @@ def check_once(
     _reap_finished(router, active_policy)
     results: list[CheckResult] = []
     for assignment in router.store.running_assignments():
+        if assignment.pid is None and time.time() - assignment.started_at < active_policy.orphan_after_seconds:
+            continue
         ticket = router.store.get_ticket(assignment.ticket_id)
         evidence = collect_evidence(router.store, router.backend, assignment, active_policy)
         judgement = judge_deterministically(evidence, active_policy) or _judge_semantically(

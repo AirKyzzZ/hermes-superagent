@@ -284,7 +284,7 @@ def test_forward_resumes_a_waiting_ticket_from_a_message_without_a_thread(router
     router.ingest(event("t2", thread="", text="use Postgres"), auto_dispatch=False)
     router.forward("t2", ticket_id)
     assert "use Postgres" in backend.contexts[1]
-    assert router.store.take_admitted("chat", "use Postgres") == []
+    assert offered(router, "use Postgres") == []
 
 
 def test_forward_refuses_a_stranger_and_an_ended_ticket(router: Router, backend: FakeBackend) -> None:
@@ -303,22 +303,103 @@ def test_messages_without_a_thread_never_feed_a_running_ticket(router: Router, b
     assert outcome.outcome is Outcome.ADMITTED
 
 
+def offered(router: Router, message: str, source: str = "chat", actor: str = "alice", age: float = 600) -> list[str]:
+    return [trigger.id for trigger in router.store.take_admitted(source, actor, message, age)]
+
+
 def test_passed_through_messages_are_not_offered_to_the_router(router: Router) -> None:
     router.ingest(event())
     router.ingest(event("t2", text="use staging"))
-    assert router.store.take_admitted("chat", "use staging") == []
+    assert offered(router, "use staging") == []
 
 
 def test_admitted_text_only_reaches_the_turn_that_carries_it(router: Router) -> None:
     router.ingest(event(thread="", text="private to alice"), auto_dispatch=False)
-    assert router.store.take_admitted("chat", "something bob said") == []
-    assert router.store.take_admitted("telegram", "private to alice") == []
-    assert [t.id for t in router.store.take_admitted("chat", "[alice] private to alice")] == ["t1"]
+    assert offered(router, "something bob said") == []
+    assert offered(router, "private to alice", source="telegram") == []
+    assert offered(router, "private to alice", actor="bob") == []
+    assert offered(router, "[alice] private to alice") == ["t1"]
+
+
+def test_a_short_old_message_is_not_offered_inside_a_longer_one(router: Router) -> None:
+    router.ingest(event(thread="", text="ok"), auto_dispatch=False)
+    assert offered(router, "ok so book the flight") == []
+
+
+def test_a_stale_message_is_not_offered(router: Router) -> None:
+    router.ingest(event(thread="", text="ok"), auto_dispatch=False)
+    assert offered(router, "ok", age=-1) == []
+
+
+def test_a_trigger_can_be_forwarded_only_once(router: Router, backend: FakeBackend) -> None:
+    ticket_id = blocked_ticket(router, backend)
+    router.ingest(event("t2", thread="", text="use Postgres"), auto_dispatch=False)
+    router.forward("t2", ticket_id)
+    with pytest.raises(NotAdmittedError, match="already used"):
+        router.forward("t2", ticket_id)
+
+
+def test_a_forwarded_trigger_cannot_also_be_dispatched(router: Router, backend: FakeBackend) -> None:
+    ticket_id = blocked_ticket(router, backend)
+    router.ingest(event("t2", thread="", text="use Postgres"), auto_dispatch=False)
+    router.forward("t2", ticket_id)
+    with pytest.raises(NotAdmittedError, match="already used"):
+        router.dispatch("t2", "something else")
+
+
+def test_a_passed_through_trigger_cannot_be_dispatched(router: Router) -> None:
+    router.ingest(event())
+    router.ingest(event("t2", text="follow up"))
+    with pytest.raises(NotAdmittedError, match="already used"):
+        router.dispatch("t2", "a new task")
+
+
+def test_another_person_elsewhere_cannot_forward_into_a_ticket(store: Store, backend: FakeBackend) -> None:
+    rules = parse_rules('[sources.chat]\npolicy = "explicit_only"\nallow = ["alice", "bob"]')
+    router = Router(store, rules, backend)
+    ticket_id = blocked_ticket(router, backend)
+    other = Trigger("t2", "chat", "", "bob", "do this instead", "chat:elsewhere", True, False)
+    router.ingest(other, auto_dispatch=False)
+    with pytest.raises(NotAdmittedError, match="another conversation"):
+        router.forward("t2", ticket_id)
+    assert len(backend.started) == 1
+
+
+def test_another_person_in_the_same_conversation_can_forward(store: Store, backend: FakeBackend) -> None:
+    rules = parse_rules('[sources.chat]\npolicy = "explicit_only"\nallow = ["alice", "bob"]')
+    router = Router(store, rules, backend)
+    ticket_id = blocked_ticket(router, backend)
+    other = Trigger("t2", "chat", "", "bob", "use Postgres", "chat:th1", True, False)
+    router.ingest(other, auto_dispatch=False)
+    router.forward("t2", ticket_id)
+    assert len(backend.started) == 2
+
+
+def test_two_answers_resume_a_waiting_ticket_once(router: Router, backend: FakeBackend) -> None:
+    ticket_id = blocked_ticket(router, backend)
+    stale = router.store.get_ticket(ticket_id)
+    router._resume_if_waiting(stale)
+    router._resume_if_waiting(stale)
+    assert len(backend.started) == 2
+
+
+def test_a_failed_launch_keeps_the_persons_answer(router: Router, backend: FakeBackend) -> None:
+    ticket_id = blocked_ticket(router, backend)
+    backend.fail_next_start = True
+    with pytest.raises(OSError):
+        router.ingest(event("t2", text="use Postgres"))
+    assert "use Postgres" in router.store.take_inputs(ticket_id)[0][1]
+
+
+def test_the_resume_brief_carries_the_question_that_was_asked(router: Router, backend: FakeBackend) -> None:
+    blocked_ticket(router, backend)
+    router.ingest(event("t2", text="use Postgres"))
+    assert "Postgres or SQLite?" in backend.contexts[1]
 
 
 def test_concurrent_takers_get_each_trigger_once(router: Router) -> None:
     for index in range(60):
         router.ingest(event(f"m{index}", thread="", text="same"), auto_dispatch=False)
     with ThreadPoolExecutor(max_workers=4) as pool:
-        taken = list(pool.map(lambda _: router.store.take_admitted("chat", "same"), range(8)))
+        taken = list(pool.map(lambda _: router.store.take_admitted("chat", "alice", "same", 600), range(8)))
     assert sum(len(batch) for batch in taken) == 60

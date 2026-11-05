@@ -177,6 +177,31 @@ def test_a_recent_ticket_is_not_treated_as_orphaned(router: Router, backend: Fak
     assert check_once(router, policy=WatchdogPolicy(orphan_after_seconds=3600)) == []
 
 
+def test_a_worker_still_starting_is_left_alone(router: Router, backend: FakeBackend) -> None:
+    router.ingest(REQUEST)
+    router.store.end_assignment(router.store.running_assignments()[0].id)
+    backend.fail_next_start = True
+    ticket = router.store.list_tickets()[0]
+    with pytest.raises(OSError):
+        router.start_worker(ticket)
+    assert check_once(router) == []
+    backend.alive = False
+    assert check_once(router, policy=WatchdogPolicy(orphan_after_seconds=-1))[0].action is RepairAction.RESTART
+
+
+def test_repair_budgets_start_over_after_a_person_resumes_the_ticket(router: Router, backend: FakeBackend) -> None:
+    router.ingest(REQUEST)
+    report(router, backend, "same", 3)
+    check_once(router)
+    report(router, backend, "same", 1)
+    assert check_once(router)[0].action is RepairAction.RESTART
+    assignment = router.store.running_assignments()[0]
+    router.store.add_report(assignment.id, backend.started[-1][2], ReportState.BLOCKED, "stuck", "which one?")
+    router.ingest(Trigger("t2", "chat", "th1", "alice", "the first", "chat:th1", True, False))
+    report(router, backend, "again", 3)
+    assert check_once(router)[0].action is RepairAction.NUDGE
+
+
 def test_every_check_is_recorded(router: Router, backend: FakeBackend) -> None:
     router.ingest(REQUEST)
     report(router, backend, "working")

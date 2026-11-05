@@ -23,6 +23,7 @@ logger = logging.getLogger(__name__)
 
 PLUGIN_NAME = "hermes-superagent"
 TOOLSET = "superagent"
+ADMITTED_MAX_AGE_SECONDS = 600.0
 
 ROUTER_PROMPT = (
     "You are the router of a super-agent. You talk to people on every channel, dispatch work and answer on "
@@ -147,10 +148,14 @@ class Plugin:
             return None
         return {"action": "skip", "reason": f"superagent: {disposition.outcome.value}"}
 
-    def on_pre_llm_call(self, user_message: object = "", platform: str = "", **kwargs: Any) -> dict[str, str] | None:
+    def on_pre_llm_call(
+        self, user_message: object = "", platform: str = "", sender_id: str = "", **kwargs: Any
+    ) -> dict[str, str] | None:
         if self.role != ROLE_ROUTER:
             return None
-        admitted = self.runtime().store.take_admitted(platform, _message_text(user_message))
+        admitted = self.runtime().store.take_admitted(
+            platform, str(sender_id or ""), _message_text(user_message), ADMITTED_MAX_AGE_SECONDS
+        )
         if not admitted:
             return None
         lines = [f"trigger_id={trigger.id}\n{frame_trigger(trigger)}" for trigger in admitted]

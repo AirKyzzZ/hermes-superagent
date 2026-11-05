@@ -42,8 +42,12 @@ class FakeBackend:
     contexts: list[str] = field(default_factory=list)
     stopped: list[str] = field(default_factory=list)
     on_stop: Callable[[str], None] | None = None
+    fail_next_start: bool = False
 
     def start(self, ticket: Ticket, assignment: Assignment, token: str, context: str = "") -> int:
+        if self.fail_next_start:
+            self.fail_next_start = False
+            raise OSError("cannot start worker")
         self.started.append((ticket.id, assignment.id, token))
         self.contexts.append(context)
         return 4242

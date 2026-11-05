@@ -124,7 +124,13 @@ def inbound(ctx: FakeContext, **source: Any) -> Any:
 
 def offered(ctx: FakeContext, text: str = "please fix the bug") -> Any:
     return ctx.hooks["pre_llm_call"](
-        session_id="s", user_message=text, conversation_history=[], is_first_turn=True, model="m", platform="discord"
+        session_id="s",
+        user_message=text,
+        conversation_history=[],
+        is_first_turn=True,
+        model="m",
+        platform="discord",
+        sender_id="u-alice",
     )
 
 

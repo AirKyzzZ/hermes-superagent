@@ -89,15 +89,24 @@ class Router:
         return Disposition(Outcome.DISPATCHED, decision.reason, (ticket.id,))
 
     def dispatch(self, trigger_id: str, goal: str) -> Ticket:
-        return self._open_ticket(self._admitted_trigger(trigger_id), goal, Strength.EXPLICIT)
+        trigger = self._admitted_trigger(trigger_id)
+        existing = self.store.ticket_for_trigger(trigger_id)
+        if existing is not None:
+            return existing
+        if not self.store.claim_trigger(trigger_id, "dispatched"):
+            raise NotAdmittedError(f"trigger {trigger_id} was already used")
+        return self._open_ticket(trigger, goal, Strength.EXPLICIT)
 
     def forward(self, trigger_id: str, ticket_id: str) -> Ticket:
         trigger = self._admitted_trigger(trigger_id)
         ticket = self.store.get_ticket(ticket_id)
         if ticket.status is TicketStatus.ENDED:
             raise ValueError(f"ticket {ticket_id} has ended, dispatch a new one")
+        if trigger.channel != ticket.channel and trigger.actor != ticket.mandate.actor:
+            raise NotAdmittedError(f"trigger {trigger_id} comes from another conversation and another person")
+        if not self.store.claim_trigger(trigger_id, f"forwarded to {ticket_id}"):
+            raise NotAdmittedError(f"trigger {trigger_id} was already used")
         self.store.add_input(ticket_id, f"{trigger.source}:{trigger.actor}", frame_trigger(trigger), trusted=True)
-        self.store.mark_assessed(trigger_id, f"forwarded to {ticket_id}")
         self._resume_if_waiting(ticket)
         return self.store.get_ticket(ticket_id)
 
@@ -155,10 +164,20 @@ class Router:
         return rules is not None and trigger.actor in rules.allow
 
     def start_worker(self, ticket: Ticket) -> Assignment:
-        context = self._restart_context(ticket)
         assignment, token = self.store.create_assignment(ticket.id)
-        pid = self.backend.start(ticket, assignment, token, context)
+        return self._launch(ticket, assignment, token)
+
+    def _launch(self, ticket: Ticket, assignment: Assignment, token: str) -> Assignment:
+        pending = self.store.pending_inputs(ticket.id)
+        reports = self.store.ticket_reports(ticket.id)
+        parts = [text for _, _, text, _ in pending]
+        if reports:
+            last = reports[-1]
+            history = f"{last.summary}\nIt asked: {last.question}" if last.question else last.summary
+            parts.insert(0, frame_untrusted("what the last worker reported", history, keep_tail=True))
+        pid = self.backend.start(ticket, assignment, token, "\n".join(parts))
         self.store.set_assignment_pid(assignment.id, pid)
+        self.store.mark_inputs_delivered([seq for seq, _, _, _ in pending])
         return self.store.get_assignment(assignment.id)
 
     def _admitted_trigger(self, trigger_id: str) -> Trigger:
@@ -187,16 +206,9 @@ class Router:
         return Disposition(Outcome.PASSED_THROUGH, "thread has a live subscriber", tuple(subscribers))
 
     def _resume_if_waiting(self, ticket: Ticket) -> None:
-        if ticket.status is TicketStatus.WAITING:
-            self.store.set_ticket_status(ticket.id, TicketStatus.OPEN)
-            self.start_worker(ticket)
-
-    def _restart_context(self, ticket: Ticket) -> str:
-        parts = [text for _, text, _ in self.store.take_inputs(ticket.id)]
-        reports = self.store.ticket_reports(ticket.id)
-        if reports:
-            parts.insert(0, frame_untrusted("what the last worker reported", reports[-1].summary, keep_tail=True))
-        return "\n".join(parts)
+        resumed = self.store.resume_waiting_ticket(ticket.id)
+        if resumed is not None:
+            self._launch(ticket, *resumed)
 
     def _may_reach_workers(self, trigger: Trigger) -> bool:
         rules = self.rules.sources.get(trigger.source)
