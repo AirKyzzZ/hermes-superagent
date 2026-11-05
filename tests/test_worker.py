@@ -1,12 +1,15 @@
 from __future__ import annotations
 
 import os
+import subprocess
 import sys
 import time
 from pathlib import Path
 
+import pytest
+
 from superagent.domain import Assignment, AssignmentStatus, Mandate, Strength, Ticket, TicketStatus
-from superagent.worker import SubprocessBackend
+from superagent.worker import SubprocessBackend, WorkerStopError
 
 STUBBORN = (
     "import signal, time\nsignal.signal(signal.SIGTERM, signal.SIG_IGN)\nopen('ready', 'w').close()\ntime.sleep(60)\n"
@@ -41,6 +44,116 @@ def test_stop_kills_a_worker_that_ignores_sigterm(tmp_path: Path) -> None:
     while backend.is_alive(running) and time.time() < deadline:
         time.sleep(0.05)
     assert not backend.is_alive(running)
+
+
+def test_stop_tolerates_a_worker_that_already_exited(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr("superagent.worker._STOP_GRACE_SECONDS", 0.2)
+    started_at = time.time()
+    zombie = subprocess.Popen([sys.executable, "-c", "pass"], start_new_session=True)
+    deadline = time.time() + 10
+    while (
+        "Z" not in subprocess.run(["ps", "-o", "stat=", "-p", str(zombie.pid)], capture_output=True, text=True).stdout
+    ):
+        assert time.time() < deadline
+        time.sleep(0.05)
+    backend = SubprocessBackend(["worker", "{brief}"], tmp_path / "db", tmp_path / "w")
+    exited = Assignment("as-1", "tk-1", 1, AssignmentStatus.RUNNING, zombie.pid, started_at)
+    try:
+        backend.stop(exited)
+    finally:
+        zombie.wait()
+
+
+def test_stop_reports_a_group_it_is_not_allowed_to_signal(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    def denied(group: int, signum: int) -> None:
+        raise PermissionError(1, "Operation not permitted")
+
+    started_at = time.time()
+    live = subprocess.Popen([sys.executable, "-c", "import time; time.sleep(30)"], start_new_session=True)
+    try:
+        monkeypatch.setattr("superagent.worker.os.killpg", denied)
+        backend = SubprocessBackend(["worker", "{brief}"], tmp_path / "db", tmp_path / "w")
+        running = Assignment("as-1", "tk-1", 1, AssignmentStatus.RUNNING, live.pid, started_at)
+        with pytest.raises(WorkerStopError, match="still running"):
+            backend.stop(running)
+    finally:
+        monkeypatch.undo()
+        live.kill()
+        live.wait()
+
+
+def test_stop_kills_a_child_that_outlives_its_leader(tmp_path: Path) -> None:
+    pid_file = tmp_path / "child.pid"
+    started_at = time.time()
+    leader = subprocess.Popen(
+        ["/bin/sh", "-c", f"sleep 60 >/dev/null 2>&1 & echo $! > {pid_file}; exit 0"], start_new_session=True
+    )
+    leader.wait()
+    child = int(pid_file.read_text())
+    backend = SubprocessBackend(["worker", "{brief}"], tmp_path / "db", tmp_path / "w")
+    backend.stop(Assignment("as-1", "tk-1", 1, AssignmentStatus.RUNNING, leader.pid, started_at))
+    deadline = time.time() + 5
+    while time.time() < deadline:
+        state = subprocess.run(["ps", "-o", "stat=", "-p", str(child)], capture_output=True, text=True).stdout.strip()
+        if not state or "Z" in state:
+            return
+        time.sleep(0.05)
+    os.kill(child, 9)
+    pytest.fail("child survived stop")
+
+
+def test_stop_refuses_a_leaderless_group_too_old_to_identify(tmp_path: Path) -> None:
+    pid_file = tmp_path / "child.pid"
+    leader = subprocess.Popen(
+        ["/bin/sh", "-c", f"sleep 60 >/dev/null 2>&1 & echo $! > {pid_file}; exit 0"], start_new_session=True
+    )
+    leader.wait()
+    child = int(pid_file.read_text())
+    backend = SubprocessBackend(["worker", "{brief}"], tmp_path / "db", tmp_path / "w")
+    stale = Assignment("as-1", "tk-1", 1, AssignmentStatus.RUNNING, leader.pid, time.time() - 86400)
+    try:
+        with pytest.raises(WorkerStopError, match="too old"):
+            backend.stop(stale)
+        os.kill(child, 0)
+    finally:
+        os.kill(child, 9)
+
+
+def test_stop_refuses_when_it_cannot_read_a_live_process(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    live = subprocess.Popen([sys.executable, "-c", "import time; time.sleep(30)"], start_new_session=True)
+    monkeypatch.setattr("superagent.worker._process_started_at", lambda pid: None)
+    backend = SubprocessBackend(["worker", "{brief}"], tmp_path / "db", tmp_path / "w")
+    try:
+        with pytest.raises(WorkerStopError, match="could not read"):
+            backend.stop(Assignment("as-1", "tk-1", 1, AssignmentStatus.RUNNING, live.pid, time.time()))
+        assert live.poll() is None
+    finally:
+        live.kill()
+        live.wait()
+
+
+def test_stop_reports_a_group_that_survives_sigkill(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    sent: list[int] = []
+    monkeypatch.setattr("superagent.worker.os.killpg", lambda group, signum: sent.append(signum))
+    monkeypatch.setattr("superagent.worker._group_has_live_member", lambda group: True)
+    monkeypatch.setattr("superagent.worker._process_started_at", lambda pid: 1000.0)
+    monkeypatch.setattr("superagent.worker._STOP_GRACE_SECONDS", 0.0)
+    monkeypatch.setattr("superagent.worker._KILL_GRACE_SECONDS", 0.0)
+    backend = SubprocessBackend(["worker", "{brief}"], tmp_path / "db", tmp_path / "w")
+    with pytest.raises(WorkerStopError, match="survived"):
+        backend.stop(Assignment("as-1", "tk-1", 1, AssignmentStatus.RUNNING, 4242, 1000.0))
+    assert len(sent) == 2
+
+
+def test_stop_leaves_a_reused_pid_alone(tmp_path: Path) -> None:
+    other = subprocess.Popen([sys.executable, "-c", "import time; time.sleep(30)"], start_new_session=True)
+    try:
+        backend = SubprocessBackend(["worker", "{brief}"], tmp_path / "db", tmp_path / "w")
+        backend.stop(Assignment("as-1", "tk-1", 1, AssignmentStatus.RUNNING, other.pid, time.time() - 3600))
+        assert other.poll() is None
+    finally:
+        other.kill()
+        other.wait()
 
 
 def test_worker_env_is_an_allowlist(tmp_path: Path) -> None:
