@@ -6,6 +6,7 @@ import tomllib
 from dataclasses import dataclass, fields, replace
 from pathlib import Path
 
+from .connectors import ConnectorConfigError, ConnectorSpec, parse_specs
 from .gate import Rules, RulesError, parse_rules
 from .watchdog import WatchdogPolicy
 
@@ -14,7 +15,18 @@ DB_FILENAME = "superagent.db"
 WORKDIRS_DIRNAME = "workers"
 LAST_GOOD_FILENAME = ".superagent.last-good.toml"
 _KNOWN_KEYS = {
-    "": {"sources", "semantic", "worker", "outbound", "watchdog", "digest", "channels", "heartbeat", "tick"},
+    "": {
+        "sources",
+        "semantic",
+        "worker",
+        "outbound",
+        "watchdog",
+        "digest",
+        "channels",
+        "heartbeat",
+        "tick",
+        "connectors",
+    },
     "sources": {"policy", "allow", "bots", "pass_strangers", "notify", "via_router"},
     "semantic": {"name", "text", "mode"},
     "worker": {"argv", "allow_same_user"},
@@ -39,6 +51,7 @@ class Config:
     heartbeat_argv: tuple[str, ...] = ()
     tick_deadline_seconds: float = 600.0
     alert_after_seconds: float = 300.0
+    connectors: tuple[ConnectorSpec, ...] = ()
 
 
 class ConfigError(ValueError):
@@ -78,6 +91,10 @@ def parse_config(raw: str) -> Config:
     alerts_channel = _table(data, "channels").get("alerts", "")
     if not isinstance(alerts_channel, str):
         raise ConfigError("[channels] alerts must be a string such as discord:123")
+    try:
+        connectors = parse_specs(data.get("connectors", {}))
+    except ConnectorConfigError as error:
+        raise ConfigError(str(error)) from error
     heartbeat = _table(data, "heartbeat").get("argv", [])
     if not isinstance(heartbeat, list) or not all(isinstance(part, str) for part in heartbeat):
         raise ConfigError("[heartbeat] argv must be a list of strings")
@@ -92,6 +109,7 @@ def parse_config(raw: str) -> Config:
         heartbeat_argv=tuple(heartbeat),
         tick_deadline_seconds=deadline,
         alert_after_seconds=alert_after,
+        connectors=connectors,
     )
 
 

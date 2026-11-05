@@ -14,7 +14,7 @@ A <a href="https://github.com/NousResearch/hermes-agent">Hermes Agent</a> plugin
 <a href="LICENSE"><img alt="MIT licence" src="https://img.shields.io/github/license/AirKyzzZ/hermes-superagent?style=flat-square&label=license&labelColor=14142a&color=1a10b8"></a>
 <a href="pyproject.toml"><img alt="Python 3.11 or newer" src="https://img.shields.io/badge/python-3.11%2B-1a10b8?style=flat-square&labelColor=14142a"></a>
 <a href="plugin.yaml"><img alt="Hermes plugin, requires 0.22.7 or newer" src="https://img.shields.io/badge/Hermes_plugin-%3E%3D0.22.7-1a10b8?style=flat-square&labelColor=14142a"></a>
-<a href="tests"><img alt="299 tests" src="https://img.shields.io/badge/tests-299-1a10b8?style=flat-square&labelColor=14142a"></a>
+<a href="tests"><img alt="352 tests" src="https://img.shields.io/badge/tests-352-1a10b8?style=flat-square&labelColor=14142a"></a>
 <a href="docs/hackathon.md"><img alt="Built for the Hermes Agent Plugin Hackathon" src="https://img.shields.io/badge/built_for-Hermes_Plugin_Hackathon-1a10b8?style=flat-square&labelColor=14142a"></a>
 </p>
 
@@ -328,6 +328,15 @@ The rendered prompt becomes the goal, the comment's author is checked against `a
 | `[tick] deadline_seconds` | `600` | A CLI tick running longer is stopped. A tick that finds the lock held longer than this fails loudly instead of skipping |
 | `[tick] alert_after_seconds` | `300` | How long an error has to last before it's alerted |
 | `[heartbeat] argv` | none | Runs after every tick with no errors, such as a ping to an external uptime check, so a dead timer gets noticed from outside |
+| `[connectors.<name>] type` | required | `command` for now. A connector polls one tool into the item ledger |
+| `[connectors.<name>] every` | `5m` | How often it polls |
+| `[connectors.<name>] track` | `true` | `false` keeps its items, such as readings or events, without anyone owning them |
+| `[connectors.<name>] quiet_after` | off, required for delta sources | Warns when the source has had nothing new for this long |
+| `command`: `argv`, `fields`, `items` | required | Runs `argv` and reads its JSON. `items` is the dotted path to the list. `fields` maps `id`, `title`, `url`, `due`, `status`, `excerpt` and any extra meta key to a dotted path or a `{path}` template. A bad item fails the run but the good ones are still recorded, and a mapped path that no item has fails it too |
+| `command`: `total`, `limit` | none | Catch a cut list: `total` is the path to the count the tool reports, which must match, and a run that returns exactly `limit` items fails |
+| `command`: `complete`, `confirm_argv` | `true`, none | A complete source returns everything open each time, so items it stops returning are marked gone. A snapshot that shrinks by half or more is held back until `superagent ledger accept <name>`. `confirm_argv` with `{id}` checks one vanished item's `status`. An id that starts with a symbol or holds anything outside letters, digits and `._:/#@+=-` is never passed to it |
+| `command`: `env`, `timeout`, `closed` | none, `60`, `closed`, `done`, `completed`, `true`, `merged` | Variables passed through to the command, its timeout (the whole process group is stopped), and the `status` values that mean closed |
+| `command`: `complete = false`, `overlap`, `backfill` | `true`, `10m`, `14d` | A delta source gets `{since}` (UTC, `2026-11-05T22:00:00Z`), `{since_epoch}` or `{since_date}` (`2026/11/05`) in its `argv`. It starts `backfill` ago and each window reaches `overlap` back into the previous one |
 | `[watchdog] stall_after_seconds` | `900` | Silence that counts as stuck |
 | `[watchdog] repeat_limit` | `3` | Identical reports in a row that count as stuck |
 | `[watchdog] repeated_call_limit` | `5` | Identical tool calls and results in a row that count as stuck |
@@ -364,7 +373,7 @@ Settings go under `plugins.entries.hermes-superagent.settings` in each profile's
 | `pre_tool_call` | Enforces each role's tool policy |
 | `post_tool_call` | Records worker activity for the watchdog |
 
-`hermes superagent ledger list`, `show`, `close`, `ignore` and `snooze` work on the item ledger, which keeps every item a source shows until someone closes it with a reason. Connectors that fill it are next, see the [dogfood design](docs/dogfood-design.md).
+`hermes superagent ledger list`, `show`, `close`, `ignore` and `snooze` work on the item ledger, which keeps every item a source shows until someone closes it with a reason. Connectors fill it, see `[connectors]` above and the [dogfood design](docs/dogfood-design.md).
 
 </details>
 
@@ -407,7 +416,7 @@ If the gate itself fails, the message is dropped and logged, so a person gets si
 
 ### What it does on your machine
 
-- **Runs commands you configure:** one worker process per task from `[worker] argv`, and the delivery command from `[outbound] argv`. Workers keep running after the turn that started them.
+- **Runs commands you configure:** one worker process per task from `[worker] argv`, the delivery command from `[outbound] argv`, and each connector's `argv` on its schedule during ticks, with only the environment variables you list. Workers keep running after the turn that started them.
 - **Stops processes:** the watchdog signals its own workers' client process groups, which cancels their turns, and checks each start time first so a reused PID isn't hit.
 - **Spends model tokens:** ticks call the watchdog profile's model through `ctx.llm` when there's a new report to judge or a candidate event to assess. Router and workers use their own profiles' models as usual.
 - **Writes files:** `superagent.db` and per-worker directories under `home`, each with a brief and a private identity file, and it reads `superagent.toml` from there.

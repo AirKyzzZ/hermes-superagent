@@ -472,7 +472,9 @@ class Store:
         with self._connect() as connection:
             _queue(connection, ticket_id, channel, text)
 
-    def sync_alerts(self, active: Mapping[str, str], alert_after: float, channel: str) -> tuple[list[str], list[str]]:
+    def sync_alerts(
+        self, active: Mapping[str, str], alert_after: float, channel: str, immediate: frozenset[str] = frozenset()
+    ) -> tuple[list[str], list[str]]:
         now = time.time()
         raised: list[str] = []
         resolved: list[str] = []
@@ -493,7 +495,7 @@ class Store:
                 else:
                     connection.execute("UPDATE alerts SET text = ?, last_seen = ? WHERE key = ?", (text, now, key))
                     first_seen, notified = row["first_seen"], row["notified_at"] is not None
-                if channel and not notified and now - first_seen >= alert_after:
+                if channel and not notified and (key in immediate or now - first_seen >= alert_after):
                     connection.execute("UPDATE alerts SET notified_at = ? WHERE key = ?", (now, key))
                     _queue(connection, ALERT_TICKET, channel, f"Alert: {text}")
                     raised.append(text)

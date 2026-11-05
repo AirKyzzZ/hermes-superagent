@@ -63,6 +63,8 @@ def setup_parser(parser: argparse.ArgumentParser) -> None:
     ignore = ledger_commands.add_parser("ignore", help="stop tracking an item, with a reason")
     ignore.add_argument("item")
     ignore.add_argument("--reason", required=True)
+    accept = ledger_commands.add_parser("accept", help="apply a held-back snapshot that shrank a lot")
+    accept.add_argument("connector")
     snooze = ledger_commands.add_parser("snooze", help="hide an item from reconciliation until a date")
     snooze.add_argument("item")
     snooze.add_argument("--until", required=True, help="ISO date or date and time, local time")
@@ -123,6 +125,7 @@ def run(
                     "tickets": runtime.router.status(),
                     "undelivered": runtime.store.undelivered_count(),
                     "alerts": runtime.store.active_alerts(),
+                    "sources": [asdict(source) for source in runtime.ledger.sources()],
                 },
                 indent=1,
             )
@@ -172,6 +175,7 @@ def run(
                 ],
                 "delivered": [{"channel": channel, "text": text} for _, channel, text in result.delivered],
                 "errors": list(result.errors),
+                "warnings": list(result.warnings),
                 "skipped": result.skipped,
             }
         )
@@ -204,6 +208,10 @@ def run_ledger(args: argparse.Namespace, ledger: Ledger) -> int:
             item = ledger.get(args.item)
             history = [asdict(event) for event in ledger.history(item.id)]
             print(json.dumps({"item": asdict(item), "history": history}, indent=1))
+            return 0
+        if args.ledger_command == "accept":
+            ledger.accept_next_snapshot(args.connector)
+            print(json.dumps({"accepted": args.connector, "applies": "on its next poll"}))
             return 0
         if args.ledger_command == "close":
             item = ledger.move(args.item, ItemState.DONE, "owner", args.reason)
