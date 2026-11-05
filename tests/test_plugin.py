@@ -274,6 +274,13 @@ def test_slash_command_from_a_stranger_is_dropped(tmp_path: Path) -> None:
     assert inbound(ctx, user_id="u-mallory", text="/stop")["action"] == "skip"
 
 
+def test_editing_the_rules_applies_without_a_restart(tmp_path: Path) -> None:
+    ctx = registered("router", tmp_path)
+    assert inbound(ctx, message_id="1") is None
+    (tmp_path / "superagent.toml").write_text(CONFIG.replace('["u-alice"]', "[]"), encoding="utf-8")
+    assert inbound(ctx, message_id="2")["action"] == "skip"
+
+
 def test_gate_failure_fails_closed(tmp_path: Path) -> None:
     ctx = registered("router", tmp_path)
     (tmp_path / "superagent.toml").write_text("not toml [", encoding="utf-8")

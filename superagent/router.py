@@ -29,6 +29,7 @@ logger = logging.getLogger(__name__)
 
 CHAT_WORD_LIMIT = 100
 MAX_SEND_ATTEMPTS = 5
+OFFER_VALID_SECONDS = 3600.0
 _ATTACHMENT_TAG = re.compile(r"media:", re.IGNORECASE)
 
 
@@ -85,27 +86,31 @@ class Router:
             return Disposition(Outcome.CANDIDATE, decision.reason)
         if not auto_dispatch:
             return Disposition(Outcome.ADMITTED, decision.reason)
-        ticket = self.dispatch(trigger.id, trigger.text)
+        self.store.mark_assessed(trigger.id, "dispatched")
+        ticket = self._open_ticket(trigger, trigger.text, Strength.EXPLICIT)
         return Disposition(Outcome.DISPATCHED, decision.reason, (ticket.id,))
 
     def dispatch(self, trigger_id: str, goal: str) -> Ticket:
         trigger = self._admitted_trigger(trigger_id)
+        if self.store.claim_offered_trigger(trigger_id, "dispatched", OFFER_VALID_SECONDS):
+            return self._open_ticket(trigger, goal, Strength.EXPLICIT)
         existing = self.store.ticket_for_trigger(trigger_id)
-        if existing is not None:
+        if existing is not None and self.store.assessment_of(trigger_id) == "dispatched":
             return existing
-        if not self.store.claim_trigger(trigger_id, "dispatched"):
-            raise NotAdmittedError(f"trigger {trigger_id} was already used")
-        return self._open_ticket(trigger, goal, Strength.EXPLICIT)
+        raise NotAdmittedError(f"trigger {trigger_id} was already used or is not an offered request")
 
     def forward(self, trigger_id: str, ticket_id: str) -> Ticket:
         trigger = self._admitted_trigger(trigger_id)
         ticket = self.store.get_ticket(ticket_id)
         if ticket.status is TicketStatus.ENDED:
             raise ValueError(f"ticket {ticket_id} has ended, dispatch a new one")
-        if trigger.channel != ticket.channel and trigger.actor != ticket.mandate.actor:
+        same_person = (
+            bool(trigger.actor) and trigger.source == ticket.mandate.source and trigger.actor == ticket.mandate.actor
+        )
+        if trigger.channel != ticket.channel and not same_person:
             raise NotAdmittedError(f"trigger {trigger_id} comes from another conversation and another person")
-        if not self.store.claim_trigger(trigger_id, f"forwarded to {ticket_id}"):
-            raise NotAdmittedError(f"trigger {trigger_id} was already used")
+        if not self.store.claim_offered_trigger(trigger_id, f"forwarded to {ticket_id}", OFFER_VALID_SECONDS):
+            raise NotAdmittedError(f"trigger {trigger_id} was already used or is not an offered request")
         self.store.add_input(ticket_id, f"{trigger.source}:{trigger.actor}", frame_trigger(trigger), trusted=True)
         self._resume_if_waiting(ticket)
         return self.store.get_ticket(ticket_id)
@@ -186,6 +191,8 @@ class Router:
             raise NotAdmittedError(f"unknown trigger: {trigger_id}")
         if self.store.admission_of(trigger_id) is not Admission.ACT:
             raise NotAdmittedError(f"trigger {trigger_id} was not admitted by the gate")
+        if gate(trigger, self.rules).admission is not Admission.ACT:
+            raise NotAdmittedError(f"trigger {trigger_id} is no longer allowed by the current rules")
         return trigger
 
     def _open_ticket(self, trigger: Trigger, goal: str, strength: Strength) -> Ticket:
