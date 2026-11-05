@@ -26,6 +26,8 @@ class SourceRules:
     allow: frozenset[str]
     bots: frozenset[str]
     pass_strangers: bool = False
+    notify: str = ""
+    via_router: bool = False
 
 
 @dataclass(frozen=True)
@@ -62,6 +64,8 @@ def parse_rules(raw: str) -> Rules:
                 allow=frozenset(body.get("allow", [])),
                 bots=frozenset(body.get("bots", [])),
                 pass_strangers=bool(body.get("pass_strangers", False)),
+                notify=str(body.get("notify", "")),
+                via_router=bool(body.get("via_router", False)),
             )
             for name, body in data.get("sources", {}).items()
         }

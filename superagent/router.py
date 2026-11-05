@@ -78,7 +78,11 @@ class Router:
         decision = gate(trigger, self.rules)
         if not self.store.record_trigger(trigger, decision.admission, decision.reason, self.rules.version):
             return Disposition(Outcome.DUPLICATE, "trigger already recorded")
-        subscribers = self.store.subscribers(trigger.thread)
+        subscribers = [
+            ticket_id
+            for ticket_id in self.store.subscribers(trigger.thread)
+            if self.store.get_ticket(ticket_id).mandate.source == trigger.source
+        ]
         if subscribers and self._may_reach_workers(trigger):
             return self._pass_through(trigger, subscribers)
         if decision.admission is Admission.IGNORE:
@@ -200,7 +204,9 @@ class Router:
 
     def _open_ticket(self, trigger: Trigger, goal: str, strength: Strength) -> Ticket:
         mandate = Mandate(self.rules.version, goal, strength, trigger.actor, trigger.source, trigger.id)
-        ticket, created = self.store.create_ticket(goal, mandate, trigger.channel, trigger.thread)
+        source = self.rules.sources.get(trigger.source)
+        channel = source.notify if source is not None and source.notify else trigger.channel
+        ticket, created = self.store.create_ticket(goal, mandate, channel, trigger.thread)
         if created:
             self.start_worker(ticket)
         return ticket
