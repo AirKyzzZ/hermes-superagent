@@ -43,7 +43,7 @@ SCRIPTS = {
         Step("superagent_report", {"state": "ready", "summary": "done {id}"}),
     ],
     "unset": [
-        Step("send_message", {"action": "list"}),
+        Step("terminal", {"command": "touch {work}/unset-{id}"}),
         Step("superagent_report", {"state": "ready", "summary": "done {id}"}),
     ],
     "outsider": [

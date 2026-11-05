@@ -173,18 +173,14 @@ def scenario_wander(runtime: Runtime) -> None:
     check("wander: changing directory in a terminal doesn't change identity", "ready" in report_states(runtime, ticket))
 
 
-def scenario_role_unset(runtime: Runtime, log: Path, profile: Path, home: Path) -> None:
+def scenario_role_unset(runtime: Runtime, log: Path, work: Path, profile: Path, home: Path) -> None:
     configure_worker(profile, home, tool_search="off", role="")
     ticket = start_task(runtime, "scenario=unset id=unset")
     wait_until(lambda: "ready" in report_states(runtime, ticket))
     results = [result for entry in turns(log, "unset") for result in entry["tool_results"]]
-    check(
-        "no role set: the guard still blocks a worker", any("report only to the router" in r for r in results), results
-    )
-    check(
-        "no role set: the worker can still report", "ready" in report_states(runtime, ticket), turns(log, "unset")[-2:]
-    )
-    configure_worker(profile, home, tool_search="off")
+    check("no role set: the guard still applies", any("same OS user" in r for r in results), results)
+    check("no role set: the blocked command never ran", not (work / "unset-unset").exists())
+    check("no role set: the worker can still report", "ready" in report_states(runtime, ticket))
 
 
 def scenario_stop(runtime: Runtime, log: Path) -> None:
@@ -257,10 +253,10 @@ def main() -> int:
         scenario_guard(guarded, log, work)
         scenario_fence(guarded, log, work)
         scenario_outsider(guarded, log, work)
+        scenario_role_unset(guarded, log, work, hermes_home / "profiles" / "worker", guarded_home)
         configure_worker(hermes_home / "profiles" / "worker", open_home, tool_search="off")
         opened = open_runtime(open_home)
         scenario_wander(opened)
-        scenario_role_unset(opened, log, hermes_home / "profiles" / "worker", open_home)
         scenario_stop(opened, log)
         scenario_host_env()
     finally:
