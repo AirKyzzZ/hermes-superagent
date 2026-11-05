@@ -37,15 +37,9 @@ jobs:
         with:
           python-version: "3.14"
       - name: Install Hermes at the pinned release
-        run: |
-          src="$RUNNER_TEMP/hermes-src"
-          git init -q "$src"
-          git -C "$src" fetch -q --depth 1 https://github.com/NousResearch/hermes-agent "$HERMES_PIN"
-          git -C "$src" checkout -q FETCH_HEAD
-          uv sync --project "$src" --frozen --no-dev
-          echo "$src/.venv/bin" >> "$GITHUB_PATH"
-          echo "HERMES_HOME=$RUNNER_TEMP/hermes-home" >> "$GITHUB_ENV"
-          mkdir -p "$RUNNER_TEMP/hermes-home"
+        uses: ./.github/actions/install-hermes
+        with:
+          pin: ${{ env.HERMES_PIN }}
       - run: hermes --version
       - name: Plugin doctor loads the plugin through real discovery
         run: hermes plugins doctor . --ci
@@ -57,3 +51,18 @@ jobs:
           mkdir -p "$entry_dir"
           sed "s/0000000000000000000000000000000000000000/$GITHUB_SHA/g" docs/catalog-entry.yaml > "$entry_dir/hermes-superagent.yaml"
           uv run --no-project --with ruamel.yaml==0.18.17 python "$RUNNER_TEMP/hermes-src/scripts/validate_plugin_catalog.py" "$entry_dir/hermes-superagent.yaml"
+
+  e2e:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v6
+        with:
+          python-version: "3.14"
+      - name: Install Hermes at the pinned release
+        uses: ./.github/actions/install-hermes
+        with:
+          pin: ${{ env.HERMES_PIN }}
+      - name: Real Hermes, fake model
+        run: python tests/e2e/run_e2e.py --work "$RUNNER_TEMP/e2e"
