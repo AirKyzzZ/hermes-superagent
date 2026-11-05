@@ -243,6 +243,14 @@ def stored_summaries(home: Path) -> list[str]:
 
 
 def stage_router(work: Path, log: Path) -> None:
+    interpreter = Path(shutil.which("hermes") or "hermes").resolve().parent / "python"
+    probe = subprocess.run(
+        [str(interpreter), "-c", "import sys; print(sys.executable); from aiohttp import web; print(web)"],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    print("aiohttp probe:", probe.returncode, probe.stdout[-400:], probe.stderr[-1200:], flush=True)
     hermes_home = work / "router-home"
     hermes_home.mkdir()
     os.environ["HERMES_HOME"] = str(hermes_home)
