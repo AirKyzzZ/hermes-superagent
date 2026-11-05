@@ -31,7 +31,7 @@ The form can go in as soon as the PR is open. Catalog checks run once a maintain
 
 ## Before submitting
 
-**Blocker:** worker identity probably doesn't work on real Hermes yet, see [Known limits](../DESIGN.md#known-limits). It needs a fix and an end-to-end run before the demo can show the plugin working.
+**Still open before the demo:** the router's chat path needs an end-to-end run on real Hermes, and someone needs to run the whole thing once with a live model and gateway. Workers already pass on real Hermes with a fake model in CI.
 
 | Catalog rule | State | Evidence |
 | --- | --- | --- |
@@ -52,7 +52,7 @@ The plugin page renders the README through an allowlist that drops raw HTML, so 
 
 ## Submission steps
 
-1. Confirm CI is green on `main` and the blocker above is closed.
+1. Confirm CI is green on `main` and nothing above is still open.
 2. Copy [catalog-entry.yaml](catalog-entry.yaml) to `plugin-catalog/hermes-superagent.yaml` in a fork of `NousResearch/hermes-agent`, and pin it. Both the `sha` and the `image` URL take the same commit:
 
    ```bash

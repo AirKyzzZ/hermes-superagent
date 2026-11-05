@@ -22,8 +22,8 @@ config_schema:
   role:
     type: str
     default: ""
-    description: "router, watchdog or empty. Empty keeps the plugin inert. Workers get their role from the router."
+    description: "router, worker, watchdog or empty. Empty keeps the plugin inert."
   home:
     type: str
     default: ""
-    description: "Directory shared by router and watchdog, holding superagent.toml and the database."
+    description: "Directory shared by router, workers and watchdog, holding superagent.toml and the database."

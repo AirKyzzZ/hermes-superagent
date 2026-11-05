@@ -241,8 +241,16 @@ class Store:
                 (AssignmentStatus.ENDED.value, time.time(), assignment_id),
             )
 
-    def assignment_is_running(self, assignment_id: str) -> bool:
-        return self.get_assignment(assignment_id).status is AssignmentStatus.RUNNING
+    def assignment_is_current(self, assignment_id: str, token: str) -> bool:
+        with self._connect() as connection:
+            row = connection.execute(
+                "SELECT token_hash, status FROM assignments WHERE id = ?", (assignment_id,)
+            ).fetchone()
+        return (
+            row is not None
+            and secrets.compare_digest(row["token_hash"], hash_token(token))
+            and row["status"] == AssignmentStatus.RUNNING.value
+        )
 
     def assignments_to_reap(self, grace_seconds: float) -> list[Assignment]:
         with self._connect() as connection:

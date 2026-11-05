@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import os
 import signal
 import subprocess
@@ -12,13 +13,7 @@ from typing import Protocol
 
 from .domain import Assignment, Ticket
 
-ENV_ASSIGNMENT = "SUPERAGENT_ASSIGNMENT"
-ENV_TOKEN = "SUPERAGENT_TOKEN"
-ENV_TICKET = "SUPERAGENT_TICKET"
-ENV_DB = "SUPERAGENT_DB"
-ENV_ROLE = "SUPERAGENT_ROLE"
-ENV_ATTEMPT = "SUPERAGENT_ATTEMPT"
-ENV_ALLOW_SAME_USER = "SUPERAGENT_ALLOW_SAME_USER"
+IDENTITY_FILENAME = ".superagent-identity.json"
 ROLE_WORKER = "worker"
 ROLE_ROUTER = "router"
 ROLE_WATCHDOG = "watchdog"
@@ -58,6 +53,12 @@ def render_brief(ticket: Ticket, context: str = "") -> str:
         "A new worker picks the task up with the answer.\n"
         f"{earlier}"
     )
+
+
+def write_identity(workdir: Path, ticket_id: str, assignment_id: str, token: str, attempt: int) -> None:
+    descriptor = os.open(workdir / IDENTITY_FILENAME, os.O_CREAT | os.O_WRONLY | os.O_TRUNC, 0o600)
+    with os.fdopen(descriptor, "w", encoding="utf-8") as file:
+        json.dump({"assignment": assignment_id, "ticket": ticket_id, "token": token, "attempt": attempt}, file)
 
 
 def _process_started_at(pid: int) -> float | None:
@@ -119,36 +120,21 @@ class SubprocessBackend:
     def __init__(
         self,
         argv: Sequence[str],
-        db_path: Path,
         workdir_root: Path,
         extra_env: Mapping[str, str] | None = None,
-        allow_same_user: bool = False,
     ) -> None:
         self.argv = list(argv)
-        self.db_path = db_path
         self.workdir_root = workdir_root
         self.extra_env = dict(extra_env or {})
-        self.allow_same_user = allow_same_user
 
     def start(self, ticket: Ticket, assignment: Assignment, token: str, context: str = "") -> int:
         workdir = self.workdir_root / ticket.id / assignment.id
         workdir.mkdir(parents=True, exist_ok=True)
         brief = workdir / "brief.md"
         brief.write_text(render_brief(ticket, context), encoding="utf-8")
+        write_identity(workdir, ticket.id, assignment.id, token, assignment.attempt)
         env = {name: os.environ[name] for name in _INHERITED_ENV if name in os.environ}
         env.update(self.extra_env)
-        env.update(
-            {
-                ENV_ROLE: ROLE_WORKER,
-                ENV_ASSIGNMENT: assignment.id,
-                ENV_TOKEN: token,
-                ENV_TICKET: ticket.id,
-                ENV_ATTEMPT: str(assignment.attempt),
-                ENV_DB: str(self.db_path),
-            }
-        )
-        if self.allow_same_user:
-            env[ENV_ALLOW_SAME_USER] = "1"
         argv = [part.replace("{brief}", str(brief)) for part in self.argv]
         with (workdir / "worker.log").open("ab") as log:
             process = subprocess.Popen(

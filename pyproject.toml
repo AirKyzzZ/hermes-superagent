@@ -30,5 +30,5 @@ mypy_path = "."
 files = ["superagent"]
 
 [[tool.mypy.overrides]]
-module = "plugins.*"
+module = ["plugins.*", "hermes_cli.*"]
 ignore_missing_imports = true

@@ -2,22 +2,22 @@ from __future__ import annotations
 
 import json
 import logging
-import os
 import uuid
 from collections.abc import Callable, Mapping
 from pathlib import Path
 from typing import Any
 
 from .cli import run, setup_parser
+from .config import load_config
 from .domain import ReportState, Trigger
 from .framing import frame_trigger
 from .guard import TOOL_DISPATCH, TOOL_FORWARD, TOOL_REPORT, TOOL_STATUS, TOOL_TICK, blocked_reason
 from .judges import LlmAssessor, LlmDriftJudge
-from .reporting import identity_from_env, record_tool_activity, submit_report
+from .reporting import NotAWorkerError, WorkerIdentity, identity_from_workdir, record_tool_activity, submit_report
 from .router import NotAdmittedError, Outcome
 from .runtime import Runtime, open_runtime, tick
 from .store import StaleAssignmentError, Store
-from .worker import ENV_ALLOW_SAME_USER, ENV_ROLE, ROLE_ROUTER, ROLE_WATCHDOG, ROLE_WORKER
+from .worker import IDENTITY_FILENAME, ROLE_ROUTER, ROLE_WATCHDOG, ROLE_WORKER
 
 logger = logging.getLogger(__name__)
 
@@ -96,7 +96,14 @@ class Plugin:
 
     @property
     def role(self) -> str:
-        return os.environ.get(ENV_ROLE) or str(self.ctx.get_config("role", default="") or "")
+        configured = str(self.ctx.get_config("role", default="") or "")
+        if configured or not self._session_is_in_a_worker_directory():
+            return configured
+        return ROLE_WORKER
+
+    def _session_is_in_a_worker_directory(self) -> bool:
+        cwd = self.ctx.session_cwd()
+        return bool(cwd) and (Path(cwd) / IDENTITY_FILENAME).is_file()
 
     def home(self) -> Path:
         configured = self.ctx.get_config("home", default="")
@@ -109,23 +116,34 @@ class Plugin:
     def runtime(self) -> Runtime:
         return open_runtime(self.home())
 
+    def worker_identity(self) -> WorkerIdentity:
+        identity = identity_from_workdir(Path(self.ctx.session_cwd() or ".").resolve())
+        if identity.db_path.parent.resolve() != self.home().resolve():
+            raise NotAWorkerError(f"worker directory is outside the configured home {self.home()}")
+        return identity
+
     def is_role(self, role: str) -> bool:
         return self.role == role
 
     def on_pre_tool_call(self, tool_name: str, **kwargs: Any) -> dict[str, str] | None:
         role = self.role
+        worker_sandboxed = True
         if role == ROLE_WORKER:
-            identity = identity_from_env()
-            if not Store(identity.db_path).assignment_is_running(identity.assignment_id):
+            try:
+                identity = self.worker_identity()
+            except NotAWorkerError as error:
+                return {"action": "block", "message": f"This profile only runs superagent workers: {error}"}
+            if not Store(identity.db_path).assignment_is_current(identity.assignment_id, identity.token):
                 return {"action": "block", "message": "This assignment has ended. Stop working now."}
-        reason = blocked_reason(role, tool_name, worker_sandboxed=worker_may_touch_host())
+            worker_sandboxed = _terminal_backend() != "local" or load_config(self.home()).allow_same_user
+        reason = blocked_reason(role, tool_name, worker_sandboxed=worker_sandboxed, args=kwargs.get("args"))
         return {"action": "block", "message": reason} if reason else None
 
     def on_post_tool_call(self, tool_name: str, args: object, result: object, **kwargs: Any) -> None:
         if self.role != ROLE_WORKER or tool_name == TOOL_REPORT:
             return
         try:
-            record_tool_activity(identity_from_env(), tool_name, args, result)
+            record_tool_activity(self.worker_identity(), tool_name, args, result)
         except (StaleAssignmentError, OSError, RuntimeError) as error:
             logger.warning("could not record worker activity: %s", error)
 
@@ -196,7 +214,7 @@ class Plugin:
         try:
             state = ReportState(str(args.get("state", "")))
             result = submit_report(
-                identity_from_env(), state, str(args.get("summary", "")), str(args.get("question", ""))
+                self.worker_identity(), state, str(args.get("summary", "")), str(args.get("question", ""))
             )
         except StaleAssignmentError as error:
             return _error(f"{error}. This assignment has been replaced: stop working now.")
@@ -237,9 +255,13 @@ class Plugin:
         )
 
 
-def worker_may_touch_host() -> bool:
-    backend = os.environ.get("TERMINAL_ENV", "local") or "local"
-    return backend != "local" or os.environ.get(ENV_ALLOW_SAME_USER) == "1"
+def _terminal_backend() -> str:
+    try:
+        from hermes_cli.config import load_config_readonly
+    except ImportError:
+        return "local"
+    terminal = (load_config_readonly() or {}).get("terminal") or {}
+    return str(terminal.get("backend") or "local")
 
 
 def trigger_from_event(event: Any) -> Trigger:
