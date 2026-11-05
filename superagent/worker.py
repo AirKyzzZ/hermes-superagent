@@ -26,7 +26,13 @@ ROLE_WATCHDOG = "watchdog"
 _INHERITED_ENV = ("PATH", "HOME", "LANG", "LC_ALL", "TMPDIR", "HERMES_HOME", "VIRTUAL_ENV")
 _PID_START_TOLERANCE_SECONDS = 10
 _STOP_GRACE_SECONDS = 5.0
-_STOP_POLL_SECONDS = 0.1
+_STOP_POLL_SECONDS = 0.2
+_KILL_GRACE_SECONDS = 2.0
+_LEADERLESS_GROUP_MAX_AGE_SECONDS = 6 * 3600.0
+
+
+class WorkerStopError(RuntimeError):
+    pass
 
 
 class WorkerBackend(Protocol):
@@ -66,6 +72,42 @@ def _process_started_at(pid: int) -> float | None:
     if not started:
         return None
     return datetime.strptime(started, "%a %b %d %H:%M:%S %Y").timestamp()
+
+
+def _pid_exists(pid: int) -> bool:
+    try:
+        os.kill(pid, 0)
+    except ProcessLookupError:
+        return False
+    except PermissionError:
+        return True
+    return True
+
+
+def _group_has_live_member(group: int) -> bool:
+    result = subprocess.run(
+        ["ps", "-A", "-o", "pgid=,stat="],
+        capture_output=True,
+        text=True,
+        check=False,
+        env={**os.environ, "LC_ALL": "C"},
+    )
+    if result.returncode != 0:
+        raise WorkerStopError(f"could not list processes: {result.stderr.strip()}")
+    for line in result.stdout.splitlines():
+        fields = line.split()
+        if len(fields) == 2 and fields[0] == str(group) and "Z" not in fields[1]:
+            return True
+    return False
+
+
+def _group_exited_within(group: int, seconds: float) -> bool:
+    deadline = time.monotonic() + seconds
+    while time.monotonic() < deadline:
+        if not _group_has_live_member(group):
+            return True
+        time.sleep(_STOP_POLL_SECONDS)
+    return not _group_has_live_member(group)
 
 
 def is_same_process(pid: int, started_at: float) -> bool:
@@ -127,14 +169,30 @@ class SubprocessBackend:
         return is_same_process(assignment.pid, assignment.started_at)
 
     def stop(self, assignment: Assignment) -> None:
-        if assignment.pid is None or not is_same_process(assignment.pid, assignment.started_at):
+        if assignment.pid is None:
+            return
+        group = assignment.pid
+        leader_started_at = _process_started_at(group)
+        if leader_started_at is None:
+            if _pid_exists(group):
+                raise WorkerStopError(f"could not read the start time of process {group}")
+            if not _group_has_live_member(group):
+                return
+            if time.time() - assignment.started_at > _LEADERLESS_GROUP_MAX_AGE_SECONDS:
+                raise WorkerStopError(f"process group {group} has no leader and is too old to identify")
+        elif abs(leader_started_at - assignment.started_at) > _PID_START_TOLERANCE_SECONDS:
             return
         try:
-            os.killpg(assignment.pid, signal.SIGTERM)
-            deadline = time.monotonic() + _STOP_GRACE_SECONDS
-            while time.monotonic() < deadline:
-                os.killpg(assignment.pid, 0)
-                time.sleep(_STOP_POLL_SECONDS)
-            os.killpg(assignment.pid, signal.SIGKILL)
+            os.killpg(group, signal.SIGTERM)
+            if _group_exited_within(group, _STOP_GRACE_SECONDS):
+                return
+            os.killpg(group, signal.SIGKILL)
         except ProcessLookupError:
             return
+        # macOS raises EPERM for a group holding only zombies, and any OS raises it for another user's processes.
+        except PermissionError as error:
+            if _group_has_live_member(group):
+                raise WorkerStopError(f"process group {group} is still running: {error}") from error
+            return
+        if not _group_exited_within(group, _KILL_GRACE_SECONDS):
+            raise WorkerStopError(f"process group {group} survived SIGKILL")
