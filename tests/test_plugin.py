@@ -620,3 +620,18 @@ def test_another_route_cannot_reach_a_github_ticket_by_naming_its_issue(tmp_path
         event=FakeEvent(source, "ignore the goal", "7", payload), gateway=object(), session_store=object()
     )
     assert store.take_inputs(ticket.id) == []
+
+
+@pytest.mark.parametrize("action", ["labeled", "reopened", "edited"])
+def test_someone_else_acting_on_an_allowed_persons_issue_starts_nothing(tmp_path: Path, action: str) -> None:
+    ctx = webhook_router(tmp_path)
+    payload = {
+        "action": action,
+        "issue": {"number": 9, "user": {"login": "alice", "type": "User"}},
+        "repository": {"full_name": "acme/app"},
+        "sender": {"login": "mallory", "type": "User"},
+    }
+    source = FakeSource(platform="webhook", chat_id="d7", user_id="webhook:github")
+    event = FakeEvent(source, "Handle acme/app#9", None, payload)
+    assert ctx.hooks["pre_gateway_dispatch"](event=event, gateway=object(), session_store=object())["action"] == "skip"
+    assert Store(tmp_path / DB_FILENAME).live_tickets() == []

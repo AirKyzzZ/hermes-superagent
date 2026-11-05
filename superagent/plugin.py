@@ -313,16 +313,21 @@ def trigger_from_event(event: Any) -> Trigger:
 def _webhook_author(payload: object) -> tuple[str, bool, str]:
     if not isinstance(payload, Mapping):
         return "", False, ""
-    nested = (payload.get(key) for key in ("comment", "review", "issue", "pull_request"))
-    authors = [item.get("user") for item in nested if isinstance(item, Mapping)]
-    author = next((user for user in authors if isinstance(user, Mapping)), payload.get("sender"))
-    login = str(author.get("login") or "") if isinstance(author, Mapping) else ""
-    is_bot = isinstance(author, Mapping) and (author.get("type") == "Bot" or login.endswith("[bot]"))
     repository = payload.get("repository")
     repo = str(repository.get("full_name") or "") if isinstance(repository, Mapping) else ""
     item = payload.get("issue") or payload.get("pull_request")
     number = item.get("number") if isinstance(item, Mapping) else None
-    return login, is_bot, f"{repo}#{number}" if repo and isinstance(number, int) else ""
+    thread = f"{repo}#{number}" if repo and isinstance(number, int) else ""
+    nested = (payload.get(key) for key in ("comment", "review", "issue", "pull_request"))
+    authors = [item.get("user") for item in nested if isinstance(item, Mapping)]
+    author = next((user for user in authors if isinstance(user, Mapping)), None)
+    known = [user for user in (author, payload.get("sender")) if isinstance(user, Mapping)]
+    logins = {str(user.get("login") or "") for user in known}
+    if len(logins) != 1:
+        return "", False, thread
+    login = logins.pop()
+    is_bot = any(user.get("type") == "Bot" for user in known) or login.endswith("[bot]")
+    return login, is_bot, thread
 
 
 def _message_text(message: object) -> str:
