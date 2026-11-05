@@ -14,7 +14,7 @@ A <a href="https://github.com/NousResearch/hermes-agent">Hermes Agent</a> plugin
 <a href="LICENSE"><img alt="MIT licence" src="https://img.shields.io/github/license/AirKyzzZ/hermes-superagent?style=flat-square&label=license&labelColor=14142a&color=1a10b8"></a>
 <a href="pyproject.toml"><img alt="Python 3.11 or newer" src="https://img.shields.io/badge/python-3.11%2B-1a10b8?style=flat-square&labelColor=14142a"></a>
 <a href="plugin.yaml"><img alt="Hermes plugin, requires 0.22.7 or newer" src="https://img.shields.io/badge/Hermes_plugin-%3E%3D0.22.7-1a10b8?style=flat-square&labelColor=14142a"></a>
-<a href="tests"><img alt="211 tests" src="https://img.shields.io/badge/tests-211-1a10b8?style=flat-square&labelColor=14142a"></a>
+<a href="tests"><img alt="221 tests" src="https://img.shields.io/badge/tests-221-1a10b8?style=flat-square&labelColor=14142a"></a>
 <a href="docs/hackathon.md"><img alt="Built for the Hermes Agent Plugin Hackathon" src="https://img.shields.io/badge/built_for-Hermes_Plugin_Hackathon-1a10b8?style=flat-square&labelColor=14142a"></a>
 </p>
 
@@ -308,7 +308,7 @@ The rendered prompt becomes the goal, the comment's author is checked against `a
 
 ## Configuration
 
-`superagent.toml` lives in the shared directory, and edits to its rules apply without a restart. Hermes gives hooks no mention flag, so chat messages always count as addressed, and team rules only see listed bots and `ingest` events for now.
+`superagent.toml` lives in the shared directory, and edits to its rules apply without a restart. Unknown keys are refused, and if an edit breaks the file the plugin keeps running on the last good copy while every tick fails with the error until it's fixed. Hermes gives hooks no mention flag, so chat messages always count as addressed, and team rules only see listed bots and `ingest` events for now.
 
 | Key | Default | What it does |
 | --- | --- | --- |
@@ -322,7 +322,7 @@ The rendered prompt becomes the goal, the comment's author is checked against `a
 | `[[semantic]] mode` | `record` | `record` only logs, `act` opens a ticket |
 | `[worker] argv` | required | Command for one worker, must reference `{brief}` |
 | `[worker] allow_same_user` | `false` | Allows host tools in a worker with no sandbox |
-| `[outbound] argv` | none | Delivery command using `{channel}` and `{text}`. Without it nothing is sent, and messages are still marked sent |
+| `[outbound] argv` | none | Delivery command using `{channel}` and `{text}`. Without it nothing is sent, and messages are still marked sent. A failed send fails the tick, and a message is dropped after five tries |
 | `[watchdog] stall_after_seconds` | `900` | Silence that counts as stuck |
 | `[watchdog] repeat_limit` | `3` | Identical reports in a row that count as stuck |
 | `[watchdog] repeated_call_limit` | `5` | Identical tool calls and results in a row that count as stuck |

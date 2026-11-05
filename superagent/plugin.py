@@ -245,7 +245,8 @@ class Plugin:
 
     def status_tool(self, args: Mapping[str, Any], **kwargs: Any) -> str:
         try:
-            return json.dumps({"tickets": self.runtime().router.status()})
+            runtime = self.runtime()
+            return json.dumps({"tickets": runtime.router.status(), "undelivered": runtime.store.undelivered_count()})
         except Exception as error:
             logger.exception("status failed")
             return _error(f"status failed: {error}")

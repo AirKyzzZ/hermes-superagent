@@ -4,12 +4,13 @@ import fcntl
 import logging
 import os
 import subprocess
+import time
 from dataclasses import dataclass
 from pathlib import Path
 
 from .config import DB_FILENAME, WORKDIRS_DIRNAME, Config, load_config
 from .domain import Ticket
-from .router import Assessor, Router, Sender
+from .router import MAX_SEND_ATTEMPTS, Assessor, Router, Sender
 from .store import Store
 from .watchdog import CheckResult, DriftJudge, check_once
 from .worker import SubprocessBackend
@@ -18,6 +19,7 @@ logger = logging.getLogger(__name__)
 
 _SEND_TIMEOUT_SECONDS = 60
 _TICK_LOCK_FILENAME = "tick.lock"
+IGNORED_TRIGGER_RETENTION_SECONDS = 7 * 24 * 3600.0
 
 
 @dataclass(frozen=True)
@@ -71,7 +73,7 @@ def tick(runtime: Runtime, judge: DriftJudge | None = None, assessor: Assessor |
 
 
 def _run_phases(runtime: Runtime, judge: DriftJudge | None, assessor: Assessor | None) -> TickResult:
-    errors: list[str] = []
+    errors: list[str] = [f"config: {runtime.config.problem}"] if runtime.config.problem else []
     tickets: list[Ticket] = []
     checks: list[CheckResult] = []
     delivered: list[tuple[str, str, str]] = []
@@ -86,9 +88,20 @@ def _run_phases(runtime: Runtime, judge: DriftJudge | None, assessor: Assessor |
     except Exception as error:
         logger.exception("watchdog check failed")
         errors.append(f"watchdog: {error}")
+    relay_started = time.time()
     try:
         delivered = runtime.router.relay(argv_sender(runtime.config.send_argv))
     except Exception as error:
         logger.exception("relay failed")
         errors.append(f"relay: {error}")
+    waiting, dropped = runtime.store.outbox_problems(relay_started)
+    if waiting:
+        errors.append(f"relay: {waiting} message(s) not delivered yet, retrying on the next tick")
+    if dropped:
+        errors.append(f"relay: {dropped} message(s) dropped after {MAX_SEND_ATTEMPTS} failed sends")
+    try:
+        runtime.store.prune_ignored_triggers(IGNORED_TRIGGER_RETENTION_SECONDS)
+    except Exception as error:
+        logger.exception("pruning failed")
+        errors.append(f"prune: {error}")
     return TickResult(tuple(tickets), tuple(checks), tuple(delivered), tuple(errors))
