@@ -65,6 +65,6 @@ jobs:
         with:
           pin: ${{ env.HERMES_PIN }}
       - name: Add the webhook adapter's dependency through Hermes
-        run: hermes pm install --extra sms
+        run: '"$RUNNER_TEMP/hermes-src/.venv/bin/python" -c "import pm; pm.sync_venv([''sms''], explicit=True)"'
       - name: Real Hermes, fake model
         run: uv run --no-project --with pyyaml python tests/e2e/run_e2e.py --work "$RUNNER_TEMP/e2e"
