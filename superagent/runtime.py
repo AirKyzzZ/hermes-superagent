@@ -7,11 +7,15 @@ import os
 import re
 import subprocess
 import time
+from collections.abc import Mapping
 from dataclasses import dataclass, replace
 from pathlib import Path
 
 from .config import DB_FILENAME, WORKDIRS_DIRNAME, Config, load_config
+from .connectors import Connector, build_connector
 from .domain import Ticket
+from .ledger import Ledger
+from .polling import poll_sources
 from .router import Assessor, Router, Sender, chat_safe
 from .store import Store
 from .watchdog import CheckResult, DriftJudge, check_once
@@ -29,6 +33,8 @@ class Runtime:
     home: Path
     config: Config
     router: Router
+    ledger: Ledger
+    connectors: Mapping[str, Connector]
 
     @property
     def store(self) -> Store:
@@ -42,13 +48,15 @@ class TickResult:
     delivered: tuple[tuple[str, str, str], ...] = ()
     errors: tuple[str, ...] = ()
     skipped: bool = False
+    warnings: tuple[str, ...] = ()
 
 
 def open_runtime(home: Path) -> Runtime:
     config = load_config(home)
     db_path = home / DB_FILENAME
     backend = SubprocessBackend(config.worker_argv, home / WORKDIRS_DIRNAME)
-    return Runtime(home, config, Router(Store(db_path), config.rules, backend))
+    connectors = {spec.name: build_connector(spec) for spec in config.connectors}
+    return Runtime(home, config, Router(Store(db_path), config.rules, backend), Ledger(db_path), connectors)
 
 
 def argv_sender(argv: tuple[str, ...]) -> Sender | None:
@@ -141,6 +149,12 @@ def _run_phases(runtime: Runtime, judge: DriftJudge | None, assessor: Assessor |
     tickets: list[Ticket] = []
     checks: list[CheckResult] = []
     delivered: list[tuple[str, str, str]] = []
+    warnings: list[str] = []
+    try:
+        warnings = poll_sources(runtime.ledger, runtime.config.connectors, runtime.connectors)
+    except Exception as error:
+        logger.exception("polling failed")
+        errors.append(f"poll: {error}")
     if assessor is not None:
         try:
             tickets = runtime.router.assess_candidates(assessor)
@@ -167,7 +181,7 @@ def _run_phases(runtime: Runtime, judge: DriftJudge | None, assessor: Assessor |
         logger.exception("pruning failed")
         errors.append(f"prune: {error}")
     try:
-        delivered += _raise_alerts(runtime, errors)
+        delivered += _raise_alerts(runtime, [*errors, *warnings])
     except Exception as error:
         logger.exception("alerting failed")
         errors.append(f"alerts: {error}")
@@ -178,7 +192,7 @@ def _run_phases(runtime: Runtime, judge: DriftJudge | None, assessor: Assessor |
             )
         except (subprocess.SubprocessError, OSError) as error:
             errors.append(f"heartbeat: {error}")
-    return TickResult(tuple(tickets), tuple(checks), tuple(delivered), tuple(errors))
+    return TickResult(tuple(tickets), tuple(checks), tuple(delivered), tuple(errors), warnings=tuple(warnings))
 
 
 def _raise_alerts(runtime: Runtime, errors: list[str]) -> list[tuple[str, str, str]]:

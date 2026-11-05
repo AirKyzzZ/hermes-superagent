@@ -279,6 +279,9 @@ def stage_router(work: Path, log: Path) -> None:
     os.environ["HERMES_HOME"] = str(hermes_home)
     home = work / "shared"
     sent = work / "sent.tsv"
+    tasks = work / "tasks.json"
+    tasks.write_text(json.dumps([{"id": "t1", "content": "Renew the domain"}, {"id": "t2", "content": "Pay rent"}]))
+    tasks_argv = json.dumps(["python3", "-c", "import sys; print(open(sys.argv[1]).read())", str(tasks)])
     write_home(home, allow_same_user=False)
     with (home / "superagent.toml").open("a", encoding="utf-8") as config:
         argv = json.dumps(["python3", str(Path(__file__).with_name("outbound.py")), str(sent), "{channel}", "{text}"])
@@ -289,6 +292,8 @@ def stage_router(work: Path, log: Path) -> None:
             f'\n[digest]\nchannel = "discord:team"\n'
             f'\n[channels]\nalerts = "discord:alerts"\n'
             f"\n[tick]\nalert_after_seconds = 0\n"
+            f'\n[connectors.tasks]\ntype = "command"\nevery = "0s"\nargv = {tasks_argv}\n'
+            'fields = { id = "id", title = "content" }\n'
             f"\n[outbound]\nargv = {argv}\n"
             f'\n[[semantic]]\nname = "ci-watch"\ntext = "Look into failing CI runs on main."\nmode = "record"\n'
         )
@@ -357,6 +362,13 @@ def stage_router(work: Path, log: Path) -> None:
         tick = hermes("-p", "watchdog", "superagent", "tick")
         print("tick:", tick.returncode, tick.stdout[-600:], tick.stderr[-600:], flush=True)
         check("watchdog: the tick runs from the CLI", tick.returncode == 0)
+        listed = hermes("-p", "watchdog", "superagent", "ledger", "list", "--json")
+        titles = sorted(item["title"] for item in json.loads(listed.stdout or "[]")) if listed.returncode == 0 else []
+        check(
+            "ledger: the tick polled a command connector into the ledger",
+            titles == ["Pay rent", "Renew the domain"],
+            listed.stdout[-300:] + listed.stderr[-300:],
+        )
         delivered = sent.read_text(encoding="utf-8") if sent.exists() else ""
         check("watchdog: the result is relayed to the person", "]: done routed-worker" in delivered, delivered)
         check("watchdog: the relay goes back to the webhook chat", delivered.startswith("webhook:"), delivered)

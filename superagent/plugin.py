@@ -317,6 +317,7 @@ class Plugin:
                 ],
                 "delivered": [{"channel": channel, "text": text} for _, channel, text in result.delivered],
                 "errors": list(result.errors),
+                "warnings": list(result.warnings),
             }
         )
 
