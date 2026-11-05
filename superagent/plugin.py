@@ -350,7 +350,12 @@ def trigger_from_event(event: Any) -> Trigger:
     thread_id = str(source.thread_id or "")
     address = f"{platform}:{chat_id}:{thread_id}" if thread_id else f"{platform}:{chat_id}"
     message_id = event.message_id
-    trigger_id = f"{platform}:{chat_id}:{message_id}" if message_id else f"{platform}:{uuid.uuid4().hex}"
+    if message_id:
+        trigger_id = f"{platform}:{chat_id}:{message_id}"
+    elif platform == "webhook" and chat_id:
+        trigger_id = f"{platform}:{chat_id}"
+    else:
+        trigger_id = f"{platform}:{uuid.uuid4().hex}"
     user_id = str(source.user_id or "")
     if platform == "webhook" and user_id.startswith(WEBHOOK_SOURCE_PREFIX):
         actor, is_bot, item = _webhook_author(getattr(event, "raw_message", None))
