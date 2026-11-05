@@ -4,6 +4,7 @@ import os
 import signal
 import subprocess
 import threading
+import time
 from collections.abc import Mapping, Sequence
 from datetime import datetime
 from pathlib import Path
@@ -23,6 +24,8 @@ ROLE_WATCHDOG = "watchdog"
 
 _INHERITED_ENV = ("PATH", "HOME", "LANG", "LC_ALL", "TMPDIR", "HERMES_HOME", "VIRTUAL_ENV")
 _PID_START_TOLERANCE_SECONDS = 10
+_STOP_GRACE_SECONDS = 5.0
+_STOP_POLL_SECONDS = 0.1
 
 
 class WorkerBackend(Protocol):
@@ -120,5 +123,10 @@ class SubprocessBackend:
             return
         try:
             os.killpg(assignment.pid, signal.SIGTERM)
+            deadline = time.monotonic() + _STOP_GRACE_SECONDS
+            while time.monotonic() < deadline:
+                os.killpg(assignment.pid, 0)
+                time.sleep(_STOP_POLL_SECONDS)
+            os.killpg(assignment.pid, signal.SIGKILL)
         except ProcessLookupError:
             return

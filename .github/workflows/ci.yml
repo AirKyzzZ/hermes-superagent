@@ -42,9 +42,8 @@ jobs:
           git init -q "$src"
           git -C "$src" fetch -q --depth 1 https://github.com/NousResearch/hermes-agent "$HERMES_PIN"
           git -C "$src" checkout -q FETCH_HEAD
-          uv venv "$RUNNER_TEMP/hermes-venv"
-          uv pip install --python "$RUNNER_TEMP/hermes-venv/bin/python" -e "$src"
-          echo "$RUNNER_TEMP/hermes-venv/bin" >> "$GITHUB_PATH"
+          uv sync --project "$src" --frozen --no-dev
+          echo "$src/.venv/bin" >> "$GITHUB_PATH"
           echo "HERMES_HOME=$RUNNER_TEMP/hermes-home" >> "$GITHUB_ENV"
           mkdir -p "$RUNNER_TEMP/hermes-home"
       - run: hermes --version

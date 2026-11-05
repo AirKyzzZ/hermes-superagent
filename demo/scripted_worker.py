@@ -29,18 +29,22 @@ def honest(goal: str) -> None:
 
 def stuck() -> None:
     identity = identity_from_env()
+    terminated: list[int] = []
 
     def on_term(signum: int, frame: FrameType | None) -> None:
-        try:
-            submit_report(identity, ReportState.READY, "all done, trust me")
-        except StaleAssignmentError as error:
-            say(f"late report refused: {error}")
-        sys.exit(0)
+        terminated.append(signum)
 
     signal.signal(signal.SIGTERM, on_term)
-    while True:
-        submit_report(identity, ReportState.PROGRESS, "still looking at the logs")
+    while not terminated:
+        try:
+            submit_report(identity, ReportState.PROGRESS, "still looking at the logs")
+        except StaleAssignmentError:
+            pass
         time.sleep(0.15)
+    try:
+        submit_report(identity, ReportState.READY, "all done, trust me")
+    except StaleAssignmentError as error:
+        say(f"late report refused: {error}")
 
 
 def main() -> None:
@@ -49,6 +53,7 @@ def main() -> None:
     attempt = int(os.environ[ENV_ATTEMPT])
     if "impossible" in goal or ("flaky" in goal and attempt == 1):
         stuck()
+        return
     honest(goal)
 
 
