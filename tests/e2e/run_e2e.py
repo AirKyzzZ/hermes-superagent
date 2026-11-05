@@ -266,6 +266,14 @@ def stage_router(work: Path, log: Path) -> None:
     )
     configure_worker(create_profile(hermes_home, "worker"), home)
     configure_worker(create_profile(hermes_home, "watchdog"), home, role="watchdog")
+    interpreter = Path(shutil.which("hermes") or "hermes").resolve().parent / "python"
+    extra = subprocess.run(
+        [str(interpreter), "-c", "import pm; pm.sync_venv(['sms'], explicit=True)"],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    print("webhook dependency:", extra.returncode, extra.stderr[-500:], flush=True)
     with (work / "host.log").open("ab") as host_log:
         host = subprocess.Popen(
             ["hermes", "gateway", "run"], stdin=subprocess.DEVNULL, stdout=host_log, stderr=subprocess.STDOUT
