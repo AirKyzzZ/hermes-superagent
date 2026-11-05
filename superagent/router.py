@@ -1,0 +1,179 @@
+from __future__ import annotations
+
+from collections.abc import Callable, Sequence
+from dataclasses import dataclass
+from enum import StrEnum
+from typing import Protocol
+
+from .domain import (
+    HUMAN_FACING_REPORT_STATES,
+    Admission,
+    Assignment,
+    Mandate,
+    Report,
+    ReportState,
+    Strength,
+    Ticket,
+    TicketStatus,
+    Trigger,
+)
+from .framing import frame_trigger
+from .gate import RuleMode, Rules, SemanticRule, SourcePolicy, gate
+from .store import Store
+from .worker import WorkerBackend
+
+CHAT_WORD_LIMIT = 100
+
+
+class Outcome(StrEnum):
+    DISPATCHED = "dispatched"
+    PASSED_THROUGH = "passed_through"
+    CANDIDATE = "candidate"
+    IGNORED = "ignored"
+    DUPLICATE = "duplicate"
+    ADMITTED = "admitted"
+
+
+@dataclass(frozen=True)
+class Disposition:
+    outcome: Outcome
+    reason: str
+    ticket_ids: tuple[str, ...] = ()
+
+
+@dataclass(frozen=True)
+class Assessment:
+    trigger_id: str
+    rule: str
+    goal: str
+
+
+Sender = Callable[[str, str], None]
+
+
+class Assessor(Protocol):
+    def assess(self, batch: Sequence[Trigger], rules: Sequence[SemanticRule]) -> Sequence[Assessment]: ...
+
+
+class NotAdmittedError(PermissionError):
+    pass
+
+
+class Router:
+    def __init__(self, store: Store, rules: Rules, backend: WorkerBackend) -> None:
+        self.store = store
+        self.rules = rules
+        self.backend = backend
+
+    def ingest(self, trigger: Trigger, *, auto_dispatch: bool = True) -> Disposition:
+        decision = gate(trigger, self.rules)
+        if not self.store.record_trigger(trigger, decision.admission, decision.reason, self.rules.version):
+            return Disposition(Outcome.DUPLICATE, "trigger already recorded")
+        subscribers = self.store.subscribers(trigger.thread)
+        if subscribers and self._may_reach_workers(trigger):
+            return self._pass_through(trigger, subscribers, trusted=self._is_allowed(trigger))
+        if decision.admission is Admission.IGNORE:
+            return Disposition(Outcome.IGNORED, decision.reason)
+        if decision.admission is Admission.CANDIDATE:
+            return Disposition(Outcome.CANDIDATE, decision.reason)
+        if not auto_dispatch:
+            return Disposition(Outcome.ADMITTED, decision.reason)
+        ticket = self.dispatch(trigger.id, trigger.text)
+        return Disposition(Outcome.DISPATCHED, decision.reason, (ticket.id,))
+
+    def dispatch(self, trigger_id: str, goal: str) -> Ticket:
+        trigger = self.store.get_trigger(trigger_id)
+        if trigger is None:
+            raise NotAdmittedError(f"unknown trigger: {trigger_id}")
+        if self.store.admission_of(trigger_id) is not Admission.ACT:
+            raise NotAdmittedError(f"trigger {trigger_id} was not admitted by the gate")
+        return self._open_ticket(trigger, goal, Strength.EXPLICIT)
+
+    def assess_candidates(self, assessor: Assessor) -> list[Ticket]:
+        batch = self.store.pending_candidates()
+        active_rules = list(self.rules.semantic)
+        if not batch:
+            return []
+        assessments = {item.trigger_id: item for item in assessor.assess(batch, active_rules)}
+        modes = {rule.name: rule.mode for rule in active_rules}
+        tickets: list[Ticket] = []
+        for trigger in batch:
+            assessment = assessments.get(trigger.id)
+            if assessment is None:
+                self.store.mark_assessed(trigger.id, "quiet")
+                continue
+            if modes.get(assessment.rule) is not RuleMode.ACT:
+                self.store.mark_assessed(trigger.id, f"recorded by {assessment.rule}: {assessment.goal}")
+                continue
+            self.store.mark_assessed(trigger.id, f"accepted by {assessment.rule}")
+            tickets.append(self._open_ticket(trigger, assessment.goal, Strength.INFERRED))
+        return tickets
+
+    def relay(self, send: Sender | None = None) -> list[tuple[str, str, str]]:
+        for report in self.store.take_unrelayed_reports():
+            self._relay_report(report)
+        for ticket_id, reason in self.store.take_unrelayed_escalations():
+            ticket = self.store.get_ticket(ticket_id)
+            self.store.add_outbox(ticket_id, ticket.channel, shorten(f"Needs you: {reason}"))
+        delivered: list[tuple[str, str, str]] = []
+        for seq, ticket_id, channel, text in self.store.pending_outbox():
+            if send is not None:
+                send(channel, text)
+            self.store.mark_sent(seq)
+            delivered.append((ticket_id, channel, text))
+        return delivered
+
+    def status(self) -> list[dict[str, str]]:
+        lines = []
+        for ticket in self.store.list_tickets(TicketStatus.OPEN):
+            reports = self.store.ticket_reports(ticket.id)
+            lines.append(
+                {
+                    "ticket": ticket.id,
+                    "goal": shorten(ticket.goal),
+                    "state": reports[-1].state.value if reports else "starting",
+                }
+            )
+        return lines
+
+    def _open_ticket(self, trigger: Trigger, goal: str, strength: Strength) -> Ticket:
+        mandate = Mandate(self.rules.version, goal, strength, trigger.actor, trigger.source, trigger.id)
+        ticket, created = self.store.create_ticket(goal, mandate, trigger.channel, trigger.thread)
+        if created:
+            self.start_worker(ticket)
+        return ticket
+
+    def start_worker(self, ticket: Ticket) -> Assignment:
+        assignment, token = self.store.create_assignment(ticket.id)
+        pid = self.backend.start(ticket, assignment, token)
+        self.store.set_assignment_pid(assignment.id, pid)
+        return self.store.get_assignment(assignment.id)
+
+    def _pass_through(self, trigger: Trigger, subscribers: list[str], *, trusted: bool) -> Disposition:
+        framed = frame_trigger(trigger)
+        for ticket_id in subscribers:
+            self.store.add_input(ticket_id, f"{trigger.source}:{trigger.actor}", framed, trusted=trusted)
+        return Disposition(Outcome.PASSED_THROUGH, "thread has a live subscriber", tuple(subscribers))
+
+    def _relay_report(self, report: Report) -> None:
+        if report.state not in HUMAN_FACING_REPORT_STATES:
+            return
+        ticket = self.store.get_ticket(report.ticket_id)
+        text = report.question if report.question else report.summary
+        prefix = "Done" if report.state is ReportState.READY else report.state.value.capitalize()
+        self.store.add_outbox(report.ticket_id, ticket.channel, shorten(f"{prefix}: {text}"))
+
+    def _may_reach_workers(self, trigger: Trigger) -> bool:
+        rules = self.rules.sources.get(trigger.source)
+        if rules is None or rules.policy is SourcePolicy.IGNORE or trigger.is_bot:
+            return False
+        return self._is_allowed(trigger) or rules.pass_strangers
+
+    def _is_allowed(self, trigger: Trigger) -> bool:
+        rules = self.rules.sources.get(trigger.source)
+        return rules is not None and trigger.actor in rules.allow
+
+
+def shorten(text: str, limit: int = CHAT_WORD_LIMIT) -> str:
+    words = text.split()
+    return text if len(words) <= limit else " ".join(words[:limit]) + " ..."

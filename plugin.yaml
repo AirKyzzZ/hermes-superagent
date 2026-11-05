@@ -1,0 +1,28 @@
+name: hermes-superagent
+version: 0.1.0
+manifest_version: 2
+description: "A resident router that dispatches and never executes, isolated workers that report only to it, team-written trigger rules, and an external watchdog that checks real progress and goal drift. Based on DeepSeek's Super-agent design. Disclosure: spawns worker processes from the argv you configure, and runs the outbound send command you configure."
+author: AirKyzzZ
+license: MIT
+homepage: https://github.com/AirKyzzZ/hermes-superagent
+tags: [orchestration, router, workers, watchdog, triggers]
+requires_hermes: ">=0.22.7"
+provides_tools:
+  - superagent_dispatch
+  - superagent_status
+  - superagent_report
+  - superagent_tick
+provides_hooks:
+  - pre_tool_call
+  - post_tool_call
+  - post_gateway_admission
+  - pre_llm_call
+config_schema:
+  role:
+    type: str
+    default: ""
+    description: "router, watchdog or empty. Empty keeps the plugin inert. Workers get their role from the router."
+  home:
+    type: str
+    default: ""
+    description: "Directory shared by router and watchdog, holding superagent.toml and the database."

@@ -1,0 +1,22 @@
+[sources.chat]
+policy = "explicit_only"
+allow = ["alice"]
+
+[sources.github]
+policy = "candidate"
+allow = ["alice"]
+bots = ["ci-bot"]
+
+[[semantic]]
+name = "silent-fix"
+text = "Reproduce reported bugs quietly and speak up only with a confirmed fix."
+mode = "record"
+
+[worker]
+argv = ["@PYTHON@", "@DEMO@/scripted_worker.py", "{brief}"]
+
+[watchdog]
+stall_after_seconds = 30
+repeat_limit = 3
+nudge_budget = 1
+restart_budget = 1
