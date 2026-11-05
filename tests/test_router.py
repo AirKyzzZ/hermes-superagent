@@ -11,7 +11,7 @@ import pytest
 from superagent.domain import RepairAction, ReportState, Strength, TicketStatus, Trigger
 from superagent.gate import SemanticRule, parse_rules
 from superagent.router import ORDERED_RETRIES, Assessment, NotAdmittedError, Outcome, Router, chat_safe
-from superagent.store import SEND_RETRY_CAP_SECONDS, StaleAssignmentError, Store
+from superagent.store import MESSAGE_LIMIT, SEND_RETRY_CAP_SECONDS, StaleAssignmentError, Store
 from superagent.watchdog import WatchdogPolicy, check_once
 
 from .conftest import FakeBackend, unlabelled
@@ -211,13 +211,24 @@ def done_report(router: Router, backend: FakeBackend, summary: str = "PR opened"
     return ticket_id
 
 
-def test_a_failed_send_keeps_the_message_for_the_next_tick(router: Router, backend: FakeBackend) -> None:
+class Clock:
+    def __init__(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        self.now = 1_000_000.0
+        monkeypatch.setattr("superagent.store.time.time", lambda: self.now)
+
+
+def test_a_failed_send_keeps_the_message_for_the_next_tick(
+    router: Router, backend: FakeBackend, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    clock = Clock(monkeypatch)
     ticket_id = done_report(router, backend)
 
     def broken(channel: str, text: str) -> None:
         raise ConnectionError("platform down")
 
     assert router.relay(broken) == []
+    assert router.relay() == []
+    clock.now += 120
     assert [(ticket, channel, unlabelled(text)) for ticket, channel, text in router.relay()] == [
         (ticket_id, "chat:th1", "Done: PR opened")
     ]
@@ -237,12 +248,6 @@ def test_one_bad_message_does_not_block_the_others(router: Router, backend: Fake
 
     router.relay(picky)
     assert [unlabelled(text) for text in sent] == ["Done: fine"]
-
-
-class Clock:
-    def __init__(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        self.now = 1_000_000.0
-        monkeypatch.setattr("superagent.store.time.time", lambda: self.now)
 
 
 def test_a_failing_send_is_never_dropped(router: Router, backend: FakeBackend, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -292,7 +297,7 @@ def test_a_channel_keeps_its_order_while_a_send_fails(
 
     router.relay(first_fails)
     assert sent == ["elsewhere"]
-    clock.now += 1
+    clock.now += 120
     router.relay(first_fails)
     assert sent == ["elsewhere", "part 1/2", "part 2/2"]
 
@@ -678,3 +683,10 @@ def test_messages_the_old_attempt_cap_gave_up_on_are_retried_again(tmp_path: Pat
             "INSERT INTO outbox (ticket_id, channel, text, attempts, failed_at) VALUES ('tk-1', 'chat:a', 'lost', 5, 1)"
         )
     assert [message.text for message in Store(path).pending_outbox()] == ["lost"]
+
+
+def test_a_long_worker_summary_is_split_to_fit(router: Router, backend: FakeBackend) -> None:
+    done_report(router, backend, "x" * 2500)
+    texts = [text for _, _, text in router.relay()]
+    assert len(texts) == 2
+    assert all(len(text) <= MESSAGE_LIMIT for text in texts)

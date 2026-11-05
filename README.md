@@ -14,7 +14,7 @@ A <a href="https://github.com/NousResearch/hermes-agent">Hermes Agent</a> plugin
 <a href="LICENSE"><img alt="MIT licence" src="https://img.shields.io/github/license/AirKyzzZ/hermes-superagent?style=flat-square&label=license&labelColor=14142a&color=1a10b8"></a>
 <a href="pyproject.toml"><img alt="Python 3.11 or newer" src="https://img.shields.io/badge/python-3.11%2B-1a10b8?style=flat-square&labelColor=14142a"></a>
 <a href="plugin.yaml"><img alt="Hermes plugin, requires 0.22.7 or newer" src="https://img.shields.io/badge/Hermes_plugin-%3E%3D0.22.7-1a10b8?style=flat-square&labelColor=14142a"></a>
-<a href="tests"><img alt="252 tests" src="https://img.shields.io/badge/tests-252-1a10b8?style=flat-square&labelColor=14142a"></a>
+<a href="tests"><img alt="266 tests" src="https://img.shields.io/badge/tests-266-1a10b8?style=flat-square&labelColor=14142a"></a>
 <a href="docs/hackathon.md"><img alt="Built for the Hermes Agent Plugin Hackathon" src="https://img.shields.io/badge/built_for-Hermes_Plugin_Hackathon-1a10b8?style=flat-square&labelColor=14142a"></a>
 </p>
 
@@ -324,7 +324,7 @@ The rendered prompt becomes the goal, the comment's author is checked against `a
 | `[worker] allow_same_user` | `false` | Allows host tools in a worker with no sandbox |
 | `[outbound] argv` | none | Delivery command using `{channel}` and `{text}`. Without it nothing is sent, and messages are still marked sent. A failed send fails every tick until it gets through. Retries back off up to 30 minutes and never give up, and `superagent outbox` lists what's waiting or drops a message for good. Messages over 1900 characters go out in numbered parts |
 | `[digest] channel` | none | Where `superagent digest --send` and the daily digest blueprint deliver |
-| `[channels] alerts` | none | Where alerts go. An alert is sent when a tick error has lasted `alert_after_seconds`, and "Resolved" follows once it clears |
+| `[channels] alerts` | none | Where alerts go. An alert is sent when a tick error has lasted `alert_after_seconds`, and "Resolved" follows once it has stayed clear as long. A tick stopped at its deadline, or one stuck holding the lock, is alerted at once. Alerts raised with no channel set wait for one |
 | `[tick] deadline_seconds` | `600` | A CLI tick running longer is stopped. A tick that finds the lock held longer than this fails loudly instead of skipping |
 | `[tick] alert_after_seconds` | `300` | How long an error has to last before it's alerted |
 | `[heartbeat] argv` | none | Runs after every tick with no errors, such as a ping to an external uptime check, so a dead timer gets noticed from outside |

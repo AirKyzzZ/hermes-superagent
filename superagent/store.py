@@ -28,7 +28,7 @@ from .domain import (
 
 _SCHEMA = """
 CREATE TABLE IF NOT EXISTS alerts (
-    key TEXT PRIMARY KEY, text TEXT NOT NULL, first_seen REAL NOT NULL, notified_at REAL
+    key TEXT PRIMARY KEY, text TEXT NOT NULL, first_seen REAL NOT NULL, last_seen REAL NOT NULL, notified_at REAL
 );
 CREATE TABLE IF NOT EXISTS triggers (
     id TEXT PRIMARY KEY, source TEXT NOT NULL, thread TEXT NOT NULL, actor TEXT NOT NULL, text TEXT NOT NULL,
@@ -94,6 +94,8 @@ _MIGRATIONS = (
 SEND_RETRY_BASE_SECONDS = 60.0
 SEND_RETRY_CAP_SECONDS = 1800.0
 MESSAGE_LIMIT = 1900
+ALERT_TICKET = "alert"
+SEND_FIRST_RETRY_SECONDS = 30.0
 
 
 @dataclass(frozen=True)
@@ -107,9 +109,10 @@ class OutboxMessage:
 
 
 def split_message(text: str, limit: int = MESSAGE_LIMIT) -> list[str]:
+    text = text.replace("\r\n", "\n")
     if len(text) <= limit:
         return [text]
-    room = limit - len("(99/99) ")
+    room = limit - len("(999/999) ")
     chunks: list[str] = []
     current = ""
     for line in text.splitlines(keepends=True):
@@ -125,7 +128,17 @@ def split_message(text: str, limit: int = MESSAGE_LIMIT) -> list[str]:
         current += line
     if current:
         chunks.append(current)
-    return [f"({index}/{len(chunks)}) {chunk.rstrip(chr(10))}" for index, chunk in enumerate(chunks, 1)]
+    return [
+        f"({index}/{len(chunks)}) {chunk[:-1] if chunk.endswith(chr(10)) else chunk}"
+        for index, chunk in enumerate(chunks, 1)
+    ]
+
+
+def _queue(connection: sqlite3.Connection, ticket_id: str, channel: str, text: str) -> None:
+    connection.executemany(
+        "INSERT INTO outbox (ticket_id, channel, text) VALUES (?,?,?)",
+        [(ticket_id, channel, part) for part in split_message(text)],
+    )
 
 
 class Store:
@@ -401,7 +414,6 @@ class Store:
         render_escalation: Callable[[str, str, str], str],
     ) -> None:
         now = time.time()
-        insert = "INSERT INTO outbox (ticket_id, channel, text) VALUES (?,?,?)"
         with self._connect() as connection:
             reports = connection.execute(
                 "SELECT r.*, t.channel, t.goal FROM reports r JOIN tickets t ON t.id = r.ticket_id "
@@ -410,7 +422,7 @@ class Store:
             for row in reports:
                 text = render_report(_report_from_row(row), row["goal"])
                 if text is not None:
-                    connection.execute(insert, (row["ticket_id"], row["channel"], text))
+                    _queue(connection, row["ticket_id"], row["channel"], text)
                 connection.execute("UPDATE reports SET relayed_at = ? WHERE seq = ?", (now, row["seq"]))
             escalations = connection.execute(
                 "SELECT e.seq, e.ticket_id, e.reason, t.channel, t.goal FROM watchdog_events e "
@@ -419,7 +431,7 @@ class Store:
             ).fetchall()
             for row in escalations:
                 text = render_escalation(row["reason"], row["ticket_id"], row["goal"])
-                connection.execute(insert, (row["ticket_id"], row["channel"], text))
+                _queue(connection, row["ticket_id"], row["channel"], text)
                 connection.execute("UPDATE watchdog_events SET relayed_at = ? WHERE seq = ?", (now, row["seq"]))
 
     def final_reports_since(self, since: float) -> list[tuple[DigestItem, ReportState]]:
@@ -458,36 +470,48 @@ class Store:
 
     def queue_message(self, ticket_id: str, channel: str, text: str) -> None:
         with self._connect() as connection:
-            connection.executemany(
-                "INSERT INTO outbox (ticket_id, channel, text) VALUES (?,?,?)",
-                [(ticket_id, channel, part) for part in split_message(text)],
-            )
+            _queue(connection, ticket_id, channel, text)
 
-    def sync_alerts(
-        self, active: Mapping[str, str], alert_after: float
-    ) -> tuple[list[tuple[str, str]], list[tuple[str, str]]]:
+    def sync_alerts(self, active: Mapping[str, str], alert_after: float, channel: str) -> tuple[list[str], list[str]]:
         now = time.time()
-        raised: list[tuple[str, str]] = []
-        resolved: list[tuple[str, str]] = []
+        raised: list[str] = []
+        resolved: list[str] = []
         with self._connect() as connection:
             known = {row["key"]: row for row in connection.execute("SELECT * FROM alerts").fetchall()}
             for key, row in known.items():
-                if key not in active:
-                    connection.execute("DELETE FROM alerts WHERE key = ?", (key,))
-                    if row["notified_at"] is not None:
-                        resolved.append((key, row["text"]))
+                if key in active or now - row["last_seen"] < alert_after:
+                    continue
+                connection.execute("DELETE FROM alerts WHERE key = ?", (key,))
+                if row["notified_at"] is not None:
+                    _queue(connection, ALERT_TICKET, channel, f"Resolved: {row['text']}")
+                    resolved.append(row["text"])
             for key, text in active.items():
                 row = known.get(key)
                 if row is None:
-                    connection.execute("INSERT INTO alerts VALUES (?, ?, ?, NULL)", (key, text, now))
+                    connection.execute("INSERT INTO alerts VALUES (?, ?, ?, ?, NULL)", (key, text, now, now))
                     first_seen, notified = now, False
                 else:
-                    connection.execute("UPDATE alerts SET text = ? WHERE key = ?", (text, key))
+                    connection.execute("UPDATE alerts SET text = ?, last_seen = ? WHERE key = ?", (text, now, key))
                     first_seen, notified = row["first_seen"], row["notified_at"] is not None
-                if not notified and now - first_seen >= alert_after:
+                if channel and not notified and now - first_seen >= alert_after:
                     connection.execute("UPDATE alerts SET notified_at = ? WHERE key = ?", (now, key))
-                    raised.append((key, text))
+                    _queue(connection, ALERT_TICKET, channel, f"Alert: {text}")
+                    raised.append(text)
         return raised, resolved
+
+    def raise_alert_now(self, key: str, text: str, channel: str) -> bool:
+        now = time.time()
+        with self._connect() as connection:
+            row = connection.execute("SELECT notified_at FROM alerts WHERE key = ?", (key,)).fetchone()
+            if row is None:
+                connection.execute("INSERT INTO alerts VALUES (?, ?, ?, ?, NULL)", (key, text, now, now))
+            else:
+                connection.execute("UPDATE alerts SET text = ?, last_seen = ? WHERE key = ?", (text, now, key))
+            if not channel or (row is not None and row["notified_at"] is not None):
+                return False
+            connection.execute("UPDATE alerts SET notified_at = ? WHERE key = ?", (now, key))
+            _queue(connection, ALERT_TICKET, channel, f"Alert: {text}")
+        return True
 
     def active_alerts(self) -> list[dict[str, object]]:
         with self._connect() as connection:
@@ -638,7 +662,7 @@ class Store:
             connection.execute("UPDATE outbox SET attempts = attempts + 1 WHERE seq = ?", (seq,))
             attempts = connection.execute("SELECT attempts FROM outbox WHERE seq = ?", (seq,)).fetchone()["attempts"]
             delay = (
-                0.0
+                SEND_FIRST_RETRY_SECONDS
                 if attempts < 2
                 else min(SEND_RETRY_BASE_SECONDS * 2 ** min(attempts - 2, 10), SEND_RETRY_CAP_SECONDS)
             )

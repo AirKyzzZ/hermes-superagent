@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import math
 import os
 import tomllib
 from dataclasses import dataclass, fields, replace
@@ -71,14 +72,15 @@ def parse_config(raw: str) -> Config:
         raise ConfigError(f"invalid [watchdog] section: {error}") from error
     allow_same_user = bool(data.get("worker", {}).get("allow_same_user", False))
     digest_channel = str(data.get("digest", {}).get("channel", ""))
-    tick_section = data.get("tick", {})
-    try:
-        deadline = float(tick_section.get("deadline_seconds", 600.0))
-        alert_after = float(tick_section.get("alert_after_seconds", 300.0))
-    except (TypeError, ValueError) as error:
-        raise ConfigError(f"invalid [tick] section: {error}") from error
-    if deadline <= 0 or alert_after < 0:
-        raise ConfigError("[tick] deadline_seconds must be positive and alert_after_seconds not negative")
+    tick_section = _table(data, "tick")
+    deadline = _number(tick_section, "tick", "deadline_seconds", 600.0, minimum=1.0)
+    alert_after = _number(tick_section, "tick", "alert_after_seconds", 300.0, minimum=0.0)
+    alerts_channel = _table(data, "channels").get("alerts", "")
+    if not isinstance(alerts_channel, str):
+        raise ConfigError("[channels] alerts must be a string such as discord:123")
+    heartbeat = _table(data, "heartbeat").get("argv", [])
+    if not isinstance(heartbeat, list) or not all(isinstance(part, str) for part in heartbeat):
+        raise ConfigError("[heartbeat] argv must be a list of strings")
     return Config(
         rules,
         worker_argv,
@@ -86,11 +88,25 @@ def parse_config(raw: str) -> Config:
         policy,
         allow_same_user,
         digest_channel=digest_channel,
-        alerts_channel=str(data.get("channels", {}).get("alerts", "")),
-        heartbeat_argv=tuple(str(part) for part in data.get("heartbeat", {}).get("argv", ())),
+        alerts_channel=alerts_channel,
+        heartbeat_argv=tuple(heartbeat),
         tick_deadline_seconds=deadline,
         alert_after_seconds=alert_after,
     )
+
+
+def _table(data: dict[str, object], name: str) -> dict[str, object]:
+    section = data.get(name, {})
+    if not isinstance(section, dict):
+        raise ConfigError(f"[{name}] must be a table")
+    return section
+
+
+def _number(section: dict[str, object], name: str, key: str, default: float, *, minimum: float) -> float:
+    value = section.get(key, default)
+    if isinstance(value, bool) or not isinstance(value, (int, float)) or not math.isfinite(value) or value < minimum:
+        raise ConfigError(f"[{name}] {key} must be a finite number of at least {minimum:g}")
+    return float(value)
 
 
 def _reject_unknown_keys(data: dict[str, object]) -> None:
@@ -102,7 +118,10 @@ def _reject_unknown_keys(data: dict[str, object]) -> None:
         if unknown := set(rule) - _KNOWN_KEYS["semantic"]:
             problems.append(f"unknown keys in [[semantic]]: {sorted(unknown)}")
     for section in ("worker", "outbound", "digest", "channels", "heartbeat", "tick"):
-        if unknown := set(dict(data.get(section) or {})) - _KNOWN_KEYS[section]:  # type: ignore[call-overload]
+        body = data.get(section) or {}
+        if not isinstance(body, dict):
+            problems.append(f"[{section}] must be a table")
+        elif unknown := set(body) - _KNOWN_KEYS[section]:
             problems.append(f"unknown keys in [{section}]: {sorted(unknown)}")
     if problems:
         raise ConfigError("; ".join(problems))

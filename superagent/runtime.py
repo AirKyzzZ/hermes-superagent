@@ -4,14 +4,15 @@ import fcntl
 import json
 import logging
 import os
+import re
 import subprocess
 import time
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from pathlib import Path
 
 from .config import DB_FILENAME, WORKDIRS_DIRNAME, Config, load_config
 from .domain import Ticket
-from .router import Assessor, Router, Sender
+from .router import Assessor, Router, Sender, chat_safe
 from .store import Store
 from .watchdog import CheckResult, DriftJudge, check_once
 from .worker import SubprocessBackend
@@ -21,7 +22,6 @@ logger = logging.getLogger(__name__)
 _SEND_TIMEOUT_SECONDS = 60
 _TICK_LOCK_FILENAME = "tick.lock"
 IGNORED_TRIGGER_RETENTION_SECONDS = 7 * 24 * 3600.0
-ALERT_TICKET = "alert"
 
 
 @dataclass(frozen=True)
@@ -68,23 +68,72 @@ def tick(runtime: Runtime, judge: DriftJudge | None = None, assessor: Assessor |
         try:
             fcntl.flock(lock_fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
         except BlockingIOError:
-            return TickResult(skipped=True, errors=_stuck_holder(lock_fd, runtime.config.tick_deadline_seconds))
-        os.ftruncate(lock_fd, 0)
-        os.pwrite(lock_fd, json.dumps({"pid": os.getpid(), "started": time.time()}).encode(), 0)
-        return _run_phases(runtime, judge, assessor)
+            stuck = _stuck_holder(_lock_record(lock_fd), runtime.config.tick_deadline_seconds)
+            if stuck:
+                _alert_at_once(runtime, stuck)
+            return TickResult(skipped=True, errors=tuple(stuck))
+        previous = _lock_record(lock_fd)
+        started = time.time()
+        _write_lock_record(lock_fd, {"pid": os.getpid(), "started": started})
+        unfinished = _unfinished(previous)
+        if unfinished:
+            _alert_at_once(runtime, unfinished)
+        result = _run_phases(runtime, judge, assessor)
+        _write_lock_record(lock_fd, {"pid": os.getpid(), "started": started, "finished": time.time()})
+        return replace(result, errors=(*unfinished, *result.errors))
     finally:
         os.close(lock_fd)
 
 
-def _stuck_holder(lock_fd: int, deadline: float) -> tuple[str, ...]:
+def _lock_record(lock_fd: int) -> dict[str, object]:
     try:
-        holder = json.loads(os.pread(lock_fd, 200, 0) or b"{}")
-        held_for = time.time() - float(holder["started"])
-    except (OSError, ValueError, KeyError, TypeError):
-        return ()
-    if held_for <= deadline:
-        return ()
-    return (f"tick: another tick (pid {holder.get('pid')}) has held the lock for {held_for / 60:.0f} minutes",)
+        record = json.loads(os.pread(lock_fd, 300, 0) or b"{}")
+    except (OSError, ValueError):
+        return {}
+    return record if isinstance(record, dict) else {}
+
+
+def _write_lock_record(lock_fd: int, record: dict[str, object]) -> None:
+    os.ftruncate(lock_fd, 0)
+    os.pwrite(lock_fd, json.dumps(record).encode(), 0)
+
+
+def _age_minutes(record: dict[str, object]) -> float | None:
+    started = record.get("started")
+    if not isinstance(started, (int, float)):
+        return None
+    return (time.time() - float(started)) / 60
+
+
+def _stuck_holder(holder: dict[str, object], deadline: float) -> list[str]:
+    age = _age_minutes(holder)
+    if "finished" in holder or age is None or age * 60 <= deadline:
+        return []
+    return [f"tick: another tick (pid {holder.get('pid')}) has held the lock for {age:.0f} minutes"]
+
+
+def _unfinished(previous: dict[str, object]) -> list[str]:
+    age = _age_minutes(previous)
+    if "finished" in previous or age is None:
+        return []
+    return [
+        f"tick: the tick started {age:.0f} minutes ago (pid {previous.get('pid')}) never finished, "
+        "so it was probably stopped at its deadline"
+    ]
+
+
+def _alert_key(error: str) -> str:
+    return re.sub(r"\d+", "#", error)[:200]
+
+
+def _alert_at_once(runtime: Runtime, errors: list[str]) -> None:
+    channel = runtime.config.alerts_channel
+    try:
+        queued = [runtime.store.raise_alert_now(_alert_key(error), chat_safe(error), channel) for error in errors]
+        if any(queued):
+            runtime.router.relay(argv_sender(runtime.config.send_argv), only_channel=channel)
+    except Exception:
+        logger.exception("could not raise an alert at once")
 
 
 def _run_phases(runtime: Runtime, judge: DriftJudge | None, assessor: Assessor | None) -> TickResult:
@@ -133,16 +182,9 @@ def _run_phases(runtime: Runtime, judge: DriftJudge | None, assessor: Assessor |
 
 
 def _raise_alerts(runtime: Runtime, errors: list[str]) -> list[tuple[str, str, str]]:
-    active: dict[str, str] = {}
-    for error in errors:
-        key = error.split(":", 1)[0]
-        active[key] = f"{active[key]}; {error}" if key in active else error
-    raised, resolved = runtime.store.sync_alerts(active, runtime.config.alert_after_seconds)
+    active = {_alert_key(error): chat_safe(error) for error in errors}
     channel = runtime.config.alerts_channel
-    if not channel or not (raised or resolved):
+    raised, resolved = runtime.store.sync_alerts(active, runtime.config.alert_after_seconds, channel)
+    if not (raised or resolved):
         return []
-    for _, text in raised:
-        runtime.store.queue_message(ALERT_TICKET, channel, f"Alert: {text}")
-    for _, text in resolved:
-        runtime.store.queue_message(ALERT_TICKET, channel, f"Resolved: {text}")
-    return runtime.router.relay(argv_sender(runtime.config.send_argv))
+    return runtime.router.relay(argv_sender(runtime.config.send_argv), only_channel=channel)

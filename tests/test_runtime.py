@@ -170,7 +170,7 @@ def test_an_undelivered_message_fails_every_tick_until_it_is_sent_or_dropped(
     assert runtime.store.undelivered_count() == 1
     assert main(["--home", str(home), "outbox"]) == 0
     [listed] = json.loads(capsys.readouterr().out)
-    assert listed["attempts"] == 2
+    assert listed["attempts"] == 1
     assert main(["--home", str(home), "outbox", "--drop", str(listed["seq"]), "--reason", "bad channel"]) == 0
     assert main(["--home", str(home), "outbox", "--drop", str(listed["seq"])]) == 1
     assert tick(runtime).errors == ()
