@@ -251,6 +251,53 @@ def test_deferred_tools_stay_reachable_through_the_bridge(tmp_path: Path, role: 
     assert pre_tool_call(tool_name="terminal", args={}, task_id="t")["action"] == "block"
 
 
+@pytest.mark.parametrize("role", ["router", "watchdog"])
+@pytest.mark.parametrize(
+    "args",
+    [
+        {"calls": [{"name": "terminal", "arguments": {}}]},
+        {"calls": [{"name": "superagent_status"}, {"name": "write_file"}]},
+        {"calls": [{"name": "tool_call", "arguments": {"calls": [{"name": "terminal"}]}}]},
+        {"calls": [{"arguments": {}}]},
+        {"calls": [{"name": "superagent_status"}, {"name": 123}]},
+        {"calls": []},
+        {"calls": "terminal"},
+        {},
+        None,
+    ],
+)
+def test_bridge_cannot_smuggle_a_tool_past_the_allowlist(tmp_path: Path, role: str, args: object) -> None:
+    pre_tool_call = registered(role, tmp_path).hooks["pre_tool_call"]
+    assert pre_tool_call(tool_name="tool_call", args=args, task_id="t")["action"] == "block"
+
+
+@pytest.mark.parametrize("tool", ["send_message", "cronjob_manage", "superagent_dispatch", "superagent_tick"])
+def test_worker_cannot_reach_a_blocked_tool_through_the_bridge(
+    worker_ctx: tuple[FakeContext, Store, str], tool: str
+) -> None:
+    decision = worker_ctx[0].hooks["pre_tool_call"](
+        tool_name="tool_call", args={"calls": [{"name": tool}]}, task_id="t"
+    )
+    assert decision["action"] == "block"
+
+
+def test_unsandboxed_worker_cannot_reach_host_tools_through_the_bridge(
+    worker_ctx: tuple[FakeContext, Store, str], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    use_terminal_backend(monkeypatch, "local")
+    decision = worker_ctx[0].hooks["pre_tool_call"](
+        tool_name="tool_call", args={"calls": [{"name": "process_manage"}]}, task_id="t"
+    )
+    assert "allow_same_user" in decision["message"]
+
+
+def test_worker_reports_through_the_bridge(worker_ctx: tuple[FakeContext, Store, str]) -> None:
+    decision = worker_ctx[0].hooks["pre_tool_call"](
+        tool_name="tool_call", args={"calls": [{"name": "superagent_report"}]}, task_id="t"
+    )
+    assert decision is None
+
+
 def test_environment_cannot_change_a_profile_role(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("SUPERAGENT_ROLE", "worker")
     ctx = registered("router", tmp_path)

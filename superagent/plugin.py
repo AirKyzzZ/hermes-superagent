@@ -129,7 +129,7 @@ class Plugin:
             if not Store(identity.db_path).assignment_is_running(identity.assignment_id):
                 return {"action": "block", "message": "This assignment has ended. Stop working now."}
             worker_sandboxed = _terminal_backend() != "local" or load_config(self.home()).allow_same_user
-        reason = blocked_reason(role, tool_name, worker_sandboxed=worker_sandboxed)
+        reason = blocked_reason(role, tool_name, worker_sandboxed=worker_sandboxed, args=kwargs.get("args"))
         return {"action": "block", "message": reason} if reason else None
 
     def on_post_tool_call(self, tool_name: str, args: object, result: object, **kwargs: Any) -> None:
