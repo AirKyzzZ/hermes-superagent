@@ -67,7 +67,7 @@ If the gate itself fails, the message is dropped and logged rather than let thro
 
 ## Known limits
 
-- Single host, macOS and Linux only: the store is SQLite, and `stop` works by local process group, with a start-time check against PID reuse.
+- Single host, macOS and Linux only: the store is SQLite, and `stop` works by local process group, with a start-time check against PID reuse. If workers run under another OS user, `stop` can't signal them, so the watchdog escalates to a person instead of starting a second worker.
 - A failed send retries on later ticks, up to five times per message, so a crash between send and mark can deliver a message twice.
 - A restarted worker starts from its brief plus the last report and pending messages. It doesn't resume its session.
 - Hermes gives hooks no mention flag, so chat messages count as addressed and rely on the adapter's own mention rules. Semantic rules therefore apply to listed bots and `ingest` sources for now.

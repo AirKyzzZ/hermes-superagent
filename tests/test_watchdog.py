@@ -6,6 +6,7 @@ from superagent.domain import RepairAction, Report, ReportState, TicketStatus, T
 from superagent.router import Router
 from superagent.store import StaleAssignmentError
 from superagent.watchdog import Judgement, WatchdogPolicy, check_once
+from superagent.worker import WorkerStopError
 
 from .conftest import FakeBackend
 
@@ -77,6 +78,40 @@ def test_worker_cannot_report_done_while_being_stopped(router: Router, backend: 
     check_once(router)
     assert refused == [True]
     assert all("trust me" not in text for _, _, text in router.relay())
+
+
+def test_a_worker_that_cannot_be_stopped_escalates_without_a_second_worker(
+    router: Router, backend: FakeBackend
+) -> None:
+    router.ingest(REQUEST)
+    report(router, backend, "same", 3)
+    check_once(router)
+    report(router, backend, "same", 1)
+
+    def denied(assignment_id: str) -> None:
+        raise WorkerStopError("process group 1 is still running")
+
+    backend.on_stop = denied
+    result = check_once(router)[0]
+    assert result.action is RepairAction.ESCALATE
+    assert len(backend.started) == 1
+    assert router.store.get_ticket(result.ticket_id).status is TicketStatus.ENDED
+    assert "could not stop a worker" in router.relay()[0][2]
+
+
+def test_one_unstoppable_finished_worker_does_not_block_the_checks(router: Router, backend: FakeBackend) -> None:
+    router.ingest(REQUEST)
+    assignment = router.store.running_assignments()[0]
+    router.store.add_report(assignment.id, backend.started[0][2], ReportState.READY, "done")
+    router.ingest(Trigger("t2", "chat", "th2", "alice", "another", "chat:th2", True, False))
+
+    def denied(assignment_id: str) -> None:
+        raise WorkerStopError("process group 1 is still running")
+
+    backend.on_stop = denied
+    results = check_once(router, policy=WatchdogPolicy(reap_grace_seconds=-1))
+    assert [item.verdict for item in results] == [Verdict.ON_TRACK]
+    assert any("could not stop a worker" in text for _, _, text in router.relay())
 
 
 def test_dead_worker_skips_the_nudge(router: Router, backend: FakeBackend) -> None:

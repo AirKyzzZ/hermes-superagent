@@ -26,7 +26,11 @@ ROLE_WATCHDOG = "watchdog"
 _INHERITED_ENV = ("PATH", "HOME", "LANG", "LC_ALL", "TMPDIR", "HERMES_HOME", "VIRTUAL_ENV")
 _PID_START_TOLERANCE_SECONDS = 10
 _STOP_GRACE_SECONDS = 5.0
-_STOP_POLL_SECONDS = 0.1
+_STOP_POLL_SECONDS = 0.2
+
+
+class WorkerStopError(RuntimeError):
+    pass
 
 
 class WorkerBackend(Protocol):
@@ -66,6 +70,17 @@ def _process_started_at(pid: int) -> float | None:
     if not started:
         return None
     return datetime.strptime(started, "%a %b %d %H:%M:%S %Y").timestamp()
+
+
+def _group_has_live_member(group: int) -> bool:
+    result = subprocess.run(
+        ["ps", "-A", "-o", "pgid=,stat="], capture_output=True, text=True, check=True, env={**os.environ, "LC_ALL": "C"}
+    )
+    for line in result.stdout.splitlines():
+        fields = line.split()
+        if len(fields) == 2 and fields[0] == str(group) and "Z" not in fields[1]:
+            return True
+    return False
 
 
 def is_same_process(pid: int, started_at: float) -> bool:
@@ -127,15 +142,26 @@ class SubprocessBackend:
         return is_same_process(assignment.pid, assignment.started_at)
 
     def stop(self, assignment: Assignment) -> None:
-        if assignment.pid is None or not is_same_process(assignment.pid, assignment.started_at):
+        if assignment.pid is None:
+            return
+        group = assignment.pid
+        leader_started_at = _process_started_at(group)
+        if (
+            leader_started_at is not None
+            and abs(leader_started_at - assignment.started_at) > _PID_START_TOLERANCE_SECONDS
+        ):
             return
         try:
-            os.killpg(assignment.pid, signal.SIGTERM)
+            os.killpg(group, signal.SIGTERM)
             deadline = time.monotonic() + _STOP_GRACE_SECONDS
             while time.monotonic() < deadline:
-                os.killpg(assignment.pid, 0)
+                if not _group_has_live_member(group):
+                    return
                 time.sleep(_STOP_POLL_SECONDS)
-            os.killpg(assignment.pid, signal.SIGKILL)
-        # macOS raises EPERM, not ESRCH, when the group's only member is an unreaped zombie.
-        except (ProcessLookupError, PermissionError):
+            os.killpg(group, signal.SIGKILL)
+        except ProcessLookupError:
             return
+        # macOS raises EPERM for a group holding only zombies, and any OS raises it for another user's processes.
+        except PermissionError as error:
+            if _group_has_live_member(group):
+                raise WorkerStopError(f"process group {group} is still running: {error}") from error

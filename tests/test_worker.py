@@ -9,7 +9,7 @@ from pathlib import Path
 import pytest
 
 from superagent.domain import Assignment, AssignmentStatus, Mandate, Strength, Ticket, TicketStatus
-from superagent.worker import SubprocessBackend
+from superagent.worker import SubprocessBackend, WorkerStopError
 
 STUBBORN = (
     "import signal, time\nsignal.signal(signal.SIGTERM, signal.SIG_IGN)\nopen('ready', 'w').close()\ntime.sleep(60)\n"
@@ -62,6 +62,55 @@ def test_stop_tolerates_a_worker_that_already_exited(tmp_path: Path, monkeypatch
         backend.stop(exited)
     finally:
         zombie.wait()
+
+
+def test_stop_reports_a_group_it_is_not_allowed_to_signal(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    def denied(group: int, signum: int) -> None:
+        raise PermissionError(1, "Operation not permitted")
+
+    started_at = time.time()
+    live = subprocess.Popen([sys.executable, "-c", "import time; time.sleep(30)"], start_new_session=True)
+    try:
+        monkeypatch.setattr("superagent.worker.os.killpg", denied)
+        backend = SubprocessBackend(["worker", "{brief}"], tmp_path / "db", tmp_path / "w")
+        running = Assignment("as-1", "tk-1", 1, AssignmentStatus.RUNNING, live.pid, started_at)
+        with pytest.raises(WorkerStopError, match="still running"):
+            backend.stop(running)
+    finally:
+        monkeypatch.undo()
+        live.kill()
+        live.wait()
+
+
+def test_stop_kills_a_child_that_outlives_its_leader(tmp_path: Path) -> None:
+    pid_file = tmp_path / "child.pid"
+    started_at = time.time()
+    leader = subprocess.Popen(
+        ["/bin/sh", "-c", f"sleep 60 >/dev/null 2>&1 & echo $! > {pid_file}; exit 0"], start_new_session=True
+    )
+    leader.wait()
+    child = int(pid_file.read_text())
+    backend = SubprocessBackend(["worker", "{brief}"], tmp_path / "db", tmp_path / "w")
+    backend.stop(Assignment("as-1", "tk-1", 1, AssignmentStatus.RUNNING, leader.pid, started_at))
+    deadline = time.time() + 5
+    while time.time() < deadline:
+        state = subprocess.run(["ps", "-o", "stat=", "-p", str(child)], capture_output=True, text=True).stdout.strip()
+        if not state or "Z" in state:
+            return
+        time.sleep(0.05)
+    os.kill(child, 9)
+    pytest.fail("child survived stop")
+
+
+def test_stop_leaves_a_reused_pid_alone(tmp_path: Path) -> None:
+    other = subprocess.Popen([sys.executable, "-c", "import time; time.sleep(30)"], start_new_session=True)
+    try:
+        backend = SubprocessBackend(["worker", "{brief}"], tmp_path / "db", tmp_path / "w")
+        backend.stop(Assignment("as-1", "tk-1", 1, AssignmentStatus.RUNNING, other.pid, time.time() - 3600))
+        assert other.poll() is None
+    finally:
+        other.kill()
+        other.wait()
 
 
 def test_worker_env_is_an_allowlist(tmp_path: Path) -> None:

@@ -8,7 +8,7 @@ from .domain import Assignment, RepairAction, Report, Ticket, Verdict
 from .framing import frame_untrusted
 from .router import Router
 from .store import Store
-from .worker import WorkerBackend
+from .worker import WorkerBackend, WorkerStopError
 
 _NO_ASSIGNMENT = "none"
 
@@ -139,7 +139,11 @@ def check_once(
         )
         router.store.add_watchdog_event(assignment.id, ticket.id, judgement.verdict.value, action, judgement.reason)
         if action is not RepairAction.NONE:
-            apply_repair(action, router, ticket, assignment, judgement)
+            try:
+                apply_repair(action, router, ticket, assignment, judgement)
+            except WorkerStopError as error:
+                results.append(_escalate_unstoppable(router, ticket.id, assignment.id, error))
+                continue
         results.append(CheckResult(assignment.id, ticket.id, judgement.verdict, action, judgement.reason))
     for ticket in router.store.orphaned_tickets(active_policy.orphan_after_seconds):
         results.append(_repair_orphan(router, ticket, active_policy))
@@ -148,8 +152,18 @@ def check_once(
 
 def _reap_finished(router: Router, policy: WatchdogPolicy) -> None:
     for assignment in router.store.assignments_to_reap(policy.reap_grace_seconds):
-        router.backend.stop(assignment)
+        try:
+            router.backend.stop(assignment)
+        except WorkerStopError as error:
+            _escalate_unstoppable(router, assignment.ticket_id, assignment.id, error)
         router.store.mark_reaped(assignment.id)
+
+
+def _escalate_unstoppable(router: Router, ticket_id: str, assignment_id: str, error: WorkerStopError) -> CheckResult:
+    reason = f"could not stop a worker, it may still be running: {error}"
+    router.store.add_watchdog_event(assignment_id, ticket_id, Verdict.STUCK.value, RepairAction.ESCALATE, reason)
+    router.store.end_ticket(ticket_id)
+    return CheckResult(assignment_id, ticket_id, Verdict.STUCK, RepairAction.ESCALATE, reason)
 
 
 def _repair_orphan(router: Router, ticket: Ticket, policy: WatchdogPolicy) -> CheckResult:
