@@ -43,6 +43,8 @@ class FakeBackend:
     stopped: list[str] = field(default_factory=list)
     on_stop: Callable[[str], None] | None = None
     fail_next_start: bool = False
+    output: str = ""
+    on_alive_check: Callable[[Assignment], None] | None = None
 
     def start(self, ticket: Ticket, assignment: Assignment, token: str, context: str = "") -> int:
         if self.fail_next_start:
@@ -53,7 +55,12 @@ class FakeBackend:
         return 4242
 
     def is_alive(self, assignment: Assignment) -> bool:
+        if self.on_alive_check is not None:
+            self.on_alive_check(assignment)
         return self.alive
+
+    def last_output(self, assignment: Assignment) -> str:
+        return self.output
 
     def stop(self, assignment: Assignment) -> None:
         self.stopped.append(assignment.id)

@@ -169,9 +169,11 @@ class Router:
         rules = self.rules.sources.get(trigger.source)
         return rules is not None and trigger.actor in rules.allow
 
-    def start_worker(self, ticket: Ticket) -> Assignment:
-        assignment, token = self.store.create_assignment(ticket.id)
-        return self._launch(ticket, assignment, token)
+    def start_worker(self, ticket: Ticket) -> Assignment | None:
+        created = self.store.create_assignment(ticket.id)
+        if created is None:
+            return None
+        return self._launch(ticket, *created)
 
     def _launch(self, ticket: Ticket, assignment: Assignment, token: str) -> Assignment:
         pending = self.store.pending_inputs(ticket.id)
