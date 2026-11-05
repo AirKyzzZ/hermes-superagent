@@ -13,7 +13,7 @@ import pytest
 from superagent.config import LAST_GOOD_FILENAME, ConfigError, parse_config
 from superagent.domain import ReportState, Trigger
 from superagent.gate import SemanticRule
-from superagent.router import ASSESS_ATTEMPTS, MAX_ASSESS_BATCH, MAX_SEND_ATTEMPTS, Assessment
+from superagent.router import ASSESS_ATTEMPTS, MAX_ASSESS_BATCH, Assessment
 from superagent.runtime import open_runtime, tick
 from superagent.worker import IDENTITY_FILENAME
 
@@ -153,7 +153,11 @@ def test_a_batch_that_keeps_failing_is_given_up(tmp_path: Path) -> None:
     assert runtime.store.assessment_of("c1") == "assessment failed"
 
 
-def test_undelivered_and_dropped_messages_fail_the_tick(tmp_path: Path) -> None:
+def test_an_undelivered_message_fails_every_tick_until_it_is_sent_or_dropped(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    from superagent.cli import main
+
     home = home_with_config(tmp_path)
     runtime = open_runtime(home)
     runtime.router.ingest(Trigger("c2", "github", "pr/2", "alice", "fix it", "pr/2", True))
@@ -161,10 +165,15 @@ def test_undelivered_and_dropped_messages_fail_the_tick(tmp_path: Path) -> None:
     identity = home / "workers" / assignment.ticket_id / assignment.id / IDENTITY_FILENAME
     token = json.loads(identity.read_text())["token"]
     runtime.store.add_report(assignment.id, token, ReportState.READY, "done")
-    errors = [tick(runtime).errors for _ in range(MAX_SEND_ATTEMPTS)]
-    assert any("not delivered yet" in error for error in errors[0])
-    assert any("dropped after" in error for error in errors[-1])
+    for _ in range(8):
+        assert any("not delivered yet" in error for error in tick(runtime).errors)
     assert runtime.store.undelivered_count() == 1
+    assert main(["--home", str(home), "outbox"]) == 0
+    [listed] = json.loads(capsys.readouterr().out)
+    assert listed["attempts"] == 2
+    assert main(["--home", str(home), "outbox", "--drop", str(listed["seq"]), "--reason", "bad channel"]) == 0
+    assert main(["--home", str(home), "outbox", "--drop", str(listed["seq"])]) == 1
+    assert tick(runtime).errors == ()
 
 
 def test_old_ignored_events_are_pruned(tmp_path: Path) -> None:

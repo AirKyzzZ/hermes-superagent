@@ -7,7 +7,7 @@ import sqlite3
 import time
 from collections.abc import Callable, Iterator, Sequence
 from contextlib import contextmanager
-from dataclasses import asdict
+from dataclasses import asdict, dataclass
 from pathlib import Path
 
 from .domain import (
@@ -83,14 +83,38 @@ def hash_token(token: str) -> str:
     return hashlib.sha256(token.encode()).hexdigest()
 
 
+_MIGRATIONS = (
+    "ALTER TABLE outbox ADD COLUMN next_attempt_at REAL",
+    "ALTER TABLE outbox ADD COLUMN drop_reason TEXT",
+)
+SEND_RETRY_BASE_SECONDS = 60.0
+SEND_RETRY_CAP_SECONDS = 1800.0
+
+
+@dataclass(frozen=True)
+class OutboxMessage:
+    seq: int
+    ticket_id: str
+    channel: str
+    text: str
+    attempts: int
+    due: bool
+
+
 class Store:
     def __init__(self, path: Path) -> None:
         self.path = path
         path.parent.mkdir(parents=True, exist_ok=True)
-        connection = sqlite3.connect(path, timeout=BUSY_TIMEOUT_SECONDS)
+        connection = sqlite3.connect(path, timeout=BUSY_TIMEOUT_SECONDS, isolation_level=None)
         try:
             connection.execute("PRAGMA journal_mode=WAL")
             connection.executescript(_SCHEMA)
+            connection.execute("BEGIN IMMEDIATE")
+            version = connection.execute("PRAGMA user_version").fetchone()[0]
+            for statement in _MIGRATIONS[version:]:
+                connection.execute(statement)
+            connection.execute(f"PRAGMA user_version = {len(_MIGRATIONS)}")
+            connection.execute("COMMIT")
         finally:
             connection.close()
 
@@ -465,13 +489,33 @@ class Store:
             )
         return [(row["label"], row["text"], bool(row["trusted"])) for row in rows]
 
-    def pending_outbox(self) -> list[tuple[int, str, str, str]]:
+    def pending_outbox(self) -> list[OutboxMessage]:
+        now = time.time()
         with self._connect() as connection:
             rows = connection.execute(
-                "SELECT seq, ticket_id, channel, text FROM outbox "
+                "SELECT seq, ticket_id, channel, text, attempts, next_attempt_at FROM outbox "
                 "WHERE sent_at IS NULL AND failed_at IS NULL ORDER BY seq"
             ).fetchall()
-        return [(row["seq"], row["ticket_id"], row["channel"], row["text"]) for row in rows]
+        return [
+            OutboxMessage(
+                row["seq"],
+                row["ticket_id"],
+                row["channel"],
+                row["text"],
+                row["attempts"],
+                row["next_attempt_at"] is None or row["next_attempt_at"] <= now,
+            )
+            for row in rows
+        ]
+
+    def drop_message(self, seq: int, reason: str) -> bool:
+        with self._connect() as connection:
+            cursor = connection.execute(
+                "UPDATE outbox SET failed_at = ?, drop_reason = ? "
+                "WHERE seq = ? AND sent_at IS NULL AND failed_at IS NULL",
+                (time.time(), reason, seq),
+            )
+        return cursor.rowcount == 1
 
     def mark_sent(self, seq: int) -> None:
         with self._connect() as connection:
@@ -498,19 +542,18 @@ class Store:
                     given_up.append(trigger_id)
         return given_up
 
-    def outbox_problems(self, since: float) -> tuple[int, int]:
+    def failed_send_count(self) -> int:
         with self._connect() as connection:
-            waiting = connection.execute(
+            row = connection.execute(
                 "SELECT COUNT(*) AS n FROM outbox WHERE sent_at IS NULL AND failed_at IS NULL AND attempts > 0"
-            ).fetchone()["n"]
-            dropped = connection.execute("SELECT COUNT(*) AS n FROM outbox WHERE failed_at >= ?", (since,)).fetchone()[
-                "n"
-            ]
-        return int(waiting), int(dropped)
+            ).fetchone()
+        return int(row["n"])
 
     def undelivered_count(self) -> int:
         with self._connect() as connection:
-            row = connection.execute("SELECT COUNT(*) AS n FROM outbox WHERE sent_at IS NULL").fetchone()
+            row = connection.execute(
+                "SELECT COUNT(*) AS n FROM outbox WHERE sent_at IS NULL AND failed_at IS NULL"
+            ).fetchone()
         return int(row["n"])
 
     def prune_ignored_triggers(self, older_than_seconds: float) -> int:
@@ -521,14 +564,14 @@ class Store:
             )
             return cursor.rowcount
 
-    def record_send_failure(self, seq: int, max_attempts: int) -> bool:
+    def record_send_failure(self, seq: int) -> float:
         with self._connect() as connection:
             connection.execute("UPDATE outbox SET attempts = attempts + 1 WHERE seq = ?", (seq,))
             attempts = connection.execute("SELECT attempts FROM outbox WHERE seq = ?", (seq,)).fetchone()["attempts"]
-            if attempts < max_attempts:
-                return False
-            connection.execute("UPDATE outbox SET failed_at = ? WHERE seq = ?", (time.time(), seq))
-            return True
+            delay = 0.0 if attempts < 2 else min(SEND_RETRY_BASE_SECONDS * 2 ** (attempts - 2), SEND_RETRY_CAP_SECONDS)
+            next_attempt_at = time.time() + delay
+            connection.execute("UPDATE outbox SET next_attempt_at = ? WHERE seq = ?", (next_attempt_at, seq))
+        return next_attempt_at
 
     def record_activity(self, assignment_id: str, token: str, fingerprint: str) -> None:
         with self._connect() as connection:

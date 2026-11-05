@@ -4,13 +4,12 @@ import fcntl
 import logging
 import os
 import subprocess
-import time
 from dataclasses import dataclass
 from pathlib import Path
 
 from .config import DB_FILENAME, WORKDIRS_DIRNAME, Config, load_config
 from .domain import Ticket
-from .router import MAX_SEND_ATTEMPTS, Assessor, Router, Sender
+from .router import Assessor, Router, Sender
 from .store import Store
 from .watchdog import CheckResult, DriftJudge, check_once
 from .worker import SubprocessBackend
@@ -88,17 +87,15 @@ def _run_phases(runtime: Runtime, judge: DriftJudge | None, assessor: Assessor |
     except Exception as error:
         logger.exception("watchdog check failed")
         errors.append(f"watchdog: {error}")
-    relay_started = time.time()
     try:
         delivered = runtime.router.relay(argv_sender(runtime.config.send_argv))
     except Exception as error:
         logger.exception("relay failed")
         errors.append(f"relay: {error}")
-    waiting, dropped = runtime.store.outbox_problems(relay_started)
-    if waiting:
-        errors.append(f"relay: {waiting} message(s) not delivered yet, retrying on the next tick")
-    if dropped:
-        errors.append(f"relay: {dropped} message(s) dropped after {MAX_SEND_ATTEMPTS} failed sends")
+    if waiting := runtime.store.failed_send_count():
+        errors.append(
+            f"relay: {waiting} message(s) not delivered yet, retrying with backoff. `superagent outbox` lists them"
+        )
     try:
         runtime.store.prune_ignored_triggers(IGNORED_TRIGGER_RETENTION_SECONDS)
     except Exception as error:

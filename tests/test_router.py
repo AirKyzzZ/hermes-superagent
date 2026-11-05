@@ -1,14 +1,16 @@
 from __future__ import annotations
 
+import sqlite3
 from collections.abc import Sequence
 from concurrent.futures import ThreadPoolExecutor
+from pathlib import Path
 
 import pytest
 
 from superagent.domain import RepairAction, ReportState, Strength, TicketStatus, Trigger
 from superagent.gate import SemanticRule, parse_rules
-from superagent.router import MAX_SEND_ATTEMPTS, Assessment, NotAdmittedError, Outcome, Router, chat_safe
-from superagent.store import StaleAssignmentError, Store
+from superagent.router import ORDERED_RETRIES, Assessment, NotAdmittedError, Outcome, Router, chat_safe
+from superagent.store import SEND_RETRY_CAP_SECONDS, StaleAssignmentError, Store
 from superagent.watchdog import WatchdogPolicy, check_once
 
 from .conftest import FakeBackend, unlabelled
@@ -236,7 +238,14 @@ def test_one_bad_message_does_not_block_the_others(router: Router, backend: Fake
     assert [unlabelled(text) for text in sent] == ["Done: fine"]
 
 
-def test_send_gives_up_after_the_attempt_cap(router: Router, backend: FakeBackend) -> None:
+class Clock:
+    def __init__(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        self.now = 1_000_000.0
+        monkeypatch.setattr("superagent.store.time.time", lambda: self.now)
+
+
+def test_a_failing_send_is_never_dropped(router: Router, backend: FakeBackend, monkeypatch: pytest.MonkeyPatch) -> None:
+    clock = Clock(monkeypatch)
     done_report(router, backend)
     calls: list[str] = []
 
@@ -244,9 +253,57 @@ def test_send_gives_up_after_the_attempt_cap(router: Router, backend: FakeBacken
         calls.append(text)
         raise OSError("still down")
 
-    for _ in range(MAX_SEND_ATTEMPTS + 3):
+    for _ in range(12):
         router.relay(broken)
-    assert len(calls) == MAX_SEND_ATTEMPTS
+        clock.now += SEND_RETRY_CAP_SECONDS
+    assert len(calls) == 12
+    assert [unlabelled(text) for _, _, text in router.relay()] == ["Done: PR opened"]
+
+
+def test_repeated_send_failures_back_off(router: Router, backend: FakeBackend, monkeypatch: pytest.MonkeyPatch) -> None:
+    clock = Clock(monkeypatch)
+    done_report(router, backend)
+    calls: list[float] = []
+
+    def broken(channel: str, text: str) -> None:
+        calls.append(clock.now)
+        raise OSError("still down")
+
+    for _ in range(6):
+        router.relay(broken)
+        clock.now += 30
+    assert calls == [1_000_000.0, 1_000_030.0, 1_000_090.0]
+
+
+def test_a_channel_keeps_its_order_while_a_send_fails(
+    router: Router, backend: FakeBackend, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    clock = Clock(monkeypatch)
+    router.store.queue_message("tk-1", "discord:brief", "part 1/2")
+    router.store.queue_message("tk-1", "discord:brief", "part 2/2")
+    router.store.queue_message("tk-2", "discord:other", "elsewhere")
+    sent: list[str] = []
+
+    def first_fails(channel: str, text: str) -> None:
+        if text == "part 1/2" and not sent:
+            raise OSError("blip")
+        sent.append(text)
+
+    router.relay(first_fails)
+    assert sent == ["elsewhere"]
+    clock.now += 1
+    router.relay(first_fails)
+    assert sent == ["elsewhere", "part 1/2", "part 2/2"]
+
+
+def test_an_operator_can_drop_a_message_that_keeps_failing(router: Router) -> None:
+    router.store.queue_message("tk-1", "discord:gone", "never arrives")
+    [message] = router.store.pending_outbox()
+    assert router.store.drop_message(message.seq, "channel deleted")
+    assert not router.store.drop_message(message.seq, "again")
+    assert router.store.pending_outbox() == []
+    assert router.store.undelivered_count() == 0
+    assert router.relay() == []
 
 
 @pytest.mark.parametrize(
@@ -514,3 +571,39 @@ def test_status_shows_the_question_a_parked_ticket_waits_on(router: Router, back
     blocked_ticket(router, backend)
     [line] = router.status()
     assert line["question"] == "Postgres or SQLite?"
+
+
+def test_a_database_from_before_the_outbox_retries_is_upgraded(tmp_path: Path) -> None:
+    path = tmp_path / "old.db"
+    with sqlite3.connect(path) as connection:
+        connection.execute(
+            "CREATE TABLE outbox (seq INTEGER PRIMARY KEY AUTOINCREMENT, ticket_id TEXT NOT NULL, "
+            "channel TEXT NOT NULL, text TEXT NOT NULL, sent_at REAL, attempts INTEGER NOT NULL DEFAULT 0, "
+            "failed_at REAL)"
+        )
+        connection.execute("INSERT INTO outbox (ticket_id, channel, text) VALUES ('tk-1', 'chat:a', 'still here')")
+    store = Store(path)
+    assert [message.text for message in store.pending_outbox()] == ["still here"]
+    assert [message.text for message in Store(path).pending_outbox()] == ["still here"]
+
+
+def test_a_message_that_keeps_failing_stops_holding_its_channel(
+    router: Router, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    clock = Clock(monkeypatch)
+    router.store.queue_message("tk-1", "discord:brief", "poison")
+    router.store.queue_message("tk-2", "discord:brief", "fine")
+    sent: list[str] = []
+
+    def picky(channel: str, text: str) -> None:
+        if text == "poison":
+            raise OSError("rejected")
+        sent.append(text)
+
+    for _ in range(ORDERED_RETRIES - 1):
+        router.relay(picky)
+        clock.now += SEND_RETRY_CAP_SECONDS
+    assert sent == []
+    router.relay(picky)
+    assert sent == ["fine"]
+    assert [message.text for message in router.store.pending_outbox()] == ["poison"]
