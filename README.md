@@ -44,7 +44,7 @@ DeepSeek's article puts the limit at three to five active sessions: past that, a
 A prompt or skill can only ask a model to stay in its lane. Here the gate, the tool allowlist, fencing and the watchdog process are code the model can't talk its way past, which is why this has to be a plugin.
 
 > [!WARNING]
-> Early build, never run with a live model. CI runs workers on real Hermes v0.22.7 with a fake model: they overlap, report as themselves, get guarded and fenced, and stop for real. The router's chat path has only run against a fake host so far.
+> Early build, never run with a live model. CI runs the whole path on real Hermes v0.22.7 with a fake model: a gateway message passes the gate, the router dispatches, workers overlap, report, get guarded, fenced and stopped for real, and the watchdog relays the result.
 
 ## Architecture
 
@@ -383,7 +383,7 @@ If the gate itself fails, the message is dropped and logged, so a person gets si
 - [x] External watchdog with nudge, restart and escalate
 - [x] Guard hooks, runnable demo, CI against real Hermes discovery
 - [x] Workers proven end to end on real Hermes with a fake model
-- [ ] The router's chat path, from gateway message to relay, proven the same way
+- [x] The router's chat path, from gateway message to relay, proven the same way
 - [ ] First live run with a model and gateway
 - [ ] GitHub, email and calendar sources
 - [ ] tmux and cmux backends for coding agents, then a Kanban backend
