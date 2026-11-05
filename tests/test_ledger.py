@@ -109,8 +109,11 @@ def test_who_may_set_a_state_is_enforced(ledger: Ledger, target: ItemState, acto
     assert ledger.get("github:i1").state is ItemState.NEW
 
 
-def test_a_worker_can_only_ask_for_the_owner(ledger: Ledger) -> None:
+def test_a_worker_can_only_hand_its_own_item_back_to_the_owner(ledger: Ledger) -> None:
     ledger.record("github", task("i1"))
+    ledger.move("github:i1", ItemState.ASSIGNED, "owner", "go", ticket_id="tk-1")
+    with pytest.raises(LedgerError, match="doesn't hold"):
+        ledger.move("github:i1", ItemState.WAITING, "worker:tk-2", "PR ready")
     assert ledger.move("github:i1", ItemState.WAITING, "worker:tk-1", "PR ready").state is ItemState.WAITING
 
 
@@ -171,3 +174,98 @@ def test_the_cli_lists_shows_closes_and_ignores(tmp_path: Path, capsys: pytest.C
     assert shown["item"]["state"] == "ignored"
     assert [event["note"] for event in shown["history"]] == ["first seen", "done by phone"]
     assert main([*home, "ledger", "show", "it-nope"]) == 1
+
+
+@pytest.mark.parametrize(
+    ("setup", "target", "actor"),
+    [
+        (ItemState.TRIAGED, ItemState.IGNORED, "model"),
+        (ItemState.TRIAGED, ItemState.IGNORED, "rule:newsletters"),
+        (ItemState.DONE, ItemState.WAITING, "worker:tk-1"),
+        (ItemState.DONE, ItemState.NEW, "connector:github"),
+        (ItemState.TRIAGED, ItemState.NEW, "owner"),
+    ],
+)
+def test_transitions_depend_on_the_current_state(
+    ledger: Ledger, setup: ItemState, target: ItemState, actor: str
+) -> None:
+    ledger.record("github", task("i1"))
+    ledger.move("github:i1", setup, "owner", "set up")
+    with pytest.raises(LedgerError):
+        ledger.move("github:i1", target, actor, "because")
+    assert ledger.get("github:i1").state is setup
+
+
+def test_a_late_model_suggestion_cannot_override_the_owner(ledger: Ledger) -> None:
+    ledger.record("gmail", task("m1"))
+    ledger.move("gmail:m1", ItemState.TRIAGED, "owner", "mine")
+    with pytest.raises(LedgerError):
+        ledger.move("gmail:m1", ItemState.IGNORED, "model", "looks like a newsletter", expected=ItemState.NEW)
+    assert ledger.get("gmail:m1").state is ItemState.TRIAGED
+
+
+def test_only_the_items_own_connector_can_confirm_it(ledger: Ledger) -> None:
+    ledger.record("todoist", task())
+    with pytest.raises(LedgerError):
+        ledger.confirm("todoist:t1", Upstream.CLOSED, "connector:github")
+    assert ledger.get("todoist:t1").is_open
+
+
+def test_a_confirmed_close_reopens_when_the_item_comes_back_open(ledger: Ledger) -> None:
+    ledger.record("gmail", task("m1"))
+    ledger.mark_missing("gmail", [])
+    closed = ledger.confirm("gmail:m1", Upstream.CLOSED, "connector:gmail")
+    assert closed.state is ItemState.DONE and closed.upstream is Upstream.CLOSED
+    assert ledger.record("gmail", task("m1")).state is ItemState.NEW
+
+
+def test_an_owner_closed_item_that_vanished_and_came_back_reopens(ledger: Ledger) -> None:
+    ledger.record("github", task("i1"))
+    ledger.move("github:i1", ItemState.DONE, "owner", "not mine")
+    ledger.mark_missing("github", [])
+    assert ledger.record("github", task("i1")).state is ItemState.NEW
+
+
+def test_only_the_owner_snoozes_and_a_move_or_vanish_ends_it(ledger: Ledger) -> None:
+    ledger.record("todoist", task("t1"))
+    ledger.record("todoist", task("t2"))
+    later = time.time() + 86400
+    with pytest.raises(LedgerError):
+        ledger.snooze("todoist:t1", later, "worker:tk-1")
+    ledger.snooze("todoist:t1", later, "owner")
+    assert ledger.move("todoist:t1", ItemState.TRIAGED, "owner", "today").snoozed_until is None
+    ledger.snooze("todoist:t2", later, "owner")
+    ledger.mark_missing("todoist", ["t1"])
+    assert ledger.get("todoist:t2").snoozed_until is None
+
+
+def test_closing_needs_a_reason(ledger: Ledger) -> None:
+    ledger.record("todoist", task())
+    with pytest.raises(LedgerError, match="reason"):
+        ledger.move("todoist:t1", ItemState.DONE, "owner", "")
+
+
+def test_connector_names_cannot_make_ids_collide(ledger: Ledger) -> None:
+    ledger.record("a", task("b:c"))
+    with pytest.raises(LedgerError):
+        ledger.record("a:b", task("c"))
+    assert ledger.get("a:b:c").external_id == "b:c"
+
+
+def test_handles_work_whatever_the_case(ledger: Ledger) -> None:
+    item = ledger.record("todoist", task())
+    assert ledger.get(item.handle.upper()).id == item.id
+
+
+def test_an_area_change_is_logged(ledger: Ledger) -> None:
+    ledger.record("github", task("i1"))
+    moved = ledger.move("github:i1", ItemState.TRIAGED, "rule:work-repos", "work repo", area="work")
+    assert moved.area == "work"
+    assert ledger.history("github:i1")[-1].area == "work"
+
+
+def test_vanished_items_can_be_listed_for_a_retry(ledger: Ledger) -> None:
+    ledger.record("github", task("i1"))
+    ledger.record("github", task("i2"))
+    ledger.mark_missing("github", ["i2"])
+    assert [item.id for item in ledger.items(missing=True)] == ["github:i1"]

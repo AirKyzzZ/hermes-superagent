@@ -25,10 +25,12 @@ CREATE TABLE IF NOT EXISTS items (
 CREATE INDEX IF NOT EXISTS items_by_connector ON items (connector, state);
 CREATE TABLE IF NOT EXISTS item_events (
     seq INTEGER PRIMARY KEY AUTOINCREMENT, item_id TEXT NOT NULL, at REAL NOT NULL, actor TEXT NOT NULL,
-    from_state TEXT, to_state TEXT NOT NULL, note TEXT NOT NULL, content TEXT
+    from_state TEXT, to_state TEXT NOT NULL, area TEXT NOT NULL, note TEXT NOT NULL, content TEXT
 );
 CREATE INDEX IF NOT EXISTS item_events_by_item ON item_events (item_id, seq);
+CREATE TABLE IF NOT EXISTS ledger_schema (version INTEGER NOT NULL);
 """
+_MIGRATIONS: tuple[str, ...] = ()
 
 
 class ItemState(StrEnum):
@@ -47,15 +49,24 @@ class Upstream(StrEnum):
 
 
 CLOSED_STATES = frozenset({ItemState.DONE, ItemState.IGNORED})
-_CONTENT_FIELDS = ("title", "url", "due", "upstream", "updated", "excerpt", "meta")
-_ALLOWED: dict[ItemState, frozenset[str]] = {
-    ItemState.NEW: frozenset({"connector"}),
-    ItemState.TRIAGED: frozenset({"rule", "owner"}),
-    ItemState.ASSIGNED: frozenset({"rule", "owner"}),
-    ItemState.WAITING: frozenset({"worker", "owner"}),
-    ItemState.DONE: frozenset({"connector", "owner"}),
-    ItemState.IGNORED: frozenset({"rule", "owner", "model"}),
+_ANY = frozenset(ItemState)
+_TRANSITIONS: dict[str, dict[ItemState, frozenset[ItemState]]] = {
+    "owner": {
+        ItemState.TRIAGED: _ANY,
+        ItemState.ASSIGNED: _ANY,
+        ItemState.WAITING: _ANY,
+        ItemState.DONE: _ANY,
+        ItemState.IGNORED: _ANY,
+    },
+    "rule": {
+        ItemState.TRIAGED: frozenset({ItemState.NEW}),
+        ItemState.ASSIGNED: frozenset({ItemState.NEW}),
+        ItemState.IGNORED: frozenset({ItemState.NEW}),
+    },
+    "model": {ItemState.IGNORED: frozenset({ItemState.NEW})},
+    "worker": {ItemState.WAITING: frozenset({ItemState.ASSIGNED})},
 }
+_CONTENT_FIELDS = ("title", "url", "due", "upstream", "updated", "excerpt", "meta")
 
 
 class LedgerError(ValueError):
@@ -78,6 +89,7 @@ class SourceItem:
 class Item:
     id: str
     connector: str
+    external_id: str
     handle: str
     title: str
     url: str
@@ -107,6 +119,7 @@ class ItemEvent:
     actor: str
     from_state: ItemState | None
     to_state: ItemState
+    area: str
     note: str
     content: Mapping[str, object] | None
 
@@ -120,18 +133,21 @@ def _handle_for(identifier: str, length: int) -> str:
     return HANDLE_PREFIX + digest[:length]
 
 
-def _actor_kind(actor: str) -> str:
-    return actor.split(":", 1)[0]
-
-
 class Ledger:
     def __init__(self, path: Path) -> None:
         self.path = path
         path.parent.mkdir(parents=True, exist_ok=True)
-        connection = sqlite3.connect(path, timeout=BUSY_TIMEOUT_SECONDS)
+        connection = sqlite3.connect(path, timeout=BUSY_TIMEOUT_SECONDS, isolation_level=None)
         try:
             connection.execute("PRAGMA journal_mode=WAL")
             connection.executescript(_SCHEMA)
+            connection.execute("BEGIN IMMEDIATE")
+            row = connection.execute("SELECT version FROM ledger_schema").fetchone()
+            for statement in _MIGRATIONS[row[0] if row else 0 :]:
+                connection.execute(statement)
+            connection.execute("DELETE FROM ledger_schema")
+            connection.execute("INSERT INTO ledger_schema VALUES (?)", (len(_MIGRATIONS),))
+            connection.execute("COMMIT")
         finally:
             connection.close()
 
@@ -151,13 +167,14 @@ class Ledger:
             connection.close()
 
     def record(self, connector: str, source: SourceItem) -> Item:
+        _check_connector(connector)
         identifier = item_id(connector, source.external_id)
-        now = time.time()
         content = _content(source)
+        actor = f"connector:{connector}"
         with self._connect() as connection:
+            now = time.time()
             row = connection.execute("SELECT * FROM items WHERE id = ?", (identifier,)).fetchone()
             if row is None:
-                handle = _free_handle(connection, identifier)
                 state = ItemState.DONE if source.upstream is Upstream.CLOSED else ItemState.NEW
                 connection.execute(
                     "INSERT INTO items VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,NULL,NULL,NULL)",
@@ -165,7 +182,7 @@ class Ledger:
                         identifier,
                         connector,
                         source.external_id,
-                        handle,
+                        _free_handle(connection, identifier),
                         *(_stored(content[name]) for name in _CONTENT_FIELDS),
                         state.value,
                         "closed upstream" if state is ItemState.DONE else "",
@@ -175,91 +192,127 @@ class Ledger:
                         now,
                     ),
                 )
-                _log(connection, identifier, now, f"connector:{connector}", None, state, "first seen", content)
-                return _item(connection.execute("SELECT * FROM items WHERE id = ?", (identifier,)).fetchone())
+                _log(connection, identifier, now, actor, None, state, "", "first seen", content)
+                return _reload(connection, identifier)
             previous = ItemState(row["state"])
             changed = any(_stored(content[name]) != row[name] for name in _CONTENT_FIELDS)
+            returned = row["missing_since"] is not None
             connection.execute(
                 "UPDATE items SET title=?, url=?, due=?, upstream=?, updated=?, excerpt=?, meta=?, last_seen=?, "
                 "missing_since=NULL WHERE id=?",
                 (*(_stored(content[name]) for name in _CONTENT_FIELDS), now, identifier),
             )
-            actor = f"connector:{connector}"
-            if row["missing_since"] is not None:
-                _log(connection, identifier, now, actor, previous, previous, "back in the source", None)
-            target = previous
-            note = "changed at the source"
+            target, note = previous, "changed at the source"
             if source.upstream is Upstream.CLOSED and previous not in CLOSED_STATES:
                 target, note = ItemState.DONE, "closed upstream"
             elif (
                 source.upstream is Upstream.OPEN
                 and previous in CLOSED_STATES
-                and (row["upstream"] == Upstream.CLOSED.value or changed)
+                and (row["upstream"] == Upstream.CLOSED.value or changed or returned)
             ):
                 target, note = ItemState.NEW, "reopened at the source"
             if target is not previous:
-                _move(connection, identifier, now, actor, previous, target, note, content)
+                _move(connection, row, now, actor, target, note, content)
             elif changed:
                 connection.execute(
                     "UPDATE items SET last_changed = ?, snoozed_until = NULL WHERE id = ?", (now, identifier)
                 )
-                _log(connection, identifier, now, actor, previous, previous, note, content)
-            return _item(connection.execute("SELECT * FROM items WHERE id = ?", (identifier,)).fetchone())
+                _log(connection, identifier, now, actor, previous, previous, row["area"], note, content)
+            elif returned:
+                _log(connection, identifier, now, actor, previous, previous, row["area"], "back in the source", None)
+            return _reload(connection, identifier)
 
     def mark_missing(self, connector: str, present: Sequence[str]) -> list[Item]:
-        now = time.time()
+        _check_connector(connector)
         keep = {item_id(connector, external_id) for external_id in present}
+        actor = f"connector:{connector}"
         with self._connect() as connection:
+            now = time.time()
             rows = connection.execute(
-                "SELECT * FROM items WHERE connector = ? AND missing_since IS NULL AND state NOT IN (?, ?)",
-                (connector, ItemState.DONE.value, ItemState.IGNORED.value),
+                "SELECT * FROM items WHERE connector = ? AND missing_since IS NULL", (connector,)
             ).fetchall()
             missing = [row for row in rows if row["id"] not in keep]
             for row in missing:
-                connection.execute("UPDATE items SET missing_since = ? WHERE id = ?", (now, row["id"]))
+                connection.execute(
+                    "UPDATE items SET missing_since = ?, snoozed_until = NULL WHERE id = ?", (now, row["id"])
+                )
                 state = ItemState(row["state"])
-                _log(connection, row["id"], now, f"connector:{connector}", state, state, "gone from the source", None)
-            return [
-                _item(connection.execute("SELECT * FROM items WHERE id = ?", (row["id"],)).fetchone())
-                for row in missing
-            ]
+                _log(connection, row["id"], now, actor, state, state, row["area"], "gone from the source", None)
+            return [_reload(connection, row["id"]) for row in missing if ItemState(row["state"]) not in CLOSED_STATES]
 
-    def confirm(self, identifier: str, upstream: Upstream, actor: str) -> Item:
-        if upstream is not Upstream.CLOSED:
-            return self.get(identifier)
-        return self.move(identifier, ItemState.DONE, actor, "closed upstream, confirmed")
+    def confirm(self, reference: str, upstream: Upstream, actor: str) -> Item:
+        with self._connect() as connection:
+            row = _find(connection, reference)
+            if actor != f"connector:{row['connector']}":
+                raise LedgerError(f"{actor} can't confirm an item from {row['connector']}")
+            if upstream is not Upstream.CLOSED:
+                return _item(row)
+            now = time.time()
+            connection.execute("UPDATE items SET upstream = ? WHERE id = ?", (Upstream.CLOSED.value, row["id"]))
+            content = {name: _loaded(name, row[name]) for name in _CONTENT_FIELDS} | {"upstream": "closed"}
+            state = ItemState(row["state"])
+            note = "closed upstream, confirmed"
+            if state in CLOSED_STATES:
+                _log(connection, row["id"], now, actor, state, state, row["area"], note, content)
+            else:
+                _move(connection, row, now, actor, ItemState.DONE, note, content)
+            return _reload(connection, row["id"])
 
-    def move(self, reference: str, target: ItemState, actor: str, reason: str = "") -> Item:
-        if _actor_kind(actor) not in _ALLOWED[target]:
-            raise LedgerError(f"{actor} can't set an item to {target.value}")
-        if target is ItemState.IGNORED and not reason.strip():
-            raise LedgerError("ignoring an item needs a reason")
-        now = time.time()
+    def move(
+        self,
+        reference: str,
+        target: ItemState,
+        actor: str,
+        reason: str = "",
+        *,
+        expected: ItemState | None = None,
+        area: str | None = None,
+        ticket_id: str | None = None,
+    ) -> Item:
+        if target in CLOSED_STATES and not reason.strip():
+            raise LedgerError(f"setting an item to {target.value} needs a reason")
         with self._connect() as connection:
             row = _find(connection, reference)
             previous = ItemState(row["state"])
+            if expected is not None and previous is not expected:
+                raise LedgerError(f"{row['handle']} is {previous.value}, not {expected.value}")
+            kind, _, who = actor.partition(":")
+            if previous not in _TRANSITIONS.get(kind, {}).get(target, frozenset()):
+                raise LedgerError(f"{actor} can't move {row['handle']} from {previous.value} to {target.value}")
+            if kind == "worker" and (not who or row["ticket_id"] != who):
+                raise LedgerError(f"{actor} doesn't hold {row['handle']}")
+            if target is ItemState.ASSIGNED and not (ticket_id or row["ticket_id"]):
+                raise LedgerError("assigning an item needs a ticket")
+            now = time.time()
+            if area is not None:
+                connection.execute("UPDATE items SET area = ? WHERE id = ?", (area, row["id"]))
+            if ticket_id is not None:
+                connection.execute("UPDATE items SET ticket_id = ? WHERE id = ?", (ticket_id, row["id"]))
+            current = _reload_row(connection, row["id"])
             if previous is target:
-                return _item(row)
-            _move(connection, row["id"], now, actor, previous, target, reason, None)
-            return _item(connection.execute("SELECT * FROM items WHERE id = ?", (row["id"],)).fetchone())
+                _log(connection, row["id"], now, actor, previous, target, current["area"], reason, None)
+            else:
+                _move(connection, current, now, actor, target, reason, None)
+            return _reload(connection, row["id"])
 
     def snooze(self, reference: str, until: float, actor: str) -> Item:
-        now = time.time()
-        if until <= now:
-            raise LedgerError("snooze to a time in the future")
+        if actor != "owner":
+            raise LedgerError("only the owner can snooze an item")
         with self._connect() as connection:
+            now = time.time()
+            if until <= now:
+                raise LedgerError("snooze to a time in the future")
             row = _find(connection, reference)
             state = ItemState(row["state"])
             connection.execute("UPDATE items SET snoozed_until = ? WHERE id = ?", (until, row["id"]))
-            _log(connection, row["id"], now, actor, state, state, f"snoozed until {until:.0f}", None)
-            return _item(connection.execute("SELECT * FROM items WHERE id = ?", (row["id"],)).fetchone())
+            _log(connection, row["id"], now, actor, state, state, row["area"], f"snoozed until {until:.0f}", None)
+            return _reload(connection, row["id"])
 
     def get(self, reference: str) -> Item:
         with self._connect() as connection:
             return _item(_find(connection, reference))
 
-    def items(self, *, open_only: bool = False, connector: str = "") -> list[Item]:
-        query = "SELECT * FROM items"
+    def items(self, *, open_only: bool = False, connector: str = "", missing: bool = False) -> list[Item]:
         clauses: list[str] = []
         params: list[str] = []
         if open_only:
@@ -268,10 +321,11 @@ class Ledger:
         if connector:
             clauses.append("connector = ?")
             params.append(connector)
-        if clauses:
-            query += " WHERE " + " AND ".join(clauses)
+        if missing:
+            clauses.append("missing_since IS NOT NULL")
+        where = f" WHERE {' AND '.join(clauses)}" if clauses else ""
         with self._connect() as connection:
-            rows = connection.execute(query + " ORDER BY first_seen", params).fetchall()
+            rows = connection.execute(f"SELECT * FROM items{where} ORDER BY first_seen", params).fetchall()
         return [_item(row) for row in rows]
 
     def history(self, reference: str) -> list[ItemEvent]:
@@ -286,11 +340,17 @@ class Ledger:
                 event["actor"],
                 ItemState(event["from_state"]) if event["from_state"] else None,
                 ItemState(event["to_state"]),
+                event["area"],
                 event["note"],
                 json.loads(event["content"]) if event["content"] else None,
             )
             for event in events
         ]
+
+
+def _check_connector(connector: str) -> None:
+    if not connector or ":" in connector:
+        raise LedgerError(f"connector names can't be empty or contain ':', got {connector!r}")
 
 
 def _content(source: SourceItem) -> dict[str, object]:
@@ -309,6 +369,10 @@ def _stored(value: object) -> str:
     return value if isinstance(value, str) else json.dumps(value, sort_keys=True)
 
 
+def _loaded(name: str, value: str) -> object:
+    return json.loads(value) if name == "meta" else value
+
+
 def _free_handle(connection: sqlite3.Connection, identifier: str) -> str:
     for length in range(4, 53):
         handle = _handle_for(identifier, length)
@@ -318,28 +382,38 @@ def _free_handle(connection: sqlite3.Connection, identifier: str) -> str:
 
 
 def _find(connection: sqlite3.Connection, reference: str) -> sqlite3.Row:
+    handle = reference.lower() if reference.lower().startswith(HANDLE_PREFIX) else reference
     row: sqlite3.Row | None = connection.execute(
-        "SELECT * FROM items WHERE id = ? OR handle = ?", (reference, reference)
+        "SELECT * FROM items WHERE id = ? OR handle = ?", (reference, handle)
     ).fetchone()
     if row is None:
         raise LedgerError(f"no item {reference}")
     return row
 
 
+def _reload_row(connection: sqlite3.Connection, identifier: str) -> sqlite3.Row:
+    row: sqlite3.Row = connection.execute("SELECT * FROM items WHERE id = ?", (identifier,)).fetchone()
+    return row
+
+
+def _reload(connection: sqlite3.Connection, identifier: str) -> Item:
+    return _item(_reload_row(connection, identifier))
+
+
 def _move(
     connection: sqlite3.Connection,
-    identifier: str,
+    row: sqlite3.Row,
     now: float,
     actor: str,
-    previous: ItemState,
     target: ItemState,
     note: str,
     content: Mapping[str, object] | None,
 ) -> None:
     connection.execute(
-        "UPDATE items SET state = ?, reason = ?, last_changed = ? WHERE id = ?", (target.value, note, now, identifier)
+        "UPDATE items SET state = ?, reason = ?, last_changed = ?, snoozed_until = NULL WHERE id = ?",
+        (target.value, note, now, row["id"]),
     )
-    _log(connection, identifier, now, actor, previous, target, note, content)
+    _log(connection, row["id"], now, actor, ItemState(row["state"]), target, row["area"], note, content)
 
 
 def _log(
@@ -349,17 +423,20 @@ def _log(
     actor: str,
     previous: ItemState | None,
     target: ItemState,
+    area: str,
     note: str,
     content: Mapping[str, object] | None,
 ) -> None:
     connection.execute(
-        "INSERT INTO item_events (item_id, at, actor, from_state, to_state, note, content) VALUES (?,?,?,?,?,?,?)",
+        "INSERT INTO item_events (item_id, at, actor, from_state, to_state, area, note, content) "
+        "VALUES (?,?,?,?,?,?,?,?)",
         (
             identifier,
             now,
             actor,
             previous.value if previous else None,
             target.value,
+            area,
             note,
             json.dumps(content, sort_keys=True) if content is not None else None,
         ),
@@ -370,6 +447,7 @@ def _item(row: sqlite3.Row) -> Item:
     return Item(
         id=row["id"],
         connector=row["connector"],
+        external_id=row["external_id"],
         handle=row["handle"],
         title=row["title"],
         url=row["url"],
