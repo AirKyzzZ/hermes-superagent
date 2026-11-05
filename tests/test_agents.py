@@ -162,25 +162,44 @@ def test_the_agents_connector_turns_sessions_into_owned_items(sessions: Path, tm
     assert items["c"].state is ItemState.DONE
 
 
-def test_a_session_that_starts_waiting_is_announced_once(sessions: Path, tmp_path: Path) -> None:
+def test_a_waiting_session_is_announced_once_it_holds_for_two_polls(sessions: Path, tmp_path: Path) -> None:
     ledger = Ledger(tmp_path / "s.db")
-    spec = agents_spec(channel="discord:agents")
+    spec = agents_spec(channel="discord:agents", notify_detail=True)
     connectors = {spec.name: build_connector(spec)}
     said: list[tuple[str, str]] = []
 
     def notify(channel: str, text: str) -> None:
         said.append((channel, text))
 
+    def poll() -> None:
+        poll_sources(ledger, [spec], connectors, 600, notify)
+
     hook(event("Stop", session="b", cwd="/work/site", last_assistant_message="Ship it?", background_tasks=[]))
-    poll_sources(ledger, [spec], connectors, 60, notify)
-    poll_sources(ledger, [spec], connectors, 60, notify)
+    poll()
+    assert said == []
+    poll()
+    poll()
     assert len(said) == 1
     assert said[0][0] == "discord:agents" and "site [agents-here] is waiting: Ship it?" in said[0][1]
     hook(event("UserPromptSubmit", session="b", cwd="/work/site"))
-    poll_sources(ledger, [spec], connectors, 60, notify)
+    poll()
     hook(event("Stop", session="b", cwd="/work/site", last_assistant_message="Now?", background_tasks=[]))
-    poll_sources(ledger, [spec], connectors, 60, notify)
+    poll()
+    poll()
     assert len(said) == 2 and "Now?" in said[1][1]
+
+
+def test_without_notify_detail_no_session_text_leaves_the_box(sessions: Path, tmp_path: Path) -> None:
+    ledger = Ledger(tmp_path / "s.db")
+    spec = agents_spec(channel="discord:agents")
+    connectors = {spec.name: build_connector(spec)}
+    said: list[str] = []
+    hook(
+        event("Stop", session="b", cwd="/work/site", last_assistant_message="password=hunter2 ok?", background_tasks=[])
+    )
+    for _ in range(2):
+        poll_sources(ledger, [spec], connectors, 600, lambda channel, text: said.append(text))
+    assert len(said) == 1 and "hunter2" not in said[0] and ":" not in said[0].split(" is waiting")[1].split("(")[0]
 
 
 def test_a_tick_posts_waiting_sessions_and_the_board_lists_them_first(
@@ -196,6 +215,7 @@ argv = ["{sys.executable}", "{OUTBOUND}", "{sent}", "{{channel}}", "{{text}}"]
 type = "agents"
 every = "0s"
 channel = "discord:agents"
+notify_detail = true
 """,
         encoding="utf-8",
     )
@@ -203,8 +223,10 @@ channel = "discord:agents"
     hook(event("PermissionRequest", session="b", cwd="/work/site", tool_name="Bash", tool_input={"command": "make"}))
     result = tick(open_runtime(tmp_path))
     assert result.errors == () and result.warnings == ()
+    assert not sent.exists()
+    tick(open_runtime(tmp_path))
     delivered = sent.read_text(encoding="utf-8")
-    assert "discord:agents\tsite [agents-here] is waiting: permission for Bash: make" in delivered
+    assert "discord:agents\tsite [agents-here] is waiting: permission for Bash (it-" in delivered
     assert main(["--home", str(tmp_path), "agents"]) == 0
     board = capsys.readouterr().out.splitlines()
     assert "waiting" in board[0] and "site" in board[0]
@@ -223,3 +245,98 @@ def test_the_cli_prints_the_hook_and_its_settings(capsys: pytest.CaptureFixture[
 def test_bad_agents_settings_are_refused(extra: dict[str, object]) -> None:
     with pytest.raises(Exception, match="connectors.agents-here"):
         agents_spec(**extra)
+
+
+def test_the_hook_never_keeps_commands_or_tokens(sessions: Path) -> None:
+    hook(
+        event(
+            "PermissionRequest",
+            tool_name="Bash",
+            tool_input={"command": "curl -H 'Authorization: Bearer abcdef123456'"},
+        )
+    )
+    hook(
+        event(
+            "Stop", last_assistant_message="Set GH token ghp_" + "a" * 36 + " and api_key=s3cr3t", background_tasks=[]
+        )
+    )
+    stored = json.dumps(lines(sessions))
+    assert "curl" not in stored and "abcdef123456" not in stored
+    assert "ghp_" not in stored and "s3cr3t" not in stored
+
+
+@pytest.mark.parametrize(
+    ("events", "busy", "state"),
+    [
+        ([at("PreToolUse", 600, tool="Bash"), at("PermissionRequest", 590, tool="Bash")], True, SessionState.WORKING),
+        ([at("Stop", 3000, background=1, text="Merge it?")], False, SessionState.WAITING),
+        (
+            [at("UserPromptSubmit", 60), at("PermissionRequest", 5, tool="Bash", agent="sub-1")],
+            False,
+            SessionState.WAITING,
+        ),
+        (
+            [
+                at("StopFailure", 60, error="rate_limit"),
+                at("Notification", 5, notification="quota_auto_resume_disabled"),
+            ],
+            False,
+            SessionState.LIMITED,
+        ),
+        ([at("UserPromptSubmit", 60), at("SessionStart", 5, source="compact")], False, SessionState.WORKING),
+        (
+            [at("UserPromptSubmit", 60), at("PostToolUseFailure", 5, tool="Bash", interrupt=True)],
+            False,
+            SessionState.WAITING,
+        ),
+    ],
+)
+def test_the_reviewed_edge_cases(events: list[dict[str, object]], busy: bool, state: SessionState) -> None:
+    assert classify(events, True, NOW, stall_after=1200, busy=busy).state is state
+
+
+def test_idle_prompt_keeps_the_real_question() -> None:
+    events = [
+        at("Stop", 120, background=0, text="Postgres or SQLite?"),
+        at("Notification", 60, notification="idle_prompt", text="Claude is waiting for your input"),
+    ]
+    view = classify(events, True, NOW, 1200)
+    assert view.state is SessionState.WAITING and view.question == "Postgres or SQLite?"
+
+
+def test_a_reused_pid_that_is_not_claude_counts_as_dead(sessions: Path) -> None:
+    other = subprocess.Popen(["sleep", "30"])
+    try:
+        sessions.mkdir(exist_ok=True)
+        (sessions / "reused.jsonl").write_text(
+            json.dumps({"event": "UserPromptSubmit", "t": time.time(), "cwd": "/x", "pid": other.pid, "pid_start": ""})
+            + "\n"
+        )
+        done = subprocess.run(
+            [sys.executable, "-"],
+            input=PROBE_SCRIPT.read_text(),
+            capture_output=True,
+            text=True,
+            timeout=30,
+            check=True,
+        )
+        [session] = json.loads(done.stdout)["sessions"]
+        assert session["alive"] is False
+    finally:
+        other.kill()
+
+
+def test_a_session_gone_for_an_hour_is_closed_and_never_announced(sessions: Path, tmp_path: Path) -> None:
+    finished = subprocess.Popen(["true"])
+    finished.wait()
+    sessions.mkdir(exist_ok=True)
+    (sessions / "crashed.jsonl").write_text(
+        json.dumps({"event": "UserPromptSubmit", "t": time.time() - 7200, "cwd": "/w/app", "pid": finished.pid}) + "\n"
+    )
+    ledger = Ledger(tmp_path / "s.db")
+    spec = agents_spec(channel="discord:agents")
+    said: list[str] = []
+    for _ in range(2):
+        poll_sources(ledger, [spec], {spec.name: build_connector(spec)}, 600, lambda channel, text: said.append(text))
+    assert ledger.get("agents-here:crashed").state is ItemState.DONE
+    assert said == []

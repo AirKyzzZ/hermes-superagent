@@ -13,6 +13,7 @@ from ..ledger import SourceItem, Upstream
 from . import ConnectorConfigError, ConnectorError, ConnectorSpec, Poll, duration
 
 KEYS = frozenset({"host", "python", "stall_after", "timeout"})
+GONE_CLOSES_AFTER_SECONDS = 3600.0
 _BASE_ENV = ("PATH", "HOME", "LANG", "LC_ALL", "TMPDIR", "USER", "SSH_AUTH_SOCK")
 
 
@@ -34,7 +35,16 @@ class AgentsConnector:
             if not isinstance(session, Mapping) or not isinstance(session.get("events"), list):
                 raise ConnectorError("the probe returned a session without events")
             alive = session.get("alive")
-            view = classify(session["events"], alive if isinstance(alive, bool) else None, float(now), self.stall_after)
+            view = classify(
+                session["events"],
+                alive if isinstance(alive, bool) else None,
+                float(now),
+                self.stall_after,
+                busy=session.get("busy") is True,
+            )
+            over = view.state is SessionState.ENDED or (
+                view.state is SessionState.GONE and view.quiet_for > GONE_CLOSES_AFTER_SECONDS
+            )
             project = PurePath(view.cwd).name or "session"
             branch = str(session.get("branch") or "")
             meta = {"state": view.state.value, "cwd": view.cwd, "branch": branch}
@@ -45,7 +55,7 @@ class AgentsConnector:
                 SourceItem(
                     external_id=str(session.get("session")),
                     title=f"{project} · {branch}" if branch else project,
-                    upstream=Upstream.CLOSED if view.state is SessionState.ENDED else Upstream.OPEN,
+                    upstream=Upstream.CLOSED if over else Upstream.OPEN,
                     excerpt=view.question,
                     meta=meta,
                 )
@@ -53,7 +63,7 @@ class AgentsConnector:
         return Poll(tuple(items), complete=True)
 
     def confirm(self, external_id: str) -> Upstream:
-        return Upstream.UNKNOWN
+        return Upstream.CLOSED
 
     def _probe(self) -> Mapping[str, object]:
         argv = [*self.host, self.python if self.host else sys.executable, "-"]

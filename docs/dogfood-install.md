@@ -6,7 +6,7 @@ The steps that put hermes-superagent next to an existing Hermes setup in shadow 
 
 ```bash
 hermes plugins install AirKyzzZ/hermes-superagent --enable
-mkdir -p ~/superagent
+mkdir -p ~/superagent ~/.superagent
 ```
 
 Leave `role` unset. With no role, the plugin's hooks do nothing and its tools stay hidden, which CI checks on real Hermes. Everything below runs through `hermes superagent --home ~/superagent ...`, so Hermes's own config is never touched.
@@ -27,23 +27,27 @@ argv = ["curl", "-fsS", "-m", "10", "https://hc-ping.com/YOUR-CHECK-ID"]
 
 [connectors.agents-vps]
 type = "agents"
-every = "2m"
+every = "90s"
 channel = "discord:AGENTS_CHANNEL_ID"
 
 [connectors.agents-mac]
 type = "agents"
 host = ["ssh", "-o", "BatchMode=yes", "-o", "ConnectTimeout=10", "mac"]
-every = "2m"
+every = "90s"
 channel = "discord:AGENTS_CHANNEL_ID"
 
 [connectors.agents-pc]
 type = "agents"
 host = ["ssh", "-o", "BatchMode=yes", "-o", "ConnectTimeout=10", "pc"]
-every = "2m"
+every = "90s"
 channel = "discord:AGENTS_CHANNEL_ID"
 ```
 
 `mac` and `pc` are ssh host aliases from `~/.ssh/config`. For the PC, point the alias at WSL, where Claude Code runs. Each host needs `python3`, and needs `git` if you want the board to show branches.
+
+The timer below has no ssh agent. So give each alias a dedicated key with no passphrase through `IdentityFile`, and ssh to each host once by hand so its host key is saved. On a Mac, ssh sessions can't read folders that macOS protects, such as `~/Downloads`, so branches of repos kept there show as blank. Grant `sshd` Full Disk Access if you want them.
+
+The agents channel gets one line when a session has been waiting, stuck, rate-limited or gone for two polls in a row. The line holds the project, the state and a handle, never the session's text. Set `notify_detail = true` on a connector to add the question, with anything token-shaped redacted.
 
 The heartbeat is optional but recommended. Any uptime checker that alerts when pings stop will do, and shadow mode is meant to run with one for its first week.
 
@@ -67,7 +71,7 @@ hermes superagent agents --hook-settings
 
 Merge the printed `hooks` block into `~/.claude/settings.json` on that machine, next to any hooks already there rather than over them. Show the owner the diff first. On the VPS itself, write the script locally with `hermes superagent agents --hook-script > ~/.superagent/hook.py`.
 
-Sessions started before the hook was installed show up after their next event.
+Claude Code's settings watcher normally picks up the new hooks in sessions that are already running, so they show up after their next event. A session that still doesn't appear needs `/hooks` opened once, or a restart. The hook redacts token-shaped text, never stores a command, and deletes its own logs after 30 days.
 
 ## 4. Check it
 

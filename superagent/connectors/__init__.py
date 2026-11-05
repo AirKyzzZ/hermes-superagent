@@ -12,7 +12,7 @@ DEFAULT_EVERY_SECONDS = 300.0
 DEFAULT_NOTIFY = ("waiting", "stuck", "limited", "gone")
 _DURATION = re.compile(r"^(\d+(?:\.\d+)?)([smhd])$")
 _UNITS = {"s": 1.0, "m": 60.0, "h": 3600.0, "d": 86400.0}
-COMMON_KEYS = frozenset({"type", "every", "track", "quiet_after", "owned", "channel", "notify"})
+COMMON_KEYS = frozenset({"type", "every", "track", "quiet_after", "owned", "channel", "notify", "notify_detail"})
 
 
 class ConnectorError(RuntimeError):
@@ -51,6 +51,7 @@ class ConnectorSpec:
     owned: bool = False
     channel: str = ""
     notify: frozenset[str] = frozenset()
+    notify_detail: bool = False
 
 
 @dataclass(frozen=True)
@@ -90,7 +91,9 @@ def parse_specs(section: object) -> tuple[ConnectorSpec, ...]:
         track, owned = body.get("track", True), body.get("owned", kind == "agents")
         if not isinstance(track, bool) or not isinstance(owned, bool):
             raise ConnectorConfigError(f"[connectors.{name}] track and owned must be true or false")
-        channel = body.get("channel", "")
+        channel, detail = body.get("channel", ""), body.get("notify_detail", False)
+        if not isinstance(detail, bool):
+            raise ConnectorConfigError(f"[connectors.{name}] notify_detail must be true or false")
         notify = body.get("notify", list(DEFAULT_NOTIFY) if kind == "agents" else [])
         if not isinstance(channel, str) or not isinstance(notify, list) or not all(isinstance(s, str) for s in notify):
             raise ConnectorConfigError(f"[connectors.{name}] channel must be a string and notify a list of states")
@@ -104,6 +107,7 @@ def parse_specs(section: object) -> tuple[ConnectorSpec, ...]:
             owned=owned,
             channel=channel,
             notify=frozenset(notify),
+            notify_detail=detail,
         )
         types[kind].build(spec)
         specs.append(spec)

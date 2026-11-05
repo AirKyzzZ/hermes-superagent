@@ -5,6 +5,7 @@ import time
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
 
+from .agents import redact
 from .connectors import Connector, ConnectorSpec
 from .ledger import Item, ItemState, Ledger, LedgerError, SourceState, item_id
 
@@ -15,6 +16,7 @@ FAILURES_BEFORE_WARNING = 3
 STALE_FLOOR_SECONDS = 3600.0
 MAX_CONFIRMS_PER_POLL = 20
 PROBLEMS_SHOWN = 5
+QUIET_AT_FIRST_SIGHT = frozenset({"gone", "ended"})
 
 
 @dataclass(frozen=True)
@@ -77,7 +79,7 @@ def poll_one(
                     item = ledger.move(item.id, ItemState.TRIAGED, "rule:owned", "", expected=ItemState.NEW)
                 except LedgerError as error:
                     logger.info("left %s as it is: %s", item.id, error)
-            announce(spec, before, item, notify)
+            announce(ledger, spec, before, item, notify)
             if not spec.track and item.state is ItemState.NEW:
                 try:
                     ledger.move(
@@ -108,13 +110,17 @@ def poll_one(
         confirm_vanished(ledger, spec, connector, deadline)
 
 
-def announce(spec: ConnectorSpec, before: Item | None, item: Item, notify: Notify | None) -> None:
+def announce(ledger: Ledger, spec: ConnectorSpec, before: Item | None, item: Item, notify: Notify | None) -> None:
     state = item.meta.get("state", "")
-    if notify is None or not spec.channel or state not in spec.notify:
+    if notify is None or not spec.channel or state not in spec.notify or not item.is_open:
         return
-    if before is not None and before.meta.get("state") == state:
+    if before is None or before.meta.get("state") != state:
         return
-    detail = f": {item.excerpt[:300]}" if item.excerpt else ""
+    if state in QUIET_AT_FIRST_SIGHT and item.last_changed == item.first_seen:
+        return
+    if not ledger.announce_once(item.id, f"{state}@{item.last_changed}"):
+        return
+    detail = f": {redact(item.excerpt)[:200]}" if spec.notify_detail and item.excerpt else ""
     notify(spec.channel, f"{item.title} [{spec.name}] is {state}{detail} ({item.handle})")
 
 

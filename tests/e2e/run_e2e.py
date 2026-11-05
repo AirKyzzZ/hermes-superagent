@@ -294,7 +294,8 @@ def stage_router(work: Path, log: Path) -> None:
             f"\n[tick]\nalert_after_seconds = 0\n"
             f'\n[connectors.tasks]\ntype = "command"\nevery = "0s"\nargv = {tasks_argv}\n'
             'fields = { id = "id", title = "content" }\n'
-            '\n[connectors.agents-here]\ntype = "agents"\nevery = "0s"\nchannel = "discord:agents"\n'
+            '\n[connectors.agents-here]\ntype = "agents"\nevery = "0s"\n'
+            'channel = "discord:agents"\nnotify_detail = true\n'
             f"\n[outbound]\nargv = {argv}\n"
             f'\n[[semantic]]\nname = "ci-watch"\ntext = "Look into failing CI runs on main."\nmode = "record"\n'
         )
@@ -381,10 +382,12 @@ def stage_router(work: Path, log: Path) -> None:
         check("watchdog: the tick runs from the CLI", tick.returncode == 0)
         listed = hermes("-p", "watchdog", "superagent", "ledger", "list", "--json")
         titles = sorted(item["title"] for item in json.loads(listed.stdout or "[]")) if listed.returncode == 0 else []
+        second = hermes("-p", "watchdog", "superagent", "tick")
+        print("second tick:", second.returncode, second.stdout[-300:], flush=True)
         sent_now = sent.read_text(encoding="utf-8") if sent.exists() else ""
         check(
-            "agents: a session waiting on a permission reaches the agents channel",
-            "discord:agents\tsite [agents-here] is waiting: permission for Bash: make deploy" in sent_now,
+            "agents: a session still waiting on a permission reaches the agents channel",
+            "discord:agents\tsite [agents-here] is waiting: permission for Bash (it-" in sent_now,
             sent_now[-400:],
         )
         board = hermes("-p", "watchdog", "superagent", "agents")

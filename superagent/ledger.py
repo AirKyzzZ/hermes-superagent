@@ -29,6 +29,9 @@ CREATE TABLE IF NOT EXISTS item_events (
 );
 CREATE INDEX IF NOT EXISTS item_events_by_item ON item_events (item_id, seq);
 CREATE TABLE IF NOT EXISTS ledger_schema (version INTEGER NOT NULL);
+CREATE TABLE IF NOT EXISTS announcements (
+    item_id TEXT NOT NULL, key TEXT NOT NULL, at REAL NOT NULL, PRIMARY KEY (item_id, key)
+);
 CREATE TABLE IF NOT EXISTS sources (
     connector TEXT PRIMARY KEY, cursor TEXT NOT NULL, first_attempt REAL NOT NULL, last_attempt REAL NOT NULL,
     last_ok REAL, failures INTEGER NOT NULL, last_error TEXT NOT NULL, applied_count INTEGER, held_count INTEGER,
@@ -420,6 +423,13 @@ class Ledger:
             cursor = connection.execute("UPDATE sources SET accept_next = 1 WHERE connector = ?", (connector,))
             if cursor.rowcount != 1:
                 raise LedgerError(f"no source {connector} has been polled yet")
+
+    def announce_once(self, identifier: str, key: str) -> bool:
+        with self._connect() as connection:
+            cursor = connection.execute(
+                "INSERT OR IGNORE INTO announcements VALUES (?, ?, ?)", (identifier, key, time.time())
+            )
+        return cursor.rowcount == 1
 
     def peek(self, identifier: str) -> Item | None:
         with self._connect() as connection:
