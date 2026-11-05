@@ -419,9 +419,8 @@ If the gate itself fails, the message is dropped and logged, so a person gets si
 - [x] The router's chat path, from gateway message to relay, proven the same way
 - [ ] First live run with a model and gateway
 - [x] GitHub and other webhook sources
-- [ ] Email and calendar sources
-- [ ] tmux and cmux backends for coding agents, then a Kanban backend
-- [ ] Event ledger with a digest and morning sweep
+- [ ] Item ledger with polling connectors (Todoist, GitHub, GitLab, mail, calendars) and a daily reconciliation, see [the dogfood design](docs/dogfood-design.md)
+- [ ] Claude Code workers on tmux and cmux over ssh
 - [ ] Demo video
 
 ## Develop
