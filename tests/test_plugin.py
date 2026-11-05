@@ -670,3 +670,18 @@ def test_only_the_watchdog_writes_the_digest(tmp_path: Path) -> None:
     assert answer["digest"].startswith("Superagent, last 2 hours")
     refused = json.loads(registered("router", tmp_path).tools["superagent_digest"]["handler"]({}))
     assert "watchdog" in refused["error"]
+
+
+def test_a_redelivered_webhook_opens_no_second_ticket(tmp_path: Path) -> None:
+    ctx = webhook_router(tmp_path)
+    payload = {
+        "issue": {"number": 7, "user": {"login": "alice", "type": "User"}},
+        "comment": {"body": "fix it", "user": {"login": "alice", "type": "User"}},
+        "repository": {"full_name": "acme/app"},
+        "sender": {"login": "alice", "type": "User"},
+    }
+    source = FakeSource(platform="webhook", chat_id="delivery-42", user_id="webhook:github")
+    for _ in range(2):
+        event = FakeEvent(source, "fix it", None, payload)
+        ctx.hooks["pre_gateway_dispatch"](event=event, gateway=object(), session_store=object())
+    assert len(Store(tmp_path / DB_FILENAME).live_tickets()) == 1
