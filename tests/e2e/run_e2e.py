@@ -79,7 +79,7 @@ def configure_worker(
     home: Path,
     *,
     tool_search: str = "auto",
-    role: str = "worker",
+    role: str | None = "worker",
     extra: dict[str, Any] | None = None,
 ) -> None:
     config_path = profile / "config.yaml"
@@ -92,8 +92,9 @@ def configure_worker(
         "api_key": "not-a-real-key",
     }
     config.setdefault("tools", {})["tool_search"] = {"enabled": tool_search}
-    plugins = config.setdefault("plugins", {})
-    plugins.setdefault("entries", {})["hermes-superagent"] = {"settings": {"role": role, "home": str(home)}}
+    if role is not None:
+        plugins = config.setdefault("plugins", {})
+        plugins.setdefault("entries", {})["hermes-superagent"] = {"settings": {"role": role, "home": str(home)}}
     config.update(extra or {})
     config_path.write_text(yaml.safe_dump(config), encoding="utf-8")
 
@@ -230,8 +231,8 @@ def scenario_stop(runtime: Runtime, log: Path) -> None:
     check("stop: the client process is gone", not runtime.router.backend.is_alive(assignment))
 
 
-def post_webhook(route: str, message: str) -> int:
-    return post_json(route, {"message": message}, {"X-Request-ID": uuid.uuid4().hex})
+def post_webhook(route: str, message: str, profile: str = "router") -> int:
+    return post_json(route, {"message": message}, {"X-Request-ID": uuid.uuid4().hex}, profile)
 
 
 def post_github_comment(login: str, body: str) -> int:
@@ -246,9 +247,9 @@ def post_github_comment(login: str, body: str) -> int:
     return post_json("github", payload, headers)
 
 
-def post_json(route: str, payload: dict[str, Any], headers: dict[str, str]) -> int:
+def post_json(route: str, payload: dict[str, Any], headers: dict[str, str], profile: str = "router") -> int:
     request = urllib.request.Request(
-        f"http://127.0.0.1:{WEBHOOK_PORT}/p/router/webhooks/{route}",
+        f"http://127.0.0.1:{WEBHOOK_PORT}/p/{profile}/webhooks/{route}",
         data=json.dumps(payload).encode(),
         headers={"Content-Type": "application/json", **headers},
     )
@@ -292,7 +293,13 @@ def stage_router(work: Path, log: Path) -> None:
     route = {"secret": "INSECURE_NO_AUTH", "prompt": "{message}", "profile": "router"}
     github = {"secret": "INSECURE_NO_AUTH", "prompt": "{comment.body}", "profile": "router"}
     ci = {"secret": "INSECURE_NO_AUTH", "prompt": "CI {workflow_run.name} ended with {workflow_run.conclusion}"}
-    routes = {"inbox": route, "stranger": route, "github": github, "ci": {**ci, "profile": "router"}}
+    routes = {
+        "inbox": route,
+        "stranger": route,
+        "github": github,
+        "ci": {**ci, "profile": "router"},
+        "plain": {**route, "profile": "owner"},
+    }
     listener = {
         "gateway": {"multiplex_profiles": True},
         "platforms": {
@@ -303,6 +310,8 @@ def stage_router(work: Path, log: Path) -> None:
     configure_worker(create_profile(hermes_home, "router"), home, role="router")
     configure_worker(create_profile(hermes_home, "worker"), home)
     configure_worker(create_profile(hermes_home, "watchdog"), home, role="watchdog")
+    owner_tools = {"platform_toolsets": {"webhook": ["terminal"]}}
+    configure_worker(create_profile(hermes_home, "owner"), home, role=None, tool_search="off", extra=owner_tools)
     interpreter = Path(shutil.which("hermes") or "hermes").resolve().parent / "python"
     extra = subprocess.run(
         [str(interpreter), "-c", "import pm; pm.sync_venv(['sms'], explicit=True)"],
@@ -317,6 +326,7 @@ def stage_router(work: Path, log: Path) -> None:
         )
     try:
         check("router: the host gateway serves the webhook", wait_until(webhook_is_up, timeout=120.0))
+        scenario_inert(log, work)
         post_webhook("stranger", "scenario=route id=stranger")
         time.sleep(15)
         check(
@@ -365,6 +375,17 @@ def stage_router(work: Path, log: Path) -> None:
     finally:
         host.terminate()
         host.wait(timeout=30)
+
+
+def scenario_inert(log: Path, work: Path) -> None:
+    post_webhook("plain", "scenario=inert id=owner-plain", profile="owner")
+    ran = wait_until(lambda: (work / "inert-owner-plain").exists(), timeout=120.0)
+    entries = turns(log, "owner-plain")
+    offered = sorted({tool for entry in entries for tool in entry["tools"] if tool.startswith("superagent")})
+    results = [result for entry in entries for result in entry["tool_results"]]
+    check("inert: a message to a profile with the plugin and no role reaches its model", bool(entries))
+    check("inert: that profile's terminal runs", ran, results[:2])
+    check("inert: no superagent tool is offered there", not offered, offered)
 
 
 def scenario_environment_untouched(hermes_home: Path) -> None:

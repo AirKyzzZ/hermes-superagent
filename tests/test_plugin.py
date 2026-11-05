@@ -144,8 +144,13 @@ def test_plugin_is_inert_without_a_role(tmp_path: Path) -> None:
     ctx = registered("", tmp_path)
     assert inbound(ctx) is None
     assert ctx.hooks["pre_tool_call"](tool_name="terminal", args={}, task_id="t") is None
+    bridged = {"calls": [{"name": "terminal", "arguments": {"command": "ls"}}]}
+    assert ctx.hooks["pre_tool_call"](tool_name="tool_call", args=bridged, task_id="t") is None
+    assert ctx.hooks["pre_tool_call"](tool_name="tool_call", args={}, task_id="t") is None
+    assert ctx.hooks["pre_llm_call"](user_message="hi", platform="discord", sender_id="alice") is None
     assert not any(tool["check_fn"]() for tool in ctx.tools.values())
     assert ctx.sections["superagent.role"]({}) == ""
+    assert not (tmp_path / "superagent.db").exists()
 
 
 @pytest.mark.parametrize("tool", ["terminal", "write_file", "execute_code", "browser_navigate", "delegate_task"])
