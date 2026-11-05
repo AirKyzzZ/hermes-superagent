@@ -53,6 +53,9 @@ _ASSESS_INSTRUCTIONS = (
 )
 
 
+MODEL_TIMEOUT_SECONDS = 120.0
+
+
 class StructuredLlm(Protocol):
     def complete_structured(self, **kwargs: Any) -> Any: ...
 
@@ -72,6 +75,7 @@ class LlmDriftJudge:
                 purpose="superagent.watchdog.drift",
                 temperature=0.0,
                 max_tokens=200,
+                timeout=MODEL_TIMEOUT_SECONDS,
             )
         except Exception as error:
             logger.warning("drift judge unavailable: %s", error)
@@ -101,6 +105,7 @@ class LlmAssessor:
             purpose="superagent.triggers.assess",
             temperature=0.0,
             max_tokens=2000,
+            timeout=MODEL_TIMEOUT_SECONDS,
         )
         parsed = result.parsed
         if not isinstance(parsed, dict):

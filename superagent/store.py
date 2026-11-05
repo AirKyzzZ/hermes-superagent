@@ -5,7 +5,7 @@ import json
 import secrets
 import sqlite3
 import time
-from collections.abc import Callable, Iterator, Sequence
+from collections.abc import Callable, Iterator, Mapping, Sequence
 from contextlib import contextmanager
 from dataclasses import asdict, dataclass
 from pathlib import Path
@@ -27,6 +27,9 @@ from .domain import (
 )
 
 _SCHEMA = """
+CREATE TABLE IF NOT EXISTS alerts (
+    key TEXT PRIMARY KEY, text TEXT NOT NULL, first_seen REAL NOT NULL, notified_at REAL
+);
 CREATE TABLE IF NOT EXISTS triggers (
     id TEXT PRIMARY KEY, source TEXT NOT NULL, thread TEXT NOT NULL, actor TEXT NOT NULL, text TEXT NOT NULL,
     channel TEXT NOT NULL, addressed INTEGER NOT NULL, is_bot INTEGER NOT NULL,
@@ -90,6 +93,7 @@ _MIGRATIONS = (
 )
 SEND_RETRY_BASE_SECONDS = 60.0
 SEND_RETRY_CAP_SECONDS = 1800.0
+MESSAGE_LIMIT = 1900
 
 
 @dataclass(frozen=True)
@@ -100,6 +104,28 @@ class OutboxMessage:
     text: str
     attempts: int
     due: bool
+
+
+def split_message(text: str, limit: int = MESSAGE_LIMIT) -> list[str]:
+    if len(text) <= limit:
+        return [text]
+    room = limit - len("(99/99) ")
+    chunks: list[str] = []
+    current = ""
+    for line in text.splitlines(keepends=True):
+        while len(line) > room:
+            if current:
+                chunks.append(current)
+                current = ""
+            chunks.append(line[:room])
+            line = line[room:]
+        if len(current) + len(line) > room:
+            chunks.append(current)
+            current = ""
+        current += line
+    if current:
+        chunks.append(current)
+    return [f"({index}/{len(chunks)}) {chunk.rstrip(chr(10))}" for index, chunk in enumerate(chunks, 1)]
 
 
 class Store:
@@ -432,9 +458,44 @@ class Store:
 
     def queue_message(self, ticket_id: str, channel: str, text: str) -> None:
         with self._connect() as connection:
-            connection.execute(
-                "INSERT INTO outbox (ticket_id, channel, text) VALUES (?,?,?)", (ticket_id, channel, text)
+            connection.executemany(
+                "INSERT INTO outbox (ticket_id, channel, text) VALUES (?,?,?)",
+                [(ticket_id, channel, part) for part in split_message(text)],
             )
+
+    def sync_alerts(
+        self, active: Mapping[str, str], alert_after: float
+    ) -> tuple[list[tuple[str, str]], list[tuple[str, str]]]:
+        now = time.time()
+        raised: list[tuple[str, str]] = []
+        resolved: list[tuple[str, str]] = []
+        with self._connect() as connection:
+            known = {row["key"]: row for row in connection.execute("SELECT * FROM alerts").fetchall()}
+            for key, row in known.items():
+                if key not in active:
+                    connection.execute("DELETE FROM alerts WHERE key = ?", (key,))
+                    if row["notified_at"] is not None:
+                        resolved.append((key, row["text"]))
+            for key, text in active.items():
+                row = known.get(key)
+                if row is None:
+                    connection.execute("INSERT INTO alerts VALUES (?, ?, ?, NULL)", (key, text, now))
+                    first_seen, notified = now, False
+                else:
+                    connection.execute("UPDATE alerts SET text = ? WHERE key = ?", (text, key))
+                    first_seen, notified = row["first_seen"], row["notified_at"] is not None
+                if not notified and now - first_seen >= alert_after:
+                    connection.execute("UPDATE alerts SET notified_at = ? WHERE key = ?", (now, key))
+                    raised.append((key, text))
+        return raised, resolved
+
+    def active_alerts(self) -> list[dict[str, object]]:
+        with self._connect() as connection:
+            rows = connection.execute("SELECT * FROM alerts ORDER BY first_seen").fetchall()
+        return [
+            {"key": row["key"], "text": row["text"], "since": row["first_seen"], "notified": row["notified_at"]}
+            for row in rows
+        ]
 
     def pending_candidates(self, limit: int = -1) -> list[Trigger]:
         with self._connect() as connection:

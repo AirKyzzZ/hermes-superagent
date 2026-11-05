@@ -13,12 +13,15 @@ DB_FILENAME = "superagent.db"
 WORKDIRS_DIRNAME = "workers"
 LAST_GOOD_FILENAME = ".superagent.last-good.toml"
 _KNOWN_KEYS = {
-    "": {"sources", "semantic", "worker", "outbound", "watchdog", "digest"},
+    "": {"sources", "semantic", "worker", "outbound", "watchdog", "digest", "channels", "heartbeat", "tick"},
     "sources": {"policy", "allow", "bots", "pass_strangers", "notify", "via_router"},
     "semantic": {"name", "text", "mode"},
     "worker": {"argv", "allow_same_user"},
     "outbound": {"argv"},
     "digest": {"channel"},
+    "channels": {"alerts"},
+    "heartbeat": {"argv"},
+    "tick": {"deadline_seconds", "alert_after_seconds"},
 }
 
 
@@ -31,6 +34,10 @@ class Config:
     allow_same_user: bool = False
     problem: str = ""
     digest_channel: str = ""
+    alerts_channel: str = ""
+    heartbeat_argv: tuple[str, ...] = ()
+    tick_deadline_seconds: float = 600.0
+    alert_after_seconds: float = 300.0
 
 
 class ConfigError(ValueError):
@@ -64,7 +71,26 @@ def parse_config(raw: str) -> Config:
         raise ConfigError(f"invalid [watchdog] section: {error}") from error
     allow_same_user = bool(data.get("worker", {}).get("allow_same_user", False))
     digest_channel = str(data.get("digest", {}).get("channel", ""))
-    return Config(rules, worker_argv, send_argv, policy, allow_same_user, digest_channel=digest_channel)
+    tick_section = data.get("tick", {})
+    try:
+        deadline = float(tick_section.get("deadline_seconds", 600.0))
+        alert_after = float(tick_section.get("alert_after_seconds", 300.0))
+    except (TypeError, ValueError) as error:
+        raise ConfigError(f"invalid [tick] section: {error}") from error
+    if deadline <= 0 or alert_after < 0:
+        raise ConfigError("[tick] deadline_seconds must be positive and alert_after_seconds not negative")
+    return Config(
+        rules,
+        worker_argv,
+        send_argv,
+        policy,
+        allow_same_user,
+        digest_channel=digest_channel,
+        alerts_channel=str(data.get("channels", {}).get("alerts", "")),
+        heartbeat_argv=tuple(str(part) for part in data.get("heartbeat", {}).get("argv", ())),
+        tick_deadline_seconds=deadline,
+        alert_after_seconds=alert_after,
+    )
 
 
 def _reject_unknown_keys(data: dict[str, object]) -> None:
@@ -75,7 +101,7 @@ def _reject_unknown_keys(data: dict[str, object]) -> None:
     for rule in data.get("semantic") or []:  # type: ignore[attr-defined]
         if unknown := set(rule) - _KNOWN_KEYS["semantic"]:
             problems.append(f"unknown keys in [[semantic]]: {sorted(unknown)}")
-    for section in ("worker", "outbound", "digest"):
+    for section in ("worker", "outbound", "digest", "channels", "heartbeat", "tick"):
         if unknown := set(dict(data.get(section) or {})) - _KNOWN_KEYS[section]:  # type: ignore[call-overload]
             problems.append(f"unknown keys in [{section}]: {sorted(unknown)}")
     if problems:

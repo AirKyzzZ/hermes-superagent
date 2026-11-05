@@ -2,7 +2,9 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import sys
+import threading
 import time
 import uuid
 from collections.abc import Callable
@@ -93,7 +95,14 @@ def run(
         return 0
     if args.superagent_command == "status":
         print(
-            json.dumps({"tickets": runtime.router.status(), "undelivered": runtime.store.undelivered_count()}, indent=1)
+            json.dumps(
+                {
+                    "tickets": runtime.router.status(),
+                    "undelivered": runtime.store.undelivered_count(),
+                    "alerts": runtime.store.active_alerts(),
+                },
+                indent=1,
+            )
         )
         return 0
     if args.superagent_command == "ingest":
@@ -119,7 +128,11 @@ def run(
             )
         )
         return 0
-    result = tick(runtime, judge, assessor)
+    deadline = arm_deadline(runtime.config.tick_deadline_seconds)
+    try:
+        result = tick(runtime, judge, assessor)
+    finally:
+        deadline.cancel()
     print(
         json.dumps(
             {
@@ -141,6 +154,17 @@ def run(
         )
     )
     return 1 if result.errors else 0
+
+
+def arm_deadline(seconds: float) -> threading.Timer:
+    def expire() -> None:
+        print(json.dumps({"errors": [f"tick: ran past its {seconds:g}s deadline and was stopped"]}), flush=True)
+        os._exit(3)
+
+    timer = threading.Timer(seconds, expire)
+    timer.daemon = True
+    timer.start()
+    return timer
 
 
 def main(argv: list[str] | None = None) -> int:

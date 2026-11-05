@@ -1,9 +1,11 @@
 from __future__ import annotations
 
 import fcntl
+import json
 import logging
 import os
 import subprocess
+import time
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -19,6 +21,7 @@ logger = logging.getLogger(__name__)
 _SEND_TIMEOUT_SECONDS = 60
 _TICK_LOCK_FILENAME = "tick.lock"
 IGNORED_TRIGGER_RETENTION_SECONDS = 7 * 24 * 3600.0
+ALERT_TICKET = "alert"
 
 
 @dataclass(frozen=True)
@@ -65,10 +68,23 @@ def tick(runtime: Runtime, judge: DriftJudge | None = None, assessor: Assessor |
         try:
             fcntl.flock(lock_fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
         except BlockingIOError:
-            return TickResult(skipped=True)
+            return TickResult(skipped=True, errors=_stuck_holder(lock_fd, runtime.config.tick_deadline_seconds))
+        os.ftruncate(lock_fd, 0)
+        os.pwrite(lock_fd, json.dumps({"pid": os.getpid(), "started": time.time()}).encode(), 0)
         return _run_phases(runtime, judge, assessor)
     finally:
         os.close(lock_fd)
+
+
+def _stuck_holder(lock_fd: int, deadline: float) -> tuple[str, ...]:
+    try:
+        holder = json.loads(os.pread(lock_fd, 200, 0) or b"{}")
+        held_for = time.time() - float(holder["started"])
+    except (OSError, ValueError, KeyError, TypeError):
+        return ()
+    if held_for <= deadline:
+        return ()
+    return (f"tick: another tick (pid {holder.get('pid')}) has held the lock for {held_for / 60:.0f} minutes",)
 
 
 def _run_phases(runtime: Runtime, judge: DriftJudge | None, assessor: Assessor | None) -> TickResult:
@@ -101,4 +117,32 @@ def _run_phases(runtime: Runtime, judge: DriftJudge | None, assessor: Assessor |
     except Exception as error:
         logger.exception("pruning failed")
         errors.append(f"prune: {error}")
+    try:
+        delivered += _raise_alerts(runtime, errors)
+    except Exception as error:
+        logger.exception("alerting failed")
+        errors.append(f"alerts: {error}")
+    if not errors and runtime.config.heartbeat_argv:
+        try:
+            subprocess.run(
+                runtime.config.heartbeat_argv, check=True, timeout=_SEND_TIMEOUT_SECONDS, capture_output=True
+            )
+        except (subprocess.SubprocessError, OSError) as error:
+            errors.append(f"heartbeat: {error}")
     return TickResult(tuple(tickets), tuple(checks), tuple(delivered), tuple(errors))
+
+
+def _raise_alerts(runtime: Runtime, errors: list[str]) -> list[tuple[str, str, str]]:
+    active: dict[str, str] = {}
+    for error in errors:
+        key = error.split(":", 1)[0]
+        active[key] = f"{active[key]}; {error}" if key in active else error
+    raised, resolved = runtime.store.sync_alerts(active, runtime.config.alert_after_seconds)
+    channel = runtime.config.alerts_channel
+    if not channel or not (raised or resolved):
+        return []
+    for _, text in raised:
+        runtime.store.queue_message(ALERT_TICKET, channel, f"Alert: {text}")
+    for _, text in resolved:
+        runtime.store.queue_message(ALERT_TICKET, channel, f"Resolved: {text}")
+    return runtime.router.relay(argv_sender(runtime.config.send_argv))
