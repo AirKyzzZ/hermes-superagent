@@ -5,11 +5,11 @@ from concurrent.futures import ThreadPoolExecutor
 
 import pytest
 
-from superagent.domain import ReportState, Strength, TicketStatus, Trigger
+from superagent.domain import RepairAction, ReportState, Strength, TicketStatus, Trigger
 from superagent.gate import SemanticRule, parse_rules
 from superagent.router import MAX_SEND_ATTEMPTS, Assessment, NotAdmittedError, Outcome, Router
 from superagent.store import StaleAssignmentError, Store
-from superagent.watchdog import check_once
+from superagent.watchdog import WatchdogPolicy, check_once
 
 from .conftest import FakeBackend
 
@@ -415,6 +415,19 @@ def test_removing_someone_from_the_rules_voids_their_pending_request(store: Stor
     router.rules = parse_rules('[sources.chat]\npolicy = "explicit_only"\nallow = []')
     with pytest.raises(NotAdmittedError, match="no longer allowed"):
         router.dispatch("t1", "stale permission")
+
+
+def test_a_failed_worker_start_is_recovered_by_the_watchdog(router: Router, backend: FakeBackend) -> None:
+    admit(router, event(thread=""))
+    backend.fail_next_start = True
+    with pytest.raises(OSError):
+        router.dispatch("t1", "fix the bug")
+    ticket = router.dispatch("t1", "fix the bug")
+    assert backend.started == []
+    backend.alive = False
+    result = check_once(router, policy=WatchdogPolicy(orphan_after_seconds=-1))[0]
+    assert result.action is RepairAction.RESTART
+    assert backend.started[0][0] == ticket.id
 
 
 def test_two_answers_resume_a_waiting_ticket_once(router: Router, backend: FakeBackend) -> None:

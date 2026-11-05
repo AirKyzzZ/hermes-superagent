@@ -92,12 +92,12 @@ class Router:
 
     def dispatch(self, trigger_id: str, goal: str) -> Ticket:
         trigger = self._admitted_trigger(trigger_id)
+        if self.store.claim_offered_trigger(trigger_id, "dispatched", OFFER_VALID_SECONDS):
+            return self._open_ticket(trigger, goal, Strength.EXPLICIT)
         existing = self.store.ticket_for_trigger(trigger_id)
-        if existing is not None:
+        if existing is not None and self.store.assessment_of(trigger_id) == "dispatched":
             return existing
-        if not self.store.claim_offered_trigger(trigger_id, "dispatched", OFFER_VALID_SECONDS):
-            raise NotAdmittedError(f"trigger {trigger_id} was already used or is not an offered request")
-        return self._open_ticket(trigger, goal, Strength.EXPLICIT)
+        raise NotAdmittedError(f"trigger {trigger_id} was already used or is not an offered request")
 
     def forward(self, trigger_id: str, ticket_id: str) -> Ticket:
         trigger = self._admitted_trigger(trigger_id)
