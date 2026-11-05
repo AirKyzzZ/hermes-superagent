@@ -421,6 +421,11 @@ class Ledger:
             if cursor.rowcount != 1:
                 raise LedgerError(f"no source {connector} has been polled yet")
 
+    def peek(self, identifier: str) -> Item | None:
+        with self._connect() as connection:
+            row = connection.execute("SELECT * FROM items WHERE id = ?", (identifier,)).fetchone()
+        return _item(row) if row else None
+
     def get(self, reference: str) -> Item:
         with self._connect() as connection:
             return _item(_find(connection, reference))

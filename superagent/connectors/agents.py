@@ -34,9 +34,7 @@ class AgentsConnector:
             if not isinstance(session, Mapping) or not isinstance(session.get("events"), list):
                 raise ConnectorError("the probe returned a session without events")
             alive = session.get("alive")
-            view = classify(
-                session["events"], alive if isinstance(alive, bool) else None, float(now), self.stall_after
-            )
+            view = classify(session["events"], alive if isinstance(alive, bool) else None, float(now), self.stall_after)
             project = PurePath(view.cwd).name or "session"
             branch = str(session.get("branch") or "")
             meta = {"state": view.state.value, "cwd": view.cwd, "branch": branch}

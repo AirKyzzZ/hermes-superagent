@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 import json
 import os
 import re
@@ -11,9 +13,18 @@ TEXT_LIMIT = 500
 LINE_LIMIT = 3800
 PID_EVENTS = {"SessionStart", "UserPromptSubmit", "Stop", "StopFailure"}
 CLAUDE_NAMES = ("claude", "node")
+PANE_KEYS = (
+    "TMUX_PANE",
+    "TMUX",
+    "CMUX_WORKSPACE_ID",
+    "CMUX_SURFACE_ID",
+    "CMUX_TAB_ID",
+    "CMUX_PANEL_ID",
+    "CMUX_CLAUDE_PID",
+)
 
 
-def ancestor_claude():
+def ancestor_claude() -> tuple[int, str]:
     pid = os.getppid()
     for _ in range(6):
         try:
@@ -34,12 +45,13 @@ def ancestor_claude():
     return 0, ""
 
 
-def question(payload):
+def question(payload: dict[str, object]) -> str:
     event = payload.get("hook_event_name")
-    tool_input = payload.get("tool_input") if isinstance(payload.get("tool_input"), dict) else {}
+    raw_input = payload.get("tool_input")
+    tool_input: dict[str, object] = raw_input if isinstance(raw_input, dict) else {}
     if event == "PreToolUse" and payload.get("tool_name") == "AskUserQuestion":
-        asked = tool_input.get("questions") or []
-        if asked and isinstance(asked[0], dict):
+        asked = tool_input.get("questions")
+        if isinstance(asked, list) and asked and isinstance(asked[0], dict):
             return str(asked[0].get("question", ""))
     if event == "PermissionRequest":
         return "permission for {}: {}".format(
@@ -48,7 +60,7 @@ def question(payload):
     return str(payload.get("last_assistant_message") or payload.get("message") or "")
 
 
-def main():
+def main() -> None:
     try:
         payload = json.loads(sys.stdin.read() or "{}")
     except ValueError:
@@ -57,9 +69,10 @@ def main():
     event = str(payload.get("hook_event_name", ""))
     if not session or not event:
         return
-    tool_input = payload.get("tool_input") if isinstance(payload.get("tool_input"), dict) else {}
+    raw_input = payload.get("tool_input")
+    tool_input: dict[str, object] = raw_input if isinstance(raw_input, dict) else {}
     background = payload.get("background_tasks")
-    line = {
+    line: dict[str, object] = {
         "event": event,
         "t": time.time(),
         "cwd": payload.get("cwd", ""),
@@ -73,18 +86,14 @@ def main():
         "timeout_ms": tool_input.get("timeout") if isinstance(tool_input.get("timeout"), (int, float)) else None,
         "background": len(background) if isinstance(background, list) else None,
         "text": question(payload)[:TEXT_LIMIT],
-        "pane": {
-            key: value
-            for key, value in os.environ.items()
-            if key in ("TMUX_PANE", "TMUX", "TERM_PROGRAM") or key.startswith("CMUX_")
-        },
+        "pane": {key: os.environ[key][:200] for key in PANE_KEYS if key in os.environ},
     }
     if event in PID_EVENTS and not line["agent"]:
         line["pid"], line["pid_start"] = ancestor_claude()
     SESSIONS.mkdir(parents=True, exist_ok=True)
     encoded = json.dumps(line)
     if len(encoded) > LINE_LIMIT:
-        line["pane"], line["text"] = {}, line["text"][:100]
+        line["pane"], line["text"] = {}, str(line["text"])[:100]
         encoded = json.dumps(line)
     descriptor = os.open(str(SESSIONS / (session + ".jsonl")), os.O_WRONLY | os.O_CREAT | os.O_APPEND, 0o600)
     try:

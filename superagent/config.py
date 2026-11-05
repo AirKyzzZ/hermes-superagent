@@ -69,9 +69,9 @@ def parse_config(raw: str) -> Config:
     except RulesError as error:
         raise ConfigError(str(error)) from error
     worker_argv = tuple(data.get("worker", {}).get("argv", ()))
-    if not worker_argv:
+    if "worker" in data and not worker_argv:
         raise ConfigError("[worker] argv is required: the command that runs one worker")
-    if "{brief}" not in " ".join(worker_argv):
+    if worker_argv and "{brief}" not in " ".join(worker_argv):
         raise ConfigError("[worker] argv must reference {brief}: the file holding the task")
     send_argv = tuple(data.get("outbound", {}).get("argv", ()))
     defaults = WatchdogPolicy()

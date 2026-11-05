@@ -294,6 +294,7 @@ def stage_router(work: Path, log: Path) -> None:
             f"\n[tick]\nalert_after_seconds = 0\n"
             f'\n[connectors.tasks]\ntype = "command"\nevery = "0s"\nargv = {tasks_argv}\n'
             'fields = { id = "id", title = "content" }\n'
+            '\n[connectors.agents-here]\ntype = "agents"\nevery = "0s"\nchannel = "discord:agents"\n'
             f"\n[outbound]\nargv = {argv}\n"
             f'\n[[semantic]]\nname = "ci-watch"\ntext = "Look into failing CI runs on main."\nmode = "record"\n'
         )
@@ -359,11 +360,35 @@ def stage_router(work: Path, log: Path) -> None:
             "github: the router's model never reads the event",
             not any("clarify" in entry["tools"] for entry in turns(log, "gh-worker")),
         )
+        os.environ["SUPERAGENT_SESSIONS_DIR"] = str(work / "sessions")
+        permission = {
+            "session_id": "e2e-session",
+            "hook_event_name": "PermissionRequest",
+            "cwd": str(work / "site"),
+            "tool_name": "Bash",
+            "tool_input": {"command": "make deploy"},
+        }
+        hooked = subprocess.run(
+            ["python3", str(REPO / "superagent" / "agents" / "hook.py")],
+            input=json.dumps(permission),
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        print("hook:", hooked.returncode, hooked.stdout, hooked.stderr[-300:], flush=True)
         tick = hermes("-p", "watchdog", "superagent", "tick")
         print("tick:", tick.returncode, tick.stdout[-600:], tick.stderr[-600:], flush=True)
         check("watchdog: the tick runs from the CLI", tick.returncode == 0)
         listed = hermes("-p", "watchdog", "superagent", "ledger", "list", "--json")
         titles = sorted(item["title"] for item in json.loads(listed.stdout or "[]")) if listed.returncode == 0 else []
+        sent_now = sent.read_text(encoding="utf-8") if sent.exists() else ""
+        check(
+            "agents: a session waiting on a permission reaches the agents channel",
+            "discord:agents\tsite [agents-here] is waiting: permission for Bash: make deploy" in sent_now,
+            sent_now[-400:],
+        )
+        board = hermes("-p", "watchdog", "superagent", "agents")
+        check("agents: the board lists it", "waiting" in board.stdout and "site" in board.stdout, board.stdout[-300:])
         check(
             "ledger: the tick polled a command connector into the ledger",
             titles == ["Pay rent", "Renew the domain"],
@@ -371,7 +396,10 @@ def stage_router(work: Path, log: Path) -> None:
         )
         delivered = sent.read_text(encoding="utf-8") if sent.exists() else ""
         check("watchdog: the result is relayed to the person", "]: done routed-worker" in delivered, delivered)
-        check("watchdog: the relay goes back to the webhook chat", delivered.startswith("webhook:"), delivered)
+        back_to_chat = any(
+            line.startswith("webhook:") and "done routed-worker" in line for line in delivered.splitlines()
+        )
+        check("watchdog: the relay goes back to the webhook chat", back_to_chat, delivered)
         check("github: the result goes to the team channel", "discord:team\tDone [" in delivered, delivered)
         check("relay: messages name their task", "· tk-" in delivered and "]: done gh-worker" in delivered, delivered)
         config_path = home / "superagent.toml"

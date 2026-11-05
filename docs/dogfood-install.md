@@ -1,0 +1,124 @@
+# Shadow install
+
+The steps that put hermes-superagent next to an existing Hermes setup in shadow mode. It watches every Claude Code session on each machine, keeps a ledger, and posts to its own Discord channels. It changes nothing else: no role in the live profile, no edits to Hermes config, and no messages anywhere except the channels named below. The [dogfood design](dogfood-design.md) explains why.
+
+## 1. Install the plugin in the live profile
+
+```bash
+hermes plugins install AirKyzzZ/hermes-superagent --enable
+mkdir -p ~/superagent
+```
+
+Leave `role` unset. With no role, the plugin's hooks do nothing and its tools stay hidden, which CI checks on real Hermes. Everything below runs through `hermes superagent --home ~/superagent ...`, so Hermes's own config is never touched.
+
+## 2. Write `~/superagent/superagent.toml`
+
+Create the Discord channels first and use their ids. Leave out any machine you don't have.
+
+```toml
+[outbound]
+argv = ["hermes", "send", "-q", "--to", "{channel}", "--", "{text}"]
+
+[channels]
+alerts = "discord:ALERTS_CHANNEL_ID"
+
+[heartbeat]
+argv = ["curl", "-fsS", "-m", "10", "https://hc-ping.com/YOUR-CHECK-ID"]
+
+[connectors.agents-vps]
+type = "agents"
+every = "2m"
+channel = "discord:AGENTS_CHANNEL_ID"
+
+[connectors.agents-mac]
+type = "agents"
+host = ["ssh", "-o", "BatchMode=yes", "-o", "ConnectTimeout=10", "mac"]
+every = "2m"
+channel = "discord:AGENTS_CHANNEL_ID"
+
+[connectors.agents-pc]
+type = "agents"
+host = ["ssh", "-o", "BatchMode=yes", "-o", "ConnectTimeout=10", "pc"]
+every = "2m"
+channel = "discord:AGENTS_CHANNEL_ID"
+```
+
+`mac` and `pc` are ssh host aliases from `~/.ssh/config`. For the PC, point the alias at WSL, where Claude Code runs. Each host needs `python3`, and needs `git` if you want the board to show branches.
+
+The heartbeat is optional but recommended. Any uptime checker that alerts when pings stop will do, and shadow mode is meant to run with one for its first week.
+
+## 3. Install the hook on each machine
+
+The hook is a small dependency-free script that Claude Code runs on session events. It appends one line per event to `~/.superagent/sessions/` on that machine:
+- the event and the time;
+- the working directory;
+- the `claude` process id;
+- the pane identifiers (`TMUX_PANE` and the cmux workspace, surface, tab and panel ids);
+- for events that ask something, up to 500 characters of the question.
+
+It never prints anything, never fails a session, and copies no other environment variable.
+
+Ask the owner before each machine. Then, for a remote host:
+
+```bash
+hermes superagent agents --hook-script | ssh mac 'mkdir -p ~/.superagent && cat > ~/.superagent/hook.py'
+hermes superagent agents --hook-settings
+```
+
+Merge the printed `hooks` block into `~/.claude/settings.json` on that machine, next to any hooks already there rather than over them. Show the owner the diff first. On the VPS itself, write the script locally with `hermes superagent agents --hook-script > ~/.superagent/hook.py`.
+
+Sessions started before the hook was installed show up after their next event.
+
+## 4. Check it
+
+```bash
+hermes superagent --home ~/superagent tick
+hermes superagent --home ~/superagent agents
+hermes superagent --home ~/superagent status
+```
+
+The tick prints JSON. `errors` must be empty. `warnings` lists any source that fails, for example a host ssh can't reach. `agents` prints the board, sessions that need someone first.
+
+## 5. Schedule the tick
+
+```ini
+# ~/.config/systemd/user/superagent-tick.service
+[Unit]
+Description=hermes-superagent tick
+
+[Service]
+Type=oneshot
+ExecStart=/full/path/to/hermes superagent --home %h/superagent tick
+TimeoutStartSec=660
+Environment=PATH=/full/path/to/hermes/bin:/usr/local/bin:/usr/bin:/bin
+```
+
+```ini
+# ~/.config/systemd/user/superagent-tick.timer
+[Unit]
+Description=Run the hermes-superagent tick every 2 minutes
+
+[Timer]
+OnBootSec=2min
+OnUnitActiveSec=2min
+
+[Install]
+WantedBy=timers.target
+```
+
+```bash
+systemctl --user daemon-reload
+systemctl --user enable --now superagent-tick.timer
+loginctl enable-linger "$USER"
+```
+
+Run step 4 once through the unit too, with `systemctl --user start superagent-tick.service`, then read `journalctl --user -u superagent-tick`. ssh agents and tool credentials can work from a shell and still fail under the timer's smaller environment.
+
+## Undo
+
+```bash
+systemctl --user disable --now superagent-tick.timer
+hermes plugins disable hermes-superagent
+```
+
+Then remove the hooks block from `~/.claude/settings.json` on each machine. The ledger in `~/superagent` stays until you delete it.

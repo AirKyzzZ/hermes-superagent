@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 import json
 import os
 import subprocess
@@ -10,7 +12,7 @@ TAIL_BYTES = 65536
 EVENTS_KEPT = 40
 
 
-def tail_events(path):
+def tail_events(path: Path) -> list[dict[str, object]]:
     with path.open("rb") as handle:
         handle.seek(0, os.SEEK_END)
         size = handle.tell()
@@ -30,7 +32,7 @@ def tail_events(path):
     return events[-EVENTS_KEPT:]
 
 
-def started_at(pid):
+def started_at(pid: int) -> str:
     try:
         return subprocess.run(
             ["ps", "-o", "lstart=", "-p", str(pid)], capture_output=True, text=True, timeout=2
@@ -39,11 +41,11 @@ def started_at(pid):
         return ""
 
 
-def alive(events):
+def alive(events: list[dict[str, object]]) -> bool | None:
     recorded = [event for event in events if event.get("pid")]
     if not recorded:
         return None
-    pid, expected = int(recorded[-1]["pid"]), recorded[-1].get("pid_start", "")
+    pid, expected = int(str(recorded[-1]["pid"])), str(recorded[-1].get("pid_start", ""))
     try:
         os.kill(pid, 0)
     except ProcessLookupError:
@@ -54,7 +56,7 @@ def alive(events):
     return not expected or not actual or " ".join(expected.split()) == " ".join(actual.split())
 
 
-def branch(cwd):
+def branch(cwd: str) -> str:
     if not cwd or not os.path.isdir(cwd):
         return ""
     try:
@@ -65,7 +67,7 @@ def branch(cwd):
         return ""
 
 
-def main():
+def main() -> None:
     now = time.time()
     sessions = []
     if SESSIONS.is_dir():
@@ -75,7 +77,7 @@ def main():
             events = tail_events(path)
             if not events:
                 continue
-            cwd = next((event.get("cwd") for event in reversed(events) if event.get("cwd")), "")
+            cwd = str(next((event.get("cwd") for event in reversed(events) if event.get("cwd")), ""))
             sessions.append({"session": path.stem, "events": events, "alive": alive(events), "branch": branch(cwd)})
     print(json.dumps({"now": now, "sessions": sessions}))
 
