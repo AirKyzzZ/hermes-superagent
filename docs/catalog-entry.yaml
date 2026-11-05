@@ -11,7 +11,7 @@ category: automation
 docs_url: https://github.com/AirKyzzZ/hermes-superagent#readme
 image: https://raw.githubusercontent.com/AirKyzzZ/hermes-superagent/0000000000000000000000000000000000000000/assets/cover.png
 capabilities:
-  provides_tools: [superagent_dispatch, superagent_forward, superagent_status, superagent_report, superagent_tick]
+  provides_tools: [superagent_dispatch, superagent_forward, superagent_cancel, superagent_status, superagent_report, superagent_tick]
   provides_hooks: [pre_tool_call, post_tool_call, pre_gateway_dispatch, pre_llm_call]
   provides_middleware: []
   requires_env: []

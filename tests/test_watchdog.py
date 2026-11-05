@@ -8,7 +8,7 @@ from superagent.store import StaleAssignmentError
 from superagent.watchdog import Judgement, WatchdogPolicy, check_once
 from superagent.worker import WorkerStopError
 
-from .conftest import FakeBackend
+from .conftest import FakeBackend, unlabelled
 
 REQUEST = Trigger("t1", "chat", "th1", "alice", "fix the login bug", "chat:th1", True, False)
 
@@ -46,7 +46,7 @@ def test_repeating_worker_is_nudged_then_restarted_then_escalated(router: Router
     assert third.action is RepairAction.ESCALATE
     assert router.store.get_ticket(ticket_id).status is TicketStatus.ENDED
     assert router.store.running_assignments() == []
-    assert [text for _, _, text in router.relay()] == ["Needs you: last 3 reports are identical"]
+    assert [unlabelled(text) for _, _, text in router.relay()] == ["Needs you: last 3 reports are identical"]
 
 
 def test_restart_fences_out_the_old_worker(router: Router, backend: FakeBackend) -> None:
@@ -306,7 +306,7 @@ def test_a_worker_that_exits_without_reporting_is_parked_for_a_person(router: Ro
     ticket = router.store.get_ticket(result.ticket_id)
     assert ticket.status is TicketStatus.WAITING
     [message] = [text for _, _, text in router.relay()]
-    assert message.startswith("Blocked: The worker exited without a final report.")
+    assert unlabelled(message).startswith("Blocked: The worker exited without a final report.")
     assert "opened a pull request" in message
     assert check_once(router) == []
 

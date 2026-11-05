@@ -10,6 +10,7 @@ requires_hermes: ">=0.22.7"
 provides_tools:
   - superagent_dispatch
   - superagent_forward
+  - superagent_cancel
   - superagent_status
   - superagent_report
   - superagent_tick

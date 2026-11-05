@@ -9,6 +9,7 @@ TOOL_STATUS = "superagent_status"
 TOOL_REPORT = "superagent_report"
 TOOL_TICK = "superagent_tick"
 TOOL_FORWARD = "superagent_forward"
+TOOL_CANCEL = "superagent_cancel"
 
 TOOL_BRIDGE_CALL = "tool_call"
 # Hermes defers plugin tools behind these bridges by default.
@@ -16,6 +17,7 @@ TOOL_SEARCH_BRIDGES = frozenset({"tool_search", "tool_describe", TOOL_BRIDGE_CAL
 ROUTER_ALLOWED_TOOLS = TOOL_SEARCH_BRIDGES | {
     TOOL_DISPATCH,
     TOOL_FORWARD,
+    TOOL_CANCEL,
     TOOL_STATUS,
     "memory",
     "session_search",
@@ -25,7 +27,7 @@ ROUTER_ALLOWED_TOOLS = TOOL_SEARCH_BRIDGES | {
 }
 WATCHDOG_ALLOWED_TOOLS = TOOL_SEARCH_BRIDGES | {TOOL_TICK, TOOL_STATUS, "skills_list", "skill_view"}
 WORKER_BLOCKED_TOOLS = frozenset(
-    {TOOL_DISPATCH, TOOL_FORWARD, TOOL_TICK, TOOL_STATUS, "send_message", "cronjob_manage"}
+    {TOOL_DISPATCH, TOOL_FORWARD, TOOL_CANCEL, TOOL_TICK, TOOL_STATUS, "send_message", "cronjob_manage"}
 )
 WORKER_HOST_TOOLS = frozenset(
     {"terminal", "process_manage", "execute_code", "read_file", "write_file", "patch", "search_files", "computer_use"}

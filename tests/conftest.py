@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import re
 from collections.abc import Callable
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -66,6 +67,10 @@ class FakeBackend:
         self.stopped.append(assignment.id)
         if self.on_stop is not None:
             self.on_stop(assignment.id)
+
+
+def unlabelled(text: str) -> str:
+    return re.sub(r" \[[^\]]*\]:", ":", text, count=1)
 
 
 @pytest.fixture
