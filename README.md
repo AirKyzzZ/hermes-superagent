@@ -86,7 +86,7 @@ flowchart TB
     class controlsClearance invisible
 ```
 
-On the gateway, the router's model only sees messages the gate let through. An addressed event from `superagent ingest` skips that model: code opens the ticket, with the event text as the goal. Workers have no messaging tools, so their reports go to the store and code relays them.
+On the gateway, the router's model only sees messages the gate let through, plus an allowed person's `/` commands that Hermes turns into a turn, such as skills. An addressed event from an allowed sender through `superagent ingest` skips that model: code opens the ticket, with the event text as the goal. In the documented setup workers have no messaging tools, so their reports go to the store and code relays them.
 
 ### One task
 
@@ -151,14 +151,14 @@ stateDiagram-v2
 
 Stuck and drifting lead to the same repairs, within a budget per ticket. Code decides stuck: a dead process, silence, identical reports or the same tool call over and over. A judge with no tools decides drift and can only answer `on_track` or `drifting`, so the most a fooled judge can do is spend the budget and escalate, which ends the ticket. A broken judge never triggers a repair.
 
-A live worker gets a nudge first, and it waits for that worker's next report, so a silent worker gets restarted on the next tick instead. An escalation stops the worker, then relay tells the person on a best-effort basis, and a reply starts new work.
+A live worker gets a nudge first, and it waits for that worker's next report, so a silent worker gets restarted on the next tick instead. An escalation stops the worker if it can, then relay tells the person on a best-effort basis, and a reply starts new work.
 
 ## Features
 
 <table>
 <tr>
 <td width="33%" valign="top"><b>A router that can't execute</b><br>A <code>pre_tool_call</code> allowlist blocks everything else, and Hermes fails closed if the hook errors.</td>
-<td width="33%" valign="top"><b>One worker per task</b><br>Its own OS process and environment allowlist. Messaging tools are blocked, so it reports through <code>superagent_report</code>. A terminal can still reach whatever its sandbox allows.</td>
+<td width="33%" valign="top"><b>One worker per task</b><br>Its own OS process and environment allowlist. <code>send_message</code> and cron are blocked, and the documented toolsets add no other messaging tool, so it reports through <code>superagent_report</code>. A terminal can still reach whatever its sandbox allows.</td>
 <td width="33%" valign="top"><b>A gate blind to content</b><br>Pure code over source, sender and bot lists. The message text can't open it.</td>
 </tr>
 <tr>
@@ -350,7 +350,7 @@ These are three of the closest plugins in the Hermes catalog. Each solves a diff
 
 Use nerve to gate Kanban completion on verified evidence, agora for a team that argues before it builds, and diaktoros for PR review. This one aims at a single agent in front of everything, and it's the least mature of the four. What we didn't find in these three is the combination: a resident router barred from executing in code, a trigger gate that ignores message text, and a tool-less judge checking each worker against its original goal from a separate scheduled process.
 
-<sub>Based on each project's README and catalog entry at its pinned catalog commit, checked 2026-11-05.</sub>
+<sub>Based on each project's README and catalog entry at its pinned catalog commit and, for nerve's SSH path, its code, checked 2026-11-05.</sub>
 
 ## Security model
 
@@ -368,7 +368,7 @@ Event content is attacker-controlled, so who can start or steer work is enforced
 | A report exfiltrating files | Relay is code. `MEDIA:` tags are neutralised and text is capped at 100 words |
 | Watchdog fooled | The judge has no tools and returns one of two values, so the most it can do is spend the repair budget and escalate |
 
-If the gate itself fails, the message is dropped and logged, so a person gets silence rather than a bypass. An allowed person's `/` commands skip the gate and go straight to Hermes unrecorded, even on an `ignore` source. The full threat model, with residual risks and known limits, is in [DESIGN.md](DESIGN.md#threat-model).
+If the gate itself fails, the message is dropped and logged, so a person gets silence rather than a bypass. An allowed person's `/` commands skip the gate and go straight to Hermes unrecorded, even on an `ignore` source. They can reach the model as skills but can't start work, because dispatch needs a recorded trigger. The full threat model, with residual risks and known limits, is in [DESIGN.md](DESIGN.md#threat-model).
 
 ## Roadmap
 
