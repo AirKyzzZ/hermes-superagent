@@ -99,7 +99,7 @@ hermes superagent --home ~/superagent tick
 hermes superagent --home ~/superagent agents
 ```
 
-`doctor` prints one line per check and exits non-zero when one fails. It polls each connector once without recording anything, so a host whose hook never ran, an ssh alias that doesn't connect or a `gh` login that lapsed shows up here with its error. The tick prints JSON. `errors` must be empty. `warnings` lists any source that fails, for example a host ssh can't reach. `agents` prints the board, sessions that need someone first.
+`doctor` prints one line per check and exits non-zero when one fails. It runs each connector's poll once without recording anything, skipped while a tick holds the lock, so a host whose hook never ran, an ssh alias that doesn't connect or a `gh` login that lapsed shows up here with its error. The tick prints JSON. `errors` must be empty. `warnings` lists any source that fails, for example a host ssh can't reach. `agents` prints the board, sessions that need someone first.
 
 ## 5. Schedule the tick
 

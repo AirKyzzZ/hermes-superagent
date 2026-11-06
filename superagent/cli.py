@@ -22,7 +22,7 @@ from .ledger import Item, ItemState, Ledger, LedgerError
 from .reporting import identity_from_workdir, submit_report
 from .router import Assessor
 from .runtime import open_runtime, save_brief, tick
-from .starter import detect, next_steps, starter_config, write_starter
+from .starter import check_choices, detect, next_steps, starter_config, write_starter
 from .watchdog import DriftJudge
 
 _WORKER_STATES = [state.value for state in ReportState]
@@ -38,6 +38,7 @@ def setup_parser(parser: argparse.ArgumentParser) -> None:
     setup.add_argument("--brief", default="", help="channel for the daily brief")
     setup.add_argument("--agents-channel", default="", help="channel for sessions that need someone")
     setup.add_argument("--timezone", default="", help="IANA zone for the brief, this machine's by default")
+    setup.add_argument("--hermes", default="", help="the hermes to send through, the one running setup by default")
     doctor = commands.add_parser("doctor", help="check the config, the tick, delivery and every connector")
     doctor.add_argument("--json", action="store_true")
     doctor.add_argument("--no-poll", action="store_true", help="skip the live poll of each connector")
@@ -266,12 +267,13 @@ def board(ledger: Ledger, connectors: set[str]) -> list[Item]:
 
 def run_setup(args: argparse.Namespace, home: Path) -> int:
     launcher = Path(sys.argv[0])
-    hermes = str(launcher.absolute()) if launcher.name == "hermes" else ""
+    hermes = args.hermes or (str(launcher.absolute()) if launcher.name == "hermes" else "")
     cli = f"{hermes} superagent" if hermes else f"{sys.executable} -m superagent"
     choices = detect(
         hermes, alerts=args.alerts, brief=args.brief, agents_channel=args.agents_channel, timezone=args.timezone
     )
     try:
+        check_choices(home, choices)
         write_starter(home, starter_config(choices))
     except FileExistsError:
         print(f"{home / CONFIG_FILENAME} already exists and was left as it is. Check it with doctor", file=sys.stderr)

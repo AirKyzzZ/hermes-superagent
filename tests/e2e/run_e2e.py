@@ -3,6 +3,7 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import re
 import shutil
 import sqlite3
 import subprocess
@@ -320,6 +321,7 @@ def stage_router(work: Path, log: Path) -> None:
     configure_worker(create_profile(hermes_home, "router"), home, role="router")
     configure_worker(create_profile(hermes_home, "worker"), home)
     configure_worker(create_profile(hermes_home, "watchdog"), home, role="watchdog")
+    scenario_setup(work)
     owner_tools = {"platform_toolsets": {"webhook": ["terminal"]}}
     configure_worker(create_profile(hermes_home, "owner"), home, role=None, tool_search="off", extra=owner_tools)
     interpreter = Path(shutil.which("hermes") or "hermes").resolve().parent / "python"
@@ -510,7 +512,8 @@ def scenario_setup(work: Path) -> None:
     check("setup: never overwrites a config", again.returncode == 1 and "already exists" in again.stderr)
     doctor = hermes("-p", "watchdog", "superagent", "--home", str(fresh), "doctor", "--no-poll")
     print("doctor:", doctor.returncode, doctor.stdout[-800:], doctor.stderr[-300:], flush=True)
-    check("doctor: a fresh setup has no failures", doctor.returncode == 0 and "outbound" in doctor.stdout)
+    sending = re.search(r"^ok +outbound ", doctor.stdout, re.MULTILINE) is not None
+    check("doctor: a fresh setup has no failures", doctor.returncode == 0 and sending, doctor.stdout[-800:])
 
 
 def scenario_host_env() -> None:
@@ -575,7 +578,6 @@ def main() -> int:
         scenario_wander(opened)
         scenario_stop(opened, log)
         scenario_host_env()
-        scenario_setup(work)
         scenario_environment_untouched(hermes_home)
         stage_router(work, log)
     finally:

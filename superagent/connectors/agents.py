@@ -14,7 +14,7 @@ from . import ConnectorConfigError, ConnectorError, ConnectorSpec, Poll, duratio
 
 KEYS = frozenset({"host", "python", "stall_after", "timeout"})
 GONE_CLOSES_AFTER_SECONDS = 3600.0
-NOT_HOOKED = "no Claude Code hook has written on this host yet, install it with superagent agents --hook-script"
+NOT_HOOKED = "no Claude Code hook has written to {where} on this host, install it with superagent agents --hook-script"
 _BASE_ENV = ("PATH", "HOME", "LANG", "LC_ALL", "TMPDIR", "USER", "SSH_AUTH_SOCK")
 
 
@@ -62,7 +62,8 @@ class AgentsConnector:
                 )
             )
         if report.get("hooked") is not True:
-            return Poll(tuple(items), complete=False, problems=(NOT_HOOKED,))
+            where = str(report.get("sessions_dir") or "the sessions folder")
+            return Poll(tuple(items), complete=False, problems=(NOT_HOOKED.format(where=where),))
         return Poll(tuple(items), complete=True)
 
     def confirm(self, external_id: str) -> Upstream:

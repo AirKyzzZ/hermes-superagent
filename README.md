@@ -15,7 +15,7 @@ A <a href="https://github.com/NousResearch/hermes-agent">Hermes Agent</a> plugin
 <a href="LICENSE"><img alt="MIT licence" src="https://img.shields.io/github/license/AirKyzzZ/hermes-superagent?style=flat-square&label=license&labelColor=14142a&color=1a10b8"></a>
 <a href="pyproject.toml"><img alt="Python 3.11 or newer" src="https://img.shields.io/badge/python-3.11%2B-1a10b8?style=flat-square&labelColor=14142a"></a>
 <a href="plugin.yaml"><img alt="Hermes plugin, requires 0.22.7 or newer" src="https://img.shields.io/badge/Hermes_plugin-%3E%3D0.22.7-1a10b8?style=flat-square&labelColor=14142a"></a>
-<a href="tests"><img alt="440 tests" src="https://img.shields.io/badge/tests-440-1a10b8?style=flat-square&labelColor=14142a"></a>
+<a href="tests"><img alt="448 tests" src="https://img.shields.io/badge/tests-448-1a10b8?style=flat-square&labelColor=14142a"></a>
 <a href="docs/hackathon.md"><img alt="Built for the Hermes Agent Plugin Hackathon" src="https://img.shields.io/badge/built_for-Hermes_Plugin_Hackathon-1a10b8?style=flat-square&labelColor=14142a"></a>
 </p>
 
@@ -246,11 +246,11 @@ One profile is enough, with no role, so the plugin stays inert in chat:
 
 ```bash
 hermes plugins install AirKyzzZ/hermes-superagent --enable
-hermes superagent setup --alerts discord:ALERTS_CHANNEL_ID
-hermes superagent doctor
+hermes superagent --home ~/superagent setup --alerts discord:ALERTS_CHANNEL_ID
+hermes superagent --home ~/superagent doctor
 ```
 
-`setup` writes a starter `superagent.toml` from what the machine has: a GitHub sweep when `gh` is installed and the agents board when Claude Code is, sending through the same `hermes`. It never overwrites a config. `doctor` checks the config, delivery, the timer and alerts, polls each connector once without recording anything, and exits non-zero when something fails. Then run `hermes superagent tick` every 2 minutes. [The shadow install guide](docs/dogfood-install.md) has a systemd timer, other machines and the Claude Code hook.
+`setup` writes a starter `superagent.toml` from what the machine has: a GitHub sweep when `gh` is installed and the agents board when Claude Code is, sending through the same `hermes`. It never overwrites a config. `doctor` checks the config, delivery, the timer and alerts, runs each connector's poll once without recording anything, and exits non-zero when something fails. Then run `hermes superagent --home ~/superagent tick` every 2 minutes. [The shadow install guide](docs/dogfood-install.md) has a systemd timer, other machines and the Claude Code hook.
 
 ### Run it with Hermes
 

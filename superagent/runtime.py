@@ -27,7 +27,8 @@ from .worker import SubprocessBackend
 logger = logging.getLogger(__name__)
 
 _SEND_TIMEOUT_SECONDS = 60
-_TICK_LOCK_FILENAME = "tick.lock"
+TICK_LOCK_FILENAME = "tick.lock"
+LOCK_RECORD_BYTES = 300
 IGNORED_TRIGGER_RETENTION_SECONDS = 7 * 24 * 3600.0
 POLL_BUDGET_SHARE = 0.5
 SOURCE_TICKET = "sources"
@@ -76,7 +77,7 @@ def argv_sender(argv: tuple[str, ...]) -> Sender | None:
 
 
 def tick(runtime: Runtime, judge: DriftJudge | None = None, assessor: Assessor | None = None) -> TickResult:
-    lock_fd = os.open(runtime.home / _TICK_LOCK_FILENAME, os.O_CREAT | os.O_RDWR, 0o600)
+    lock_fd = os.open(runtime.home / TICK_LOCK_FILENAME, os.O_CREAT | os.O_RDWR, 0o600)
     try:
         try:
             fcntl.flock(lock_fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
@@ -100,7 +101,7 @@ def tick(runtime: Runtime, judge: DriftJudge | None = None, assessor: Assessor |
 
 def last_tick(home: Path) -> dict[str, object]:
     try:
-        record = json.loads((home / _TICK_LOCK_FILENAME).read_bytes() or b"{}")
+        record = json.loads((home / TICK_LOCK_FILENAME).read_bytes().strip() or b"{}")
     except (OSError, ValueError):
         return {}
     return record if isinstance(record, dict) else {}
@@ -108,15 +109,15 @@ def last_tick(home: Path) -> dict[str, object]:
 
 def _lock_record(lock_fd: int) -> dict[str, object]:
     try:
-        record = json.loads(os.pread(lock_fd, 300, 0) or b"{}")
+        record = json.loads(os.pread(lock_fd, LOCK_RECORD_BYTES, 0).strip() or b"{}")
     except (OSError, ValueError):
         return {}
     return record if isinstance(record, dict) else {}
 
 
 def _write_lock_record(lock_fd: int, record: dict[str, object]) -> None:
-    os.ftruncate(lock_fd, 0)
-    os.pwrite(lock_fd, json.dumps(record).encode(), 0)
+    os.pwrite(lock_fd, json.dumps(record).encode().ljust(LOCK_RECORD_BYTES), 0)
+    os.ftruncate(lock_fd, LOCK_RECORD_BYTES)
 
 
 def _age_minutes(record: dict[str, object]) -> float | None:
