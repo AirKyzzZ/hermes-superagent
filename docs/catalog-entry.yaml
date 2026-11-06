@@ -3,7 +3,7 @@ repo: https://github.com/AirKyzzZ/hermes-superagent
 sha: "0000000000000000000000000000000000000000"
 requires_hermes: ">=0.22.7"
 version: "0.1.0"
-description: "A resident router that dispatches and never executes, isolated workers that report only to it, team-written trigger rules, and an external watchdog that checks real progress and goal drift. Disclosure: spawns long-running worker processes from the argv you configure, runs the outbound send command and the connector commands you configure, which read sources into its ledger, stops or restarts its own workers, and spends tokens on the watchdog profile's model during ticks. Writes its database and worker directories under the configured home. Its hooks stay inert until a profile sets a role."
+description: "A resident router that dispatches and never executes, isolated workers that report only to it, team-written trigger rules, and an external watchdog that checks real progress and goal drift, plus an item ledger that keeps every task, issue and Claude Code session your sources show until it's confirmed closed. Disclosure: spawns long-running worker processes from the argv you configure, runs the outbound send command and the connector commands you configure, which read sources into its ledger, including a read-only session probe sent through the host command you configure, stops or restarts its own workers, and spends tokens on the watchdog profile's model during ticks. Writes its database and worker directories under the configured home. Its hooks stay inert until a profile sets a role."
 platforms: [linux, macos]
 maintainer: AirKyzzZ
 tier: community
