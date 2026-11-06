@@ -15,7 +15,7 @@ A <a href="https://github.com/NousResearch/hermes-agent">Hermes Agent</a> plugin
 <a href="LICENSE"><img alt="MIT licence" src="https://img.shields.io/github/license/AirKyzzZ/hermes-superagent?style=flat-square&label=license&labelColor=14142a&color=1a10b8"></a>
 <a href="pyproject.toml"><img alt="Python 3.11 or newer" src="https://img.shields.io/badge/python-3.11%2B-1a10b8?style=flat-square&labelColor=14142a"></a>
 <a href="plugin.yaml"><img alt="Hermes plugin, requires 0.22.7 or newer" src="https://img.shields.io/badge/Hermes_plugin-%3E%3D0.22.7-1a10b8?style=flat-square&labelColor=14142a"></a>
-<a href="tests"><img alt="448 tests" src="https://img.shields.io/badge/tests-448-1a10b8?style=flat-square&labelColor=14142a"></a>
+<a href="tests"><img alt="462 tests" src="https://img.shields.io/badge/tests-462-1a10b8?style=flat-square&labelColor=14142a"></a>
 <a href="docs/hackathon.md"><img alt="Built for the Hermes Agent Plugin Hackathon" src="https://img.shields.io/badge/built_for-Hermes_Plugin_Hackathon-1a10b8?style=flat-square&labelColor=14142a"></a>
 </p>
 
@@ -372,6 +372,8 @@ The rendered prompt becomes the goal, the comment's author is checked against `a
 | `[heartbeat] argv` | none | Runs after every tick with no errors, such as a ping to an external uptime check, so a dead timer gets noticed from outside |
 | `[channels] brief`, `[brief] hour`, `timezone` | none, `8`, `UTC` | The daily brief goes to `brief` once a day, from `hour` until the next day's `hour`, so a box that was down catches up. It lists source problems, what waits on you, what vanished from a source, what reopened, what's new since the last brief, what got ignored and why, and the day's readings. Every other open item shows at least once every `stale_after`, unless it's snoozed or its worker is running. "Since the last brief" only moves once every part of that brief has been delivered. `superagent brief` prints it now, and `--send` sends it |
 | `[brief] stale_after` | `3d` | How long a triaged item can go unchanged before the brief lists it again |
+| `[[triage]] match`, `area`, `ignore`, `name` | none | Rules for new items, the first match wins. `match` maps item fields (`connector`, `title`, `url`, `id`, `due`, `excerpt`) or meta keys such as `repo`, `labels` or `from` to a glob or a list of globs, ignoring case, and a comma-separated value such as labels matches on any part. `area` files the item there as triaged, and `ignore` sets it aside with that reason, which the next brief lists. An item no rule matches stays new and shows in every brief until someone decides. Rules also file new items already in the ledger, and never touch one someone moved |
+| `[areas.<name>] channel` | none | Where "New in <area>" goes when a rule files an item there. Once any area is listed, rules can only name listed areas |
 | `[connectors.<name>] type` | required | `command`, `github` or `agents`. A connector polls one tool into the item ledger |
 | `[connectors.<name>] every` | `5m` | How often it polls |
 | `[connectors.<name>] track` | `true` | `false` keeps its items, such as readings or events, without anyone owning them |

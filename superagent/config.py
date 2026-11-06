@@ -3,12 +3,14 @@ from __future__ import annotations
 import math
 import os
 import tomllib
-from dataclasses import dataclass, fields, replace
+from collections.abc import Mapping
+from dataclasses import dataclass, field, fields, replace
 from pathlib import Path
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from .connectors import ConnectorConfigError, ConnectorSpec, duration, parse_specs
 from .gate import Rules, RulesError, parse_rules
+from .triage import TriageError, TriageRule, parse_triage
 from .watchdog import WatchdogPolicy
 
 CONFIG_FILENAME = "superagent.toml"
@@ -28,6 +30,8 @@ _KNOWN_KEYS = {
         "tick",
         "connectors",
         "brief",
+        "triage",
+        "areas",
     },
     "sources": {"policy", "allow", "bots", "pass_strangers", "notify", "via_router"},
     "semantic": {"name", "text", "mode"},
@@ -59,6 +63,8 @@ class Config:
     brief_hour: int = 8
     brief_timezone: str = "UTC"
     stale_after_seconds: float = 3 * 86400.0
+    triage: tuple[TriageRule, ...] = ()
+    area_channels: Mapping[str, str] = field(default_factory=dict)
 
 
 class ConfigError(ValueError):
@@ -83,7 +89,7 @@ def parse_config(raw: str) -> Config:
     send_argv = tuple(data.get("outbound", {}).get("argv", ()))
     defaults = WatchdogPolicy()
     section = data.get("watchdog", {})
-    known = {field.name for field in fields(WatchdogPolicy)}
+    known = {entry.name for entry in fields(WatchdogPolicy)}
     if unknown := set(section) - known:
         raise ConfigError(f"unknown [watchdog] keys: {sorted(unknown)}")
     try:
@@ -118,6 +124,10 @@ def parse_config(raw: str) -> Config:
         connectors = parse_specs(data.get("connectors", {}))
     except ConnectorConfigError as error:
         raise ConfigError(str(error)) from error
+    try:
+        triage, area_channels = parse_triage(data.get("triage", []), data.get("areas", {}))
+    except TriageError as error:
+        raise ConfigError(str(error)) from error
     heartbeat = _table(data, "heartbeat").get("argv", [])
     if not isinstance(heartbeat, list) or not all(isinstance(part, str) for part in heartbeat):
         raise ConfigError("[heartbeat] argv must be a list of strings")
@@ -137,6 +147,8 @@ def parse_config(raw: str) -> Config:
         brief_hour=hour,
         brief_timezone=str(timezone),
         stale_after_seconds=stale_after,
+        triage=triage,
+        area_channels=area_channels,
     )
 
 

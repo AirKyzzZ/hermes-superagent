@@ -121,4 +121,5 @@ def _flat(text: str) -> str:
 
 def _line(item: Item, note: str) -> str:
     suffix = f" [{_flat(note)}]" if note else ""
-    return f"{item.handle} {item.connector}: {_flat(redact(item.title))[:TITLE_LIMIT]}{suffix}"
+    where = f"{item.connector} ({item.area})" if item.area else item.connector
+    return f"{item.handle} {where}: {_flat(redact(item.title))[:TITLE_LIMIT]}{suffix}"
