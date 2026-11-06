@@ -237,6 +237,17 @@ python3 demo/run_demo.py
   watchdog stuck -> escalate (last 3 reports are identical)
   router   to chat:general: Needs you [solve the impossible migration · tk-21e69361]: last 3 reports are identical
   tickets  still open: 0
+== 5. A task list breaks and loses things. The ledger keeps every item
+  tasks    8 open tasks in the list
+  ledger   8 items recorded
+  tasks    the export breaks and returns 2 of 8
+  alert    connector tasks: its snapshot shrank from 8 to 2 items, so nothing was marked gone. If that's right, run `superagent ledger accept tasks`
+  ledger   still 8 open, nothing marked gone
+  tasks    fixed. One task was completed, one was deleted by mistake
+  ledger   Pay the accountant: closed, its source confirmed it
+  ledger   Fix the backup job: gone without a close, kept open
+  brief    Gone from their source without a close: (1)
+           it-o3rq tasks: Fix the backup job
 ```
 
 </details>
