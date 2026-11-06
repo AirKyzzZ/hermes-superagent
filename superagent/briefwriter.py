@@ -397,7 +397,8 @@ class Sources:
         if kind in ("command", "code"):
             if lowered in self.strong:
                 return True
-            return lowered in self.weak and lowered not in self.untrusted
+            head = " ".join(lowered.split()[:2])
+            return lowered in self.weak and lowered not in self.untrusted and head not in self.untrusted
         if lowered in self.tokens["strong"]:
             return True
         return lowered in self.tokens["weak"] and lowered not in self.tokens["untrusted"]
