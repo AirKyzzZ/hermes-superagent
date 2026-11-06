@@ -385,6 +385,16 @@ def stage_router(work: Path, log: Path) -> None:
         check("watchdog: the tick runs from the CLI", tick.returncode == 0)
         listed = hermes("-p", "watchdog", "superagent", "ledger", "list", "--json", "--connector", "tasks")
         titles = sorted(item["title"] for item in json.loads(listed.stdout or "[]")) if listed.returncode == 0 else []
+        handles = {item["title"]: item["handle"] for item in json.loads(listed.stdout or "[]")} if titles else {}
+        written = hermes("-p", "watchdog", "superagent", "briefs", handles.get("Renew the domain", "it-none"))
+        print("brief:", written.returncode, written.stdout[-800:], written.stderr[-300:], flush=True)
+        check(
+            "briefs: the CLI writes a linted brief through Hermes's model",
+            written.returncode == 0
+            and "Acceptance criteria\n- The renewal shows on the account [p2]" in written.stdout
+            and "Not ready" not in written.stdout,
+            written.stdout[-500:] + written.stderr[-300:],
+        )
         second = hermes("-p", "watchdog", "superagent", "tick")
         print("second tick:", second.returncode, second.stdout[-300:], flush=True)
         sent_now = sent.read_text(encoding="utf-8") if sent.exists() else ""

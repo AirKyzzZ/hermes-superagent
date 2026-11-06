@@ -7,7 +7,7 @@ from collections.abc import Mapping
 from dataclasses import dataclass
 
 from ..ledger import SourceItem, Upstream
-from . import ConnectorConfigError, ConnectorError, ConnectorSpec, Poll
+from . import ConnectorConfigError, ConnectorError, ConnectorSpec, ContextPiece, Poll
 from .process import run_text
 
 KEYS = frozenset({"queries", "gh", "timeout", "env"})
@@ -19,6 +19,7 @@ DEFAULT_QUERIES = {
 PAGE_SIZE = 100
 SEARCH_CAP = 1000
 CALL_TIMEOUT_SECONDS = 30.0
+CONTEXT_COMMENTS = 20
 _ID = re.compile(r"(?P<repo>[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+)#(?P<number>\d+)")
 _REPO_FROM_URL = re.compile(r"/repos/([^/]+/[^/]+)$")
 _HEADER_END = re.compile(r"\r?\n\r?\n")
@@ -75,6 +76,36 @@ class GithubConnector:
         if state not in ("open", "closed"):
             raise ConnectorError(f"GitHub returned no state for {external_id}")
         return Upstream.CLOSED if state == "closed" else Upstream.OPEN
+
+    def context(self, external_id: str) -> list[ContextPiece]:
+        match = _ID.fullmatch(external_id)
+        if match is None:
+            raise ConnectorError(f"not a GitHub issue id: {external_id[:80]!r}")
+        deadline = time.monotonic() + self.timeout
+        path = f"repos/{match['repo']}/issues/{match['number']}"
+        issue = self._api(path, deadline)
+        user = self._api("user", deadline)
+        if not isinstance(issue, Mapping) or not isinstance(user, Mapping):
+            raise ConnectorError("GitHub returned an unexpected shape")
+        owner = str(user.get("login", "")).lower()
+        count = issue.get("comments")
+        last_page = max(1, -(-count // PAGE_SIZE)) if isinstance(count, int) else 1
+        comments = self._api(
+            f"{path}/comments", deadline, "-X", "GET", "-f", f"per_page={PAGE_SIZE}", "-f", f"page={last_page}"
+        )
+        if not isinstance(comments, list):
+            raise ConnectorError("GitHub returned comments in an unexpected shape")
+        kind = "pull request" if issue.get("pull_request") else "issue"
+        pieces = [_piece(f"the {kind} text", issue, owner)]
+        shown = [comment for comment in comments if isinstance(comment, Mapping)][-CONTEXT_COMMENTS:]
+        if isinstance(count, int) and count > len(shown):
+            pieces.append(
+                ContextPiece("comments left out", True, f"{count - len(shown)} earlier comments are not included")
+            )
+        pieces += [
+            _piece(f"a comment from {str(comment.get('created_at', ''))[:10]}", comment, owner) for comment in shown
+        ]
+        return pieces
 
     def _search(self, query: str, deadline: float) -> list[Mapping[str, object]]:
         entries: dict[str, Mapping[str, object]] = {}
@@ -160,6 +191,13 @@ def _item(entry: Mapping[str, object]) -> SourceItem:
         updated=str(entry.get("updated_at", "")),
         meta=meta,
     )
+
+
+def _piece(label: str, entry: Mapping[str, object], owner: str) -> ContextPiece:
+    user = entry.get("user")
+    author = str(user.get("login", "")) if isinstance(user, Mapping) else ""
+    trusted = bool(owner) and author.lower() == owner
+    return ContextPiece(f"{label} by {author or 'someone'}", trusted, str(entry.get("body") or ""))
 
 
 def build(spec: ConnectorSpec) -> GithubConnector:
