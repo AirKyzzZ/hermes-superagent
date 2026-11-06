@@ -14,13 +14,15 @@ from pathlib import Path
 
 from .agents import ATTENTION_STATES, HOOK_SCRIPT, SessionState, settings_block
 from .brief import BriefSettings, build_brief
-from .config import DB_FILENAME
+from .config import CONFIG_FILENAME, DB_FILENAME
 from .digest import build_digest, send_digest
+from .doctor import Status, diagnose
 from .domain import ReportState, Trigger
 from .ledger import Item, ItemState, Ledger, LedgerError
 from .reporting import identity_from_workdir, submit_report
 from .router import Assessor
 from .runtime import open_runtime, save_brief, tick
+from .starter import check_choices, detect, next_steps, starter_config, write_starter
 from .watchdog import DriftJudge
 
 _WORKER_STATES = [state.value for state in ReportState]
@@ -31,6 +33,15 @@ def setup_parser(parser: argparse.ArgumentParser) -> None:
     commands = parser.add_subparsers(dest="superagent_command", required=True)
     commands.add_parser("tick", help="assess candidates, check every worker, relay messages to people")
     commands.add_parser("status", help="list open tickets")
+    setup = commands.add_parser("setup", help="write a starter superagent.toml from what this machine has")
+    setup.add_argument("--alerts", default="", help="channel for alerts, such as discord:123")
+    setup.add_argument("--brief", default="", help="channel for the daily brief")
+    setup.add_argument("--agents-channel", default="", help="channel for sessions that need someone")
+    setup.add_argument("--timezone", default="", help="IANA zone for the brief, this machine's by default")
+    setup.add_argument("--hermes", default="", help="the hermes to send through, the one running setup by default")
+    doctor = commands.add_parser("doctor", help="check the config, the tick, delivery and every connector")
+    doctor.add_argument("--json", action="store_true")
+    doctor.add_argument("--no-poll", action="store_true", help="skip the live poll of each connector")
     ingest = commands.add_parser("ingest", help="feed one environment event through the gate")
     ingest.add_argument("--source", required=True)
     ingest.add_argument("--thread", required=True)
@@ -106,6 +117,16 @@ def run(
         else:
             print(json.dumps(settings_block(), indent=2))
         return 0
+    if args.superagent_command == "setup":
+        return run_setup(args, home)
+    if args.superagent_command == "doctor":
+        checks = diagnose(home, poll=not args.no_poll)
+        if args.json:
+            print(json.dumps([asdict(check) for check in checks], indent=1))
+        else:
+            for check in checks:
+                print(f"{check.status.value:<5} {check.name:<14} {check.detail}")
+        return 1 if any(check.status is Status.FAIL for check in checks) else 0
     if args.superagent_command == "ledger":
         return run_ledger(args, Ledger(home / DB_FILENAME))
     runtime = open_runtime(home)
@@ -242,6 +263,26 @@ def board(ledger: Ledger, connectors: set[str]) -> list[Item]:
         sessions,
         key=lambda item: (item.meta.get("state") not in attention, order.get(item.meta.get("state", ""), 99)),
     )
+
+
+def run_setup(args: argparse.Namespace, home: Path) -> int:
+    launcher = Path(sys.argv[0])
+    hermes = args.hermes or (str(launcher.absolute()) if launcher.name == "hermes" else "")
+    cli = f"{hermes} superagent" if hermes else f"{sys.executable} -m superagent"
+    choices = detect(
+        hermes, alerts=args.alerts, brief=args.brief, agents_channel=args.agents_channel, timezone=args.timezone
+    )
+    try:
+        check_choices(home, choices)
+        write_starter(home, starter_config(choices))
+    except FileExistsError:
+        print(f"{home / CONFIG_FILENAME} already exists and was left as it is. Check it with doctor", file=sys.stderr)
+        return 1
+    except ValueError as error:
+        print(str(error), file=sys.stderr)
+        return 2
+    print(next_steps(home, choices, cli))
+    return 0
 
 
 def run_ledger(args: argparse.Namespace, ledger: Ledger) -> int:

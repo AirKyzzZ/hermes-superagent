@@ -114,7 +114,8 @@ def main() -> None:
     table = processes()
     branches: dict[str, str] = {}
     sessions = []
-    if SESSIONS.is_dir():
+    hooked = SESSIONS.is_dir()
+    if hooked:
         for path in sorted(SESSIONS.glob("*.jsonl"), key=lambda path: -path.stat().st_mtime):
             if now - path.stat().st_mtime > MAX_AGE_SECONDS:
                 continue
@@ -134,7 +135,7 @@ def main() -> None:
                     "branch": branch(cwd, branches, deadline),
                 }
             )
-    print(json.dumps({"now": now, "sessions": sessions}))
+    print(json.dumps({"now": now, "sessions": sessions, "hooked": hooked, "sessions_dir": str(SESSIONS)}))
 
 
 if __name__ == "__main__":
