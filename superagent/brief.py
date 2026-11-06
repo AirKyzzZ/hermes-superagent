@@ -11,7 +11,7 @@ from .ledger import Item, ItemState, Ledger
 from .polling import source_health
 from .router import chat_safe
 
-UNTRACKED_REASON = "informational source"
+UNTRACKED_ACTOR = "rule:untracked"
 REOPENED_NOTE = "reopened at the source"
 TITLE_LIMIT = 120
 _ATTENTION = {state.value for state in ATTENTION_STATES}
@@ -89,7 +89,7 @@ def build_brief(
     ignored = [
         (item, event)
         for item, event in ledger.events_since(since, now, to_state=ItemState.IGNORED)
-        if event.note != UNTRACKED_REASON and item.state is ItemState.IGNORED
+        if event.actor != UNTRACKED_ACTOR and item.state is ItemState.IGNORED
     ]
     sections.append(
         ("Ignored since the last brief", [_line(item, f"because {_flat(event.note)}") for item, event in ignored])
@@ -121,4 +121,5 @@ def _flat(text: str) -> str:
 
 def _line(item: Item, note: str) -> str:
     suffix = f" [{_flat(note)}]" if note else ""
-    return f"{item.handle} {item.connector}: {_flat(redact(item.title))[:TITLE_LIMIT]}{suffix}"
+    where = f"{item.connector} ({item.area})" if item.area else item.connector
+    return f"{item.handle} {where}: {_flat(redact(item.title))[:TITLE_LIMIT]}{suffix}"
