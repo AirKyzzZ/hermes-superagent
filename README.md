@@ -6,7 +6,8 @@
 
 <p><strong>One voice, a hundred hands.</strong></p>
 
-<p>One agent to talk to, many workers behind it, and a watchdog that notices when one stops making progress.<br>
+<p>One agent to talk to, many workers behind it, a watchdog that notices when one stops making progress,<br>
+and a ledger that keeps every task, issue and session your sources show until it's really closed.<br>
 A <a href="https://github.com/NousResearch/hermes-agent">Hermes Agent</a> plugin based on DeepSeek's <a href="https://mp.weixin.qq.com/s/zoS7GlReWPhfCjENGxXCdg">Super-agent design</a>.</p>
 
 <p>
@@ -14,7 +15,7 @@ A <a href="https://github.com/NousResearch/hermes-agent">Hermes Agent</a> plugin
 <a href="LICENSE"><img alt="MIT licence" src="https://img.shields.io/github/license/AirKyzzZ/hermes-superagent?style=flat-square&label=license&labelColor=14142a&color=1a10b8"></a>
 <a href="pyproject.toml"><img alt="Python 3.11 or newer" src="https://img.shields.io/badge/python-3.11%2B-1a10b8?style=flat-square&labelColor=14142a"></a>
 <a href="plugin.yaml"><img alt="Hermes plugin, requires 0.22.7 or newer" src="https://img.shields.io/badge/Hermes_plugin-%3E%3D0.22.7-1a10b8?style=flat-square&labelColor=14142a"></a>
-<a href="tests"><img alt="413 tests" src="https://img.shields.io/badge/tests-413-1a10b8?style=flat-square&labelColor=14142a"></a>
+<a href="tests"><img alt="429 tests" src="https://img.shields.io/badge/tests-429-1a10b8?style=flat-square&labelColor=14142a"></a>
 <a href="docs/hackathon.md"><img alt="Built for the Hermes Agent Plugin Hackathon" src="https://img.shields.io/badge/built_for-Hermes_Plugin_Hackathon-1a10b8?style=flat-square&labelColor=14142a"></a>
 </p>
 
@@ -40,8 +41,9 @@ DeepSeek's article puts the limit at three to five active sessions: past that, a
 - **Efficient:** each task gets its own worker, so a new request never waits for an old one.
 - **Proactive:** events pass a gate on who sent them, then rules your team writes in plain language. A daily digest shows what each rule in record mode would have started, so you switch it to `act` only once it's right.
 - **Persistent:** state lives in SQLite, and a scheduled process outside the workers checks that the work is really moving.
+- **Nothing dropped:** connectors read GitHub, any tool that prints JSON, and every Claude Code session on your machines into a ledger. An item stays open until its source confirms it closed or you close it with a reason, and a daily brief shows each open one at least every few days.
 
-A prompt or skill can only ask a model to stay in its lane. Here the gate, the tool allowlist, fencing and the watchdog process are code the model can't talk its way past, which is why this has to be a plugin.
+A prompt or skill can only ask a model to stay in its lane, or to remember a task. Here the gate, the tool allowlist, fencing, the watchdog process and the ledger's completeness checks are code the model can't talk its way past or forget, which is why this has to be a plugin.
 
 > [!WARNING]
 > Early build, never run with a live model. CI runs the whole path on real Hermes v0.22.7 with a fake model: a gateway message passes the gate, the router dispatches, workers overlap, report, get guarded, fenced and stopped for real, and the watchdog relays the result.
@@ -155,6 +157,29 @@ Stuck and drifting lead to the same repairs, within a budget per ticket. Code de
 
 A live worker gets a nudge first, and it waits for that worker's next report, so a silent worker gets restarted on the next tick instead. An escalation stops the worker if it can, then relay tells the person on a best-effort basis, and a reply starts new work.
 
+### Ledger
+
+```mermaid
+flowchart TB
+    sources(["GitHub, any tool that prints JSON,<br/>Claude Code sessions over ssh"])
+    check{"Whole and plausible?<br/>no cut list, no shifting total,<br/>not shrunk by half"}
+    ledger[("Item ledger<br/>new, triaged, assigned, waiting,<br/>done or ignored, always with a reason")]
+    held["Nothing marked gone<br/>a shrunk snapshot waits for accept"]
+    vanished["Gone from its source<br/>checked one by one"]
+    out(["Daily brief, agents board,<br/>alerts"])
+
+    sources -->|"every poll"| check
+    check -->|yes| ledger
+    check -->|no| held
+    held -.->|alert| out
+    ledger -->|"missing from a snapshot"| vanished
+    vanished -->|"confirmed closed"| ledger
+    ledger --> out
+%%{init: {"theme":"base","layout":"dagre","flowchart":{"wrappingWidth":420,"nodeSpacing":36,"rankSpacing":44},"themeVariables":{"primaryColor":"#1a10b8","primaryTextColor":"#ffffff","primaryBorderColor":"#a9a9cc","lineColor":"#8a8ab8","textColor":"#ffffff","clusterBkg":"#14142a","clusterBorder":"#4a4a78","titleColor":"#f4f4fd","edgeLabelBackground":"#14142a"}}}%%
+```
+
+A poll that can't prove it saw everything marks nothing as gone, and the source shows as failing in the brief and on the alerts channel. An item that disappears from a source is asked about by id, and only a closed answer closes it. Anything else stays open under "gone without a close" until someone decides. The brief lists every open item at least once every `stale_after`, and that's tested on the text that was actually delivered.
+
 ## Features
 
 | Routing | Workers | Watchdog and safety |
@@ -162,6 +187,11 @@ A live worker gets a nudge first, and it waits for that worker's next report, so
 | **A router that can't execute**<br> A `pre_tool_call` allowlist blocks everything else, and Hermes fails closed if the hook errors. | **One worker per task**<br> Its own session, directory and environment allowlist. `send_message` and cron are blocked, and the documented toolsets add no other messaging tool, so it reports through `superagent_report`. A terminal can still reach whatever its sandbox allows. | **An outside watchdog**<br> A separate scheduled process. It can nudge, restart or escalate within a budget, and can't edit rules or widen a task. |
 | **A gate blind to content**<br> Pure code over source, sender and bot lists. The message text can't open it. | **Thread pass-through**<br> A follow-up in a task's thread reaches its worker in its next report result, with no router model call. | **Fenced repairs**<br> Each worker has its own token. It's fenced before it's stopped, so a late report from an old worker is refused. |
 | **Rules that start quiet**<br> Team rules begin in `record` mode and only log what they would have done, until you set `act`. | **Parked, not lost**<br> A blocked task waits for an answer, then a new worker resumes with it. | **Inert until you opt in**<br> With no role set, its hooks do nothing and it offers no tools. |
+
+| Sources | Sessions | Every day |
+| --- | --- | --- |
+| **A ledger that keeps everything**<br> Items are never deleted. Closing or ignoring one takes a reason, and every change is kept with the content it saw. | **An agents board**<br> A small hook on each machine and a read-only probe over ssh put every Claude Code session on one board: working, waiting, stuck, rate-limited, gone. | **A daily brief**<br> Source problems, what waits on you, what vanished, what reopened, what's new, and every other open item at least every few days. A box that was down catches up. |
+| **Sources that fail loudly**<br> GitHub through your `gh` login, or any tool that prints JSON. A cut list, a total that shifts mid-scan or a snapshot that shrinks by half is held back, never read as done. | **One line when one needs you**<br> A session waiting for you, stuck, rate-limited or gone for two polls posts one line to its channel. Its text stays out unless you opt in, and it's redacted then. | **Alerts and an outbox that never gives up**<br> Messages retry with backoff and stay in order. Lasting errors and stuck ticks are alerted, and a heartbeat lets an outside check notice a dead timer. |
 
 ## Quickstart
 
@@ -423,6 +453,7 @@ If the gate itself fails, the message is dropped and logged, so a person gets si
 
 - **Runs commands you configure:** one worker process per task from `[worker] argv`, the delivery command from `[outbound] argv`, and each connector's `argv` on its schedule during ticks, with only the environment variables you list. Workers keep running after the turn that started them.
 - **Stops processes:** the watchdog signals its own workers' client process groups, which cancels their turns, and checks each start time first so a reused PID isn't hit.
+- **Reads your sessions:** an `agents` connector runs a read-only probe script through the `host` command you configure, usually `ssh`, which reads the hook's logs and the process list. The hook is printed by `superagent agents --hook-script` and you install it yourself. It appends one redacted line per Claude Code event under `~/.superagent/sessions`, never blocks a session and keeps only an allowlist of pane variables from the environment.
 - **Spends model tokens:** ticks call the watchdog profile's model through `ctx.llm` when there's a new report to judge or a candidate event to assess. Router and workers use their own profiles' models as usual.
 - **Writes files:** `superagent.db` and per-worker directories under `home`, each with a brief and a private identity file, and it reads `superagent.toml` from there.
 - **Leaves approvals to Hermes:** workers start non-interactively from an environment allowlist, so they inherit no YOLO or approval-bypass setting, and Hermes's approval rules still apply to them.
@@ -439,7 +470,10 @@ If the gate itself fails, the message is dropped and logged, so a person gets si
 - [x] The router's chat path, from gateway message to relay, proven the same way
 - [ ] First live run with a model and gateway
 - [x] GitHub and other webhook sources
-- [ ] Item ledger with polling connectors (Todoist, GitHub, GitLab, mail, calendars) and a daily reconciliation, see [the dogfood design](docs/dogfood-design.md)
+- [x] Item ledger with GitHub and command connectors, source health and a daily brief, see [the dogfood design](docs/dogfood-design.md)
+- [x] Agents board for Claude Code sessions on several machines
+- [ ] Todoist, GitLab, mail, calendar and WhatsApp connectors
+- [ ] Relaunching stuck sessions, and briefs written from the ledger's context
 - [ ] Claude Code workers on tmux and cmux over ssh
 - [ ] Demo video
 

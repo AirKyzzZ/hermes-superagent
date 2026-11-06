@@ -67,10 +67,13 @@ The plugin page renders the README through an allowlist that drops raw HTML, so 
 ```markdown
 Adds hermes-superagent, a plugin that brings DeepSeek's Super-agent design to Hermes: one resident router that talks to people and never executes, isolated workers that report only to it, a sender gate plus team-written trigger rules, and an external watchdog that checks real progress and goal drift, then nudges, restarts or escalates.
 
-Hermes surfaces: `ctx.register_tool` (5 tools), the hooks `pre_gateway_dispatch`, `pre_llm_call`, `pre_tool_call` and `post_tool_call`, `ctx.llm`, `ctx.register_cli_command` and `ctx.register_automation_blueprint`. No core patches.
+It also keeps an item ledger fed by connectors (GitHub through `gh`, any tool that prints JSON, and Claude Code sessions on several machines), so nothing a source shows is silently lost: polls that can't prove they're complete mark nothing gone, vanished items are checked one by one, and a daily brief lists every open item at least every few days.
+
+Hermes surfaces: `ctx.register_tool` (7 tools), the hooks `pre_gateway_dispatch`, `pre_llm_call`, `pre_tool_call` and `post_tool_call`, `ctx.llm`, `ctx.register_cli_command` and `ctx.register_automation_blueprint`. No core patches.
 
 Disclosure, also in the README:
-- Spawns long-running worker processes from the argv the operator configures, and runs the outbound send command the operator configures.
+- Spawns long-running worker processes from the argv the operator configures, and runs the outbound send command and the connector commands the operator configures.
+- The `agents` connector sends a read-only probe script through the host command the operator configures, usually `ssh`. The Claude Code hook it reads is printed by the plugin and installed by the operator.
 - Stops or restarts its own workers by process group.
 - Spends tokens on the watchdog profile's model during ticks.
 - Writes its database and worker directories under the configured home.
