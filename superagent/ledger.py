@@ -32,6 +32,11 @@ CREATE TABLE IF NOT EXISTS ledger_schema (version INTEGER NOT NULL);
 CREATE TABLE IF NOT EXISTS briefs (
     day TEXT PRIMARY KEY, built_at REAL NOT NULL, first_seq INTEGER NOT NULL, last_seq INTEGER NOT NULL
 );
+CREATE TABLE IF NOT EXISTS worker_briefs (
+    seq INTEGER PRIMARY KEY AUTOINCREMENT, item_id TEXT NOT NULL, digest TEXT NOT NULL, at REAL NOT NULL,
+    text TEXT NOT NULL, failures TEXT NOT NULL, needs_approval INTEGER NOT NULL
+);
+CREATE INDEX IF NOT EXISTS worker_briefs_by_item ON worker_briefs (item_id, digest);
 CREATE TABLE IF NOT EXISTS announcements (
     item_id TEXT NOT NULL, key TEXT NOT NULL, at REAL NOT NULL, PRIMARY KEY (item_id, key)
 );
@@ -496,6 +501,36 @@ class Ledger:
             )
             connection.executemany("UPDATE items SET last_briefed = ? WHERE id = ?", [(built_at, i) for i in shown])
         return True
+
+    def begin_worker_brief(self, item_id: str, digest: str) -> int:
+        with self._connect() as connection:
+            cursor = connection.execute(
+                "INSERT INTO worker_briefs (item_id, digest, at, text, failures, needs_approval) "
+                "VALUES (?, ?, ?, '', '[]', 0)",
+                (item_id, digest, time.time()),
+            )
+        return int(cursor.lastrowid or 0)
+
+    def finish_worker_brief(self, seq: int, text: str, failures: Sequence[str], needs_approval: bool) -> None:
+        with self._connect() as connection:
+            connection.execute(
+                "UPDATE worker_briefs SET text = ?, failures = ?, needs_approval = ? WHERE seq = ?",
+                (text, json.dumps(list(failures)), int(needs_approval), seq),
+            )
+
+    def cached_worker_brief(self, item_id: str, digest: str) -> str | None:
+        with self._connect() as connection:
+            row = connection.execute(
+                "SELECT text FROM worker_briefs WHERE item_id = ? AND digest = ? AND text != '' "
+                "ORDER BY seq DESC LIMIT 1",
+                (item_id, digest),
+            ).fetchone()
+        return None if row is None else str(row["text"])
+
+    def worker_briefs_since(self, since: float) -> int:
+        with self._connect() as connection:
+            row = connection.execute("SELECT COUNT(*) AS n FROM worker_briefs WHERE at >= ?", (since,)).fetchone()
+        return int(row["n"])
 
     def peek(self, identifier: str) -> Item | None:
         with self._connect() as connection:

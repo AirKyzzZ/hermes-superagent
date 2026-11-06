@@ -15,7 +15,7 @@ A <a href="https://github.com/NousResearch/hermes-agent">Hermes Agent</a> plugin
 <a href="LICENSE"><img alt="MIT licence" src="https://img.shields.io/github/license/AirKyzzZ/hermes-superagent?style=flat-square&label=license&labelColor=14142a&color=1a10b8"></a>
 <a href="pyproject.toml"><img alt="Python 3.11 or newer" src="https://img.shields.io/badge/python-3.11%2B-1a10b8?style=flat-square&labelColor=14142a"></a>
 <a href="plugin.yaml"><img alt="Hermes plugin, requires 0.22.7 or newer" src="https://img.shields.io/badge/Hermes_plugin-%3E%3D0.22.7-1a10b8?style=flat-square&labelColor=14142a"></a>
-<a href="tests"><img alt="448 tests" src="https://img.shields.io/badge/tests-448-1a10b8?style=flat-square&labelColor=14142a"></a>
+<a href="tests"><img alt="510 tests" src="https://img.shields.io/badge/tests-510-1a10b8?style=flat-square&labelColor=14142a"></a>
 <a href="docs/hackathon.md"><img alt="Built for the Hermes Agent Plugin Hackathon" src="https://img.shields.io/badge/built_for-Hermes_Plugin_Hackathon-1a10b8?style=flat-square&labelColor=14142a"></a>
 </p>
 
@@ -192,6 +192,7 @@ A poll that can't prove it saw everything marks nothing as gone, and the source 
 | --- | --- | --- |
 | **A ledger that keeps everything**<br> Items are never deleted. Closing or ignoring one takes a reason, and every change is kept with the content it saw. | **An agents board**<br> A small hook on each machine and a read-only probe over ssh put every Claude Code session on one board: working, waiting, stuck, rate-limited, gone. | **A daily brief**<br> Source problems, what waits on you, what vanished, what reopened, what's new, and every other open item at least every few days. A box that was down catches up. |
 | **Sources that fail loudly**<br> GitHub through your `gh` login, or any tool that prints JSON. A cut list, a total that shifts mid-scan or a snapshot that shrinks by half is held back, never read as done. | **One line when one needs you**<br> A session waiting for you, stuck, rate-limited or gone for two polls posts one line to its channel. Its text stays out unless you opt in, and it's redacted then. | **Alerts and an outbox that never gives up**<br> Messages retry with backoff and stay in order. Lasting errors and stuck ticks are alerted, and a heartbeat lets an outside check notice a dead timer. |
+| **Briefs that cite their sources**<br> `superagent briefs <item>` writes what a worker starts from, and every line names the piece it came from: the issue, the owner's comments, related items, the repo's guide. | **Drafted, challenged, revised**<br> A second model call reads the draft like a skeptical senior engineer, and a third fixes what it found. | **A lint the model can't argue with**<br> A URL or command that only a stranger's comment or mail holds never reaches a brief marked ready, and untrusted text means the owner approves first. |
 
 ## Quickstart
 
@@ -372,6 +373,7 @@ The rendered prompt becomes the goal, the comment's author is checked against `a
 | `[heartbeat] argv` | none | Runs after every tick with no errors, such as a ping to an external uptime check, so a dead timer gets noticed from outside |
 | `[channels] brief`, `[brief] hour`, `timezone` | none, `8`, `UTC` | The daily brief goes to `brief` once a day, from `hour` until the next day's `hour`, so a box that was down catches up. It lists source problems, what waits on you, what vanished from a source, what reopened, what's new since the last brief, what got ignored and why, and the day's readings. Every other open item shows at least once every `stale_after`, unless it's snoozed or its worker is running. "Since the last brief" only moves once every part of that brief has been delivered. `superagent brief` prints it now, and `--send` sends it |
 | `[brief] stale_after` | `3d` | How long a triaged item can go unchanged before the brief lists it again |
+| `[channels] briefs`, `[briefs] notes`, `repos`, `daily_limit` | none, none, none, `20` | `superagent briefs <item>` writes the brief a worker would start from. Code builds a pack of numbered pieces, each marked trusted or not: the item, its issue text and comments (only the owner's own are trusted), related ledger items, its history, `notes`, and where `repos` says the code lives. The model drafts, a second call challenges it as a skeptical senior engineer, and a third revises. Code then checks that every line cites a real piece, quotes match their piece, there's an acceptance criterion, nothing looks like a secret, and every address, host, IP, account, shell command and multi-word code span appears in trusted text, after undoing lookalike characters. The first line says READY, NEEDS APPROVAL when any piece is untrusted, or NOT READY with the lint's findings at the end. A quote in the owner's own comment stays untrusted, and so does anything posted through an app. Briefs are cached until the pack or the writer changes, `daily_limit` caps new ones with failed attempts included, and `--send` posts it to `briefs` |
 | `[connectors.<name>] type` | required | `command`, `github` or `agents`. A connector polls one tool into the item ledger |
 | `[connectors.<name>] every` | `5m` | How often it polls |
 | `[connectors.<name>] track` | `true` | `false` keeps its items, such as readings or events, without anyone owning them |
@@ -381,6 +383,7 @@ The rendered prompt becomes the goal, the comment's author is checked against `a
 | `command`: `complete`, `confirm_argv` | `true`, none | A complete source returns everything open each time, so items it stops returning are marked gone. A snapshot that shrinks by half or more is held back until `superagent ledger accept <name>`. `confirm_argv` with `{id}` checks one vanished item's `status`. An id that starts with a symbol or holds anything outside letters, digits and `._:/#@+=-` is never passed to it |
 | `command`: `env`, `timeout`, `closed` | none, `60`, `closed`, `done`, `completed`, `true`, `merged` | Variables passed through to the command, its timeout (the whole process group is stopped), and the `status` values that mean closed |
 | `command`: `complete = false`, `overlap`, `backfill` | `true`, `10m`, `14d` | A delta source gets `{since}` (UTC, `2026-11-05T22:00:00Z`), `{since_epoch}` or `{since_date}` (`2026/11/05`) in its `argv`. It starts `backfill` ago and each window reaches `overlap` back into the previous one |
+| `[connectors.<name>] trusted` | `false` | Marks a source as the owner's own words, such as a personal task list, so briefs treat its items as trusted. Refused on `github` and `agents`, where trust comes from who wrote each comment |
 | `[connectors.<name>] owned`, `channel`, `notify`, `notify_detail` | `false`, none, none, `false` (agents: `true`, none, `waiting`, `stuck`, `limited`, `gone`, `false`) | Owned items start as the owner's instead of new. When an item's `state` has been one in `notify` for two polls, one line goes to `channel`. It names the item and its state, and adds its redacted text only with `notify_detail` |
 | `agents`: `host`, `stall_after`, `python`, `timeout` | this machine, `20m`, `python3`, `30` | Reads every Claude Code session on a host from the hook's logs, over ssh when `host` is set, and turns each into an item with its state: working, waiting, stuck, limited, background, idle, gone or ended. `superagent agents` prints the board. Setup is in [the shadow install guide](docs/dogfood-install.md) |
 | `github`: `queries`, `gh`, `timeout`, `env` | assigned, review requested and mentioned, `gh`, `120`, none | Searches GitHub through `gh api` with your existing `gh` login. Each query must include `is:open`. Every page is read in creation order, the total must hold across pages and match the distinct items returned, and results that GitHub hides behind SSO fail the query. A failing query still lets the others' items in, but marks nothing gone. `timeout` covers a whole poll. Issues that leave every query are checked one by one, and only a closed one is closed |
@@ -420,7 +423,7 @@ Settings go under `plugins.entries.hermes-superagent.settings` in each profile's
 | `pre_tool_call` | Enforces each role's tool policy |
 | `post_tool_call` | Records worker activity for the watchdog |
 
-`hermes superagent setup` writes a starter config and `doctor` checks a running one. `hermes superagent ledger list`, `show`, `close`, `ignore` and `snooze` work on the item ledger, which keeps every item a source shows until someone closes it with a reason. Connectors fill it, see `[connectors]` above and the [dogfood design](docs/dogfood-design.md).
+`hermes superagent setup` writes a starter config and `doctor` checks a running one. `hermes superagent briefs <item>` writes a worker brief for one ledger item. `hermes superagent ledger list`, `show`, `close`, `ignore` and `snooze` work on the item ledger, which keeps every item a source shows until someone closes it with a reason. Connectors fill it, see `[connectors]` above and the [dogfood design](docs/dogfood-design.md).
 
 </details>
 
@@ -466,7 +469,7 @@ If the gate itself fails, the message is dropped and logged, so a person gets si
 - **Runs commands you configure:** one worker process per task from `[worker] argv`, the delivery command from `[outbound] argv`, and each connector's `argv` on its schedule during ticks, with only the environment variables you list. Workers keep running after the turn that started them.
 - **Stops processes:** the watchdog signals its own workers' client process groups, which cancels their turns, and checks each start time first so a reused PID isn't hit.
 - **Reads your sessions:** an `agents` connector runs a read-only probe script through the `host` command you configure, usually `ssh`, which reads the hook's logs and the process list. The hook is printed by `superagent agents --hook-script` and you install it yourself. It appends one redacted line per Claude Code event under `~/.superagent/sessions`, never blocks a session and keeps only an allowlist of pane variables from the environment.
-- **Spends model tokens:** ticks call the watchdog profile's model through `ctx.llm` when there's a new report to judge or a candidate event to assess. Router and workers use their own profiles' models as usual.
+- **Spends model tokens:** ticks call the watchdog profile's model through `ctx.llm` when there's a new report to judge or a candidate event to assess, and `superagent briefs` makes three calls per new brief, within `daily_limit`. Router and workers use their own profiles' models as usual.
 - **Writes files:** `superagent.db` and per-worker directories under `home`, each with a brief and a private identity file, and it reads `superagent.toml` from there.
 - **Leaves approvals to Hermes:** workers start non-interactively from an environment allowlist, so they inherit no YOLO or approval-bypass setting, and Hermes's approval rules still apply to them.
 - **Doesn't:** make network calls of its own, send telemetry, or hold credentials. The scripts in `assets/art` that fetched the source image are build tools the plugin never runs.
@@ -485,7 +488,8 @@ If the gate itself fails, the message is dropped and logged, so a person gets si
 - [x] Item ledger with GitHub and command connectors, source health and a daily brief, see [the dogfood design](docs/dogfood-design.md)
 - [x] Agents board for Claude Code sessions on several machines
 - [ ] Todoist, GitLab, mail, calendar and WhatsApp connectors
-- [ ] Relaunching stuck sessions, and briefs written from the ledger's context
+- [x] Worker briefs written from the ledger's context, challenged and linted
+- [ ] Relaunching stuck sessions
 - [ ] Claude Code workers on tmux and cmux over ssh
 - [ ] Demo video
 
