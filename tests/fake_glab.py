@@ -13,6 +13,9 @@ fields = dict(urllib.parse.parse_qsl(query))
 page, size = int(fields.pop("page", 1)), int(fields.pop("per_page", 20))
 key = path + ("?" + urllib.parse.urlencode(fields) if fields else "")
 headers = ["HTTP/2.0 200 OK", "Content-Type: application/json"]
+if fixture.get("cwd_log"):
+    with open(fixture["cwd_log"], "a") as log:
+        log.write(os.getcwd() + "\n")
 if key in fixture.get("fail", []):
     sys.stderr.write("HTTP 502\n")
     sys.exit(1)
@@ -25,7 +28,7 @@ elif path.startswith("projects/"):
     if ref not in states:
         sys.stderr.write("HTTP 404\n")
         sys.exit(1)
-    body = {"state": states[ref]}
+    body = states[ref] if isinstance(states[ref], dict) else {"state": states[ref]}
 else:
     entries = fixture.get("lists", {}).get(key, [])
     total = fixture.get("totals", {}).get(key, len(entries))

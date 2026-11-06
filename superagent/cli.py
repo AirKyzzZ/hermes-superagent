@@ -327,7 +327,7 @@ def run_briefs(args: argparse.Namespace, runtime: Runtime, writer: BriefWriter |
 
 
 def repo_key(kind: str, repo: str) -> str:
-    return repo if kind == "github" else f"{kind}:{repo}"
+    return f"gitlab:{repo}" if kind == "gitlab" else repo
 
 
 def run_setup(args: argparse.Namespace, home: Path) -> int:

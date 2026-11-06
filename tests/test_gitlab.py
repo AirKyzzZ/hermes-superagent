@@ -7,7 +7,7 @@ from pathlib import Path
 import pytest
 
 from superagent.cli import repo_key
-from superagent.connectors import ConnectorConfigError, ConnectorSpec, build_connector, parse_specs
+from superagent.connectors import ConnectorConfigError, ConnectorError, ConnectorSpec, build_connector, parse_specs
 from superagent.ledger import ItemState, Ledger, Upstream
 from superagent.polling import poll_sources
 
@@ -66,20 +66,82 @@ def gitlab_spec(tmp_path: Path, **extra: object) -> ConnectorSpec:
 def test_every_page_of_every_list_reaches_the_snapshot(tmp_path: Path, fixture: Path) -> None:
     issues = [work("acme/app", n, due_date="2026-11-20" if n == 3 else None) for n in range(1, 151)]
     review = work("acme/web", 4, "!", title="Add dark mode")
-    lists = {ASSIGNED: issues, MRS: [], REVIEW: [review], TODOS: [todo(1, issues[2]), todo(2, issues[2])]}
+    lists = {ASSIGNED: issues, MRS: [], REVIEW: [review], TODOS: [todo(1, issues[2])]}
     write(fixture, lists=lists)
     poll = build_connector(gitlab_spec(tmp_path)).poll("")
     by_id = {item.external_id: item for item in poll.items}
-    assert poll.complete and len(by_id) == 151
-    assert by_id["acme/app#3"].meta["matched"] == "assigned,todos" and by_id["acme/app#3"].due == "2026-11-20"
+    assert poll.complete and len(by_id) == 152
+    assert by_id["acme/app#3"].meta["matched"] == "assigned" and by_id["acme/app#3"].due == "2026-11-20"
     assert by_id["acme/web!4"].title == "acme/web!4 Add dark mode" and by_id["acme/web!4"].meta["kind"] == "mr"
     assert by_id["acme/app#1"].meta["labels"] == "bug,backend" and by_id["acme/app#1"].meta["repo"] == "acme/app"
+    assert (
+        by_id["todo-1"].title == "mentioned: acme/app#3 Fix the login"
+        and by_id["todo-1"].meta["target"] == "acme/app#3"
+    )
 
 
-def test_a_todo_about_something_else_is_still_an_item(tmp_path: Path, fixture: Path) -> None:
-    write(fixture, lists={TODOS: [todo(7, kind="Epic")]})
-    [item] = build_connector(gitlab_spec(tmp_path, queries={"todos": TODOS})).poll("").items
-    assert (item.external_id, item.title, item.meta["kind"]) == ("todo-7", "mentioned: Design review", "todo")
+def test_assignment_todos_for_tracked_work_are_left_to_the_work_item(tmp_path: Path, fixture: Path) -> None:
+    open_issue, closed_issue = work("acme/app", 5), work("acme/app", 6, state="closed")
+    assigned = [
+        {**todo(10, open_issue), "action_name": "assigned"},
+        {**todo(11, closed_issue), "action_name": "assigned"},
+    ]
+    write(fixture, lists={ASSIGNED: [open_issue], TODOS: assigned})
+    poll = build_connector(gitlab_spec(tmp_path, queries={"assigned": ASSIGNED, "todos": TODOS})).poll("")
+    assert sorted(item.external_id for item in poll.items) == ["acme/app#5", "todo-11"]
+    alone = build_connector(gitlab_spec(tmp_path, queries={"todos": TODOS})).poll("")
+    assert sorted(item.external_id for item in alone.items) == ["todo-10", "todo-11"]
+
+
+def test_a_closed_issue_with_a_pending_todo_still_closes(tmp_path: Path, fixture: Path) -> None:
+    spec = gitlab_spec(tmp_path, queries={"assigned": ASSIGNED, "todos": TODOS})
+    issue = work("acme/app", 5)
+    write(fixture, lists={ASSIGNED: [issue], TODOS: [todo(10, issue)]})
+    ledger, connector = Ledger(tmp_path / "s.db"), build_connector(spec)
+    poll_sources(ledger, [spec], {spec.name: connector}, 300)
+    closed = {**issue, "state": "closed"}
+    write(fixture, lists={ASSIGNED: [], TODOS: [todo(10, closed)]}, states={"acme/app#5": "closed"})
+    poll_sources(ledger, [spec], {spec.name: connector}, 300)
+    states = {item.external_id: item.state for item in ledger.items()}
+    assert states == {"acme/app#5": ItemState.DONE, "todo-10": ItemState.NEW}
+
+
+def test_a_todo_closes_once_gitlab_lists_it_as_done(tmp_path: Path, fixture: Path) -> None:
+    spec = gitlab_spec(tmp_path, queries={"todos": TODOS})
+    write(fixture, lists={TODOS: [todo(10), todo(11)]})
+    ledger, connector = Ledger(tmp_path / "s.db"), build_connector(spec)
+    poll_sources(ledger, [spec], {spec.name: connector}, 300)
+    write(fixture, lists={TODOS: [], "todos?state=done": [todo(10)]})
+    poll_sources(ledger, [spec], {spec.name: connector}, 300)
+    states = {item.external_id: item.state for item in ledger.items()}
+    assert states == {"todo-10": ItemState.DONE, "todo-11": ItemState.NEW}
+
+
+def test_todos_gitlab_hides_from_the_list_dont_block_the_snapshot(tmp_path: Path, fixture: Path) -> None:
+    write(fixture, lists={TODOS: [todo(1), todo(2)], ASSIGNED: [work("acme/app", 1)]}, totals={TODOS: 3})
+    poll = build_connector(gitlab_spec(tmp_path, queries={"assigned": ASSIGNED, "todos": TODOS})).poll("")
+    assert poll.complete and len(poll.items) == 3
+
+
+def test_one_bad_entry_doesnt_hide_the_good_ones(tmp_path: Path, fixture: Path) -> None:
+    write(fixture, lists={ASSIGNED: [work("acme/app", 1), {"id": 99, "title": "no reference"}, work("acme/app", 2)]})
+    poll = build_connector(gitlab_spec(tmp_path, queries={"assigned": ASSIGNED})).poll("")
+    assert not poll.complete and len(poll.problems) == 1
+    assert sorted(item.external_id for item in poll.items) == ["acme/app#1", "acme/app#2"]
+
+
+def test_glab_never_runs_inside_the_current_checkout(tmp_path: Path, fixture: Path) -> None:
+    log = tmp_path / "cwd.log"
+    write(fixture, lists={ASSIGNED: []}, cwd_log=str(log))
+    build_connector(gitlab_spec(tmp_path, queries={"assigned": ASSIGNED})).poll("")
+    assert set(log.read_text().split()) == {"/"}
+
+
+def test_a_moved_project_is_reported_instead_of_closed(tmp_path: Path, fixture: Path) -> None:
+    moved = {"state": "opened", "references": {"full": "acme/renamed#1"}}
+    write(fixture, states={"acme/app#1": moved})
+    with pytest.raises(ConnectorError, match="moved to acme/renamed#1"):
+        build_connector(gitlab_spec(tmp_path)).confirm("acme/app#1")
 
 
 @pytest.mark.parametrize(
@@ -120,6 +182,7 @@ def test_vanished_items_close_only_when_gitlab_says_so(tmp_path: Path, fixture: 
     states = {item.external_id: item.state for item in ledger.items()}
     assert states == {"acme/app#1": ItemState.DONE, "acme/app#2": ItemState.NEW, "acme/app!3": ItemState.DONE}
     assert connector.confirm("todo-7") is Upstream.UNKNOWN
+    assert connector.confirm("acme/app&3") is Upstream.UNKNOWN
 
 
 @pytest.mark.parametrize(
@@ -128,6 +191,8 @@ def test_vanished_items_close_only_when_gitlab_says_so(tmp_path: Path, fixture: 
         ({"all": "issues?scope=assigned_to_me"}, "state=opened"),
         ({"all": "issues?scope=assigned_to_me&state=opened&page=2"}, "page"),
         ({"all": "issues?scope=assigned_to_me&state=closed"}, "state=opened"),
+        ({"all": "issues?scope=assigned_to_me&state=opened&state=all"}, "exactly state=opened"),
+        ({"all": "projects?state=opened"}, "issues, merge_requests or todos"),
     ],
 )
 def test_queries_must_ask_for_whats_open_and_leave_paging_alone(queries: dict[str, str], message: str) -> None:
@@ -143,3 +208,4 @@ def test_gitlab_is_never_trusted_wholesale() -> None:
 def test_a_gitlab_project_never_borrows_a_github_checkout(tmp_path: Path) -> None:
     assert repo_key("github", "acme/app") == "acme/app"
     assert repo_key("gitlab", "acme/app") == "gitlab:acme/app"
+    assert repo_key("command", "acme/app") == repo_key("", "acme/app") == "acme/app"

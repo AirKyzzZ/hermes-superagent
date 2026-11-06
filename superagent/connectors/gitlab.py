@@ -18,14 +18,19 @@ DEFAULT_QUERIES = {
     "review": "merge_requests?scope=all&state=opened&reviewer_username={me}",
     "todos": "todos?state=pending",
 }
-OPEN_FILTERS = ("state=opened", "state=pending")
+OPEN_STATES = {"issues": "opened", "merge_requests": "opened", "todos": "pending"}
 PAGE_SIZE = 100
 MAX_PAGES = 50
+DONE_TODO_PAGES = 3
 CALL_TIMEOUT_SECONDS = 30.0
+NEUTRAL_DIRECTORY = "/"
 _ID = re.compile(r"(?P<project>[A-Za-z0-9_.-]+(?:/[A-Za-z0-9_.-]+)+)(?P<kind>[#!])(?P<iid>\d+)")
+_TODO_ID = re.compile(r"todo-(\d+)")
 _HEADER_END = re.compile(r"\r?\n\r?\n")
 _DEFAULT_ENV = ("GITLAB_TOKEN", "GITLAB_HOST", "GLAB_CONFIG_DIR", "DBUS_SESSION_BUS_ADDRESS")
 _CLOSED = frozenset({"closed", "merged"})
+_COVERED = {("assigned", "Issue"): "issues", ("assigned", "MergeRequest"): "merge_requests"}
+_COVERED[("review_requested", "MergeRequest")] = "merge_requests"
 
 
 @dataclass(frozen=True)
@@ -38,20 +43,28 @@ class GitlabConnector:
 
     def poll(self, cursor: str) -> Poll:
         deadline = time.monotonic() + self.timeout
+        endpoints = {endpoint(query) for query in self.queries.values()}
         found: dict[str, SourceItem] = {}
         matched: dict[str, list[str]] = {}
         problems: list[str] = []
         me = ""
         for name, query in self.queries.items():
+            kind = endpoint(query)
             try:
                 if "{me}" in query and not me:
                     me = self._username(deadline)
-                entries = self._list(query.replace("{me}", urllib.parse.quote(me)), deadline)
-                parsed = [_item(entry) for entry in entries]
+                entries = self._list(query.replace("{me}", urllib.parse.quote(me)), deadline, kind == "todos")
             except ConnectorError as error:
                 problems.append(f"query {name}: {error}")
                 continue
-            for item in parsed:
+            for entry in entries:
+                try:
+                    item = _todo(entry, endpoints) if kind == "todos" else _work_item(entry)
+                except ConnectorError as error:
+                    problems.append(f"query {name}: {error}")
+                    continue
+                if item is None:
+                    continue
                 found[item.external_id] = item
                 names = matched.setdefault(item.external_id, [])
                 if name not in names:
@@ -70,16 +83,31 @@ class GitlabConnector:
         return Poll(items, complete=not problems, problems=tuple(problems))
 
     def confirm(self, external_id: str) -> Upstream:
+        deadline = time.monotonic() + self.timeout
+        todo = _TODO_ID.fullmatch(external_id)
+        if todo is not None:
+            for page in range(1, DONE_TODO_PAGES + 1):
+                done = self._api(f"todos?state=done&per_page={PAGE_SIZE}&page={page}", deadline)[1]
+                if not isinstance(done, list):
+                    raise ConnectorError("GitLab returned done todos in an unexpected shape")
+                if any(isinstance(entry, Mapping) and str(entry.get("id")) == todo[1] for entry in done):
+                    return Upstream.CLOSED
+                if len(done) < PAGE_SIZE:
+                    break
+            return Upstream.UNKNOWN
         match = _ID.fullmatch(external_id)
         if match is None:
             return Upstream.UNKNOWN
         kind = "issues" if match["kind"] == "#" else "merge_requests"
         project = urllib.parse.quote(match["project"], safe="")
-        entry = self._api(f"projects/{project}/{kind}/{match['iid']}", time.monotonic() + self.timeout)[1]
-        state = entry.get("state") if isinstance(entry, Mapping) else None
-        if not isinstance(state, str):
+        entry = self._api(f"projects/{project}/{kind}/{match['iid']}", deadline)[1]
+        if not isinstance(entry, Mapping) or not isinstance(entry.get("state"), str):
             raise ConnectorError(f"GitLab returned no state for {external_id}")
-        return Upstream.CLOSED if state in _CLOSED else Upstream.OPEN
+        references = entry.get("references")
+        moved = references.get("full") if isinstance(references, Mapping) else None
+        if isinstance(moved, str) and moved.lower() != external_id.lower():
+            raise ConnectorError(f"{external_id} moved to {moved[:120]}, close the old item by hand")
+        return Upstream.CLOSED if entry["state"] in _CLOSED else Upstream.OPEN
 
     def _username(self, deadline: float) -> str:
         user = self._api("user", deadline)[1]
@@ -88,20 +116,24 @@ class GitlabConnector:
             raise ConnectorError("GitLab returned no username for this login")
         return name
 
-    def _list(self, query: str, deadline: float) -> list[Mapping[str, object]]:
+    def _list(self, query: str, deadline: float, hidden_allowed: bool) -> list[Mapping[str, object]]:
         entries: dict[str, Mapping[str, object]] = {}
-        total: str | None = None
+        total: int | None = None
+        hidden = 0
         joiner = "&" if "?" in query else "?"
         for page in range(1, MAX_PAGES + 1):
             headers, body = self._api(f"{query}{joiner}per_page={PAGE_SIZE}&page={page}", deadline)
             if not isinstance(body, list):
                 raise ConnectorError("GitLab returned an unexpected shape")
-            count = headers.get("x-total")
-            if count is None or not count.isdigit():
+            count = headers.get("x-total", "")
+            if not count.isdigit():
                 raise ConnectorError("GitLab sent no total, so the list can't be checked for completeness")
-            if total is not None and count != total:
+            if total is not None and int(count) != total:
                 raise ConnectorError(f"the total moved from {total} to {count} while paging, retrying next poll")
-            total = count
+            total = int(count)
+            expected = max(0, min(PAGE_SIZE, total - (page - 1) * PAGE_SIZE))
+            if hidden_allowed:
+                hidden += max(0, expected - len(body))
             for entry in body:
                 if isinstance(entry, Mapping):
                     entries[str(entry.get("id"))] = entry
@@ -109,14 +141,15 @@ class GitlabConnector:
                 break
         else:
             raise ConnectorError(f"it has more than {MAX_PAGES * PAGE_SIZE} items, so narrow it")
-        if total is None or len(entries) != int(total):
+        if total is None or len(entries) != total - hidden:
             raise ConnectorError(f"GitLab said {total} items but returned {len(entries)} different ones")
         return list(entries.values())
 
     def _api(self, path: str, deadline: float) -> tuple[dict[str, str], object]:
         remaining = min(CALL_TIMEOUT_SECONDS, deadline - time.monotonic())
         host = ["--hostname", self.hostname] if self.hostname else []
-        output = run_text([self.glab, "api", "--include", *host, path], self.env_names, remaining)
+        argv = [self.glab, "api", "--include", *host, path]
+        output = run_text(argv, self.env_names, remaining, cwd=NEUTRAL_DIRECTORY)
         parts = _HEADER_END.split(output, maxsplit=1)
         head, body = (parts[0], parts[1]) if len(parts) == 2 else ("", output)
         headers = {}
@@ -130,21 +163,22 @@ class GitlabConnector:
             raise ConnectorError(f"GitLab did not return JSON: {error}") from error
 
 
-def _item(entry: Mapping[str, object]) -> SourceItem:
-    target = entry.get("target") if "action_name" in entry else entry
-    if isinstance(target, Mapping) and entry.get("target_type", "Issue") in ("Issue", "MergeRequest"):
-        references = target.get("references")
-        reference = references.get("full") if isinstance(references, Mapping) else None
-        title = target.get("title")
-        if isinstance(reference, str) and _ID.fullmatch(reference) and isinstance(title, str) and title.strip():
-            return _work_item(target, reference, title.strip())
-    return _todo(entry)
+def endpoint(query: str) -> str:
+    return urllib.parse.urlsplit(query).path.strip("/")
 
 
-def _work_item(target: Mapping[str, object], reference: str, title: str) -> SourceItem:
+def _reference(target: object) -> str:
+    references = target.get("references") if isinstance(target, Mapping) else None
+    reference = references.get("full") if isinstance(references, Mapping) else None
+    return reference if isinstance(reference, str) and _ID.fullmatch(reference) else ""
+
+
+def _work_item(entry: Mapping[str, object]) -> SourceItem:
+    reference, title = _reference(entry), entry.get("title")
+    if not reference or not isinstance(title, str) or not title.strip():
+        raise ConnectorError(f"GitLab returned an item without a usable reference or title (id {entry.get('id')})")
     project, kind = re.split(r"[#!]", reference)[0], "issue" if "#" in reference else "mr"
-    author = target.get("author")
-    labels = target.get("labels")
+    author, labels = entry.get("author"), entry.get("labels")
     meta = {
         "repo": project,
         "kind": kind,
@@ -153,29 +187,35 @@ def _work_item(target: Mapping[str, object], reference: str, title: str) -> Sour
     }
     return SourceItem(
         external_id=reference,
-        title=f"{reference} {title}",
-        url=str(target.get("web_url", "")),
-        due=str(target.get("due_date") or ""),
-        updated=str(target.get("updated_at", "")),
+        title=f"{reference} {title.strip()}",
+        url=str(entry.get("web_url", "")),
+        due=str(entry.get("due_date") or ""),
+        updated=str(entry.get("updated_at", "")),
         meta=meta,
     )
 
 
-def _todo(entry: Mapping[str, object]) -> SourceItem:
-    identifier = entry.get("id")
-    if not isinstance(identifier, int) or "action_name" not in entry:
-        raise ConnectorError("GitLab returned an item without a reference or a todo id")
+def _todo(entry: Mapping[str, object], endpoints: set[str]) -> SourceItem | None:
+    identifier, action = entry.get("id"), str(entry.get("action_name") or "")
+    if not isinstance(identifier, int) or not action:
+        raise ConnectorError("GitLab returned a todo without an id or an action")
+    target, target_type = entry.get("target"), str(entry.get("target_type") or "")
+    covered = _COVERED.get((action, target_type))
+    state = target.get("state") if isinstance(target, Mapping) else None
+    if covered in endpoints and state not in _CLOSED:
+        return None
     project = entry.get("project")
     path = str(project.get("path_with_namespace", "")) if isinstance(project, Mapping) else ""
-    target = entry.get("target")
+    reference = _reference(target)
     about = str(target.get("title", "")) if isinstance(target, Mapping) else ""
-    title = f"{entry.get('action_name')}: {about or entry.get('body') or entry.get('target_type')}"
+    title = f"{action}: {reference + ' ' if reference else ''}{about or entry.get('body') or target_type}"
+    meta = {"repo": path, "kind": "todo", "action": action, "target": reference}
     return SourceItem(
         external_id=f"todo-{identifier}",
         title=" ".join(title.split())[:300],
         url=str(entry.get("target_url", "")),
         updated=str(entry.get("updated_at", "")),
-        meta={"repo": path, "kind": "todo"},
+        meta=meta,
     )
 
 
@@ -194,12 +234,15 @@ def build(spec: ConnectorSpec) -> GitlabConnector:
             'such as { mine = "issues?scope=assigned_to_me&state=opened" }'
         )
     for query in queries.values():
-        filters = urllib.parse.urlsplit(query).query.split("&")
-        if not any(open_filter in filters for open_filter in OPEN_FILTERS):
+        fields = urllib.parse.parse_qs(urllib.parse.urlsplit(query).query)
+        wanted = OPEN_STATES.get(endpoint(query))
+        if wanted is None:
+            raise ConnectorConfigError(f"{where} queries read issues, merge_requests or todos, got {query!r}")
+        if fields.get("state") != [wanted]:
             raise ConnectorConfigError(
-                f"{where} every query needs state=opened or state=pending, since the snapshot is what's open"
+                f"{where} each query needs exactly state={wanted}, since the snapshot is what's open"
             )
-        if any(part.startswith(("page=", "per_page=")) for part in filters):
+        if "page" in fields or "per_page" in fields:
             raise ConnectorConfigError(f"{where} queries can't set page or per_page, paging is done for them")
     glab, hostname = spec.settings.get("glab", "glab"), spec.settings.get("hostname", "")
     if not isinstance(glab, str) or not glab or not isinstance(hostname, str):
