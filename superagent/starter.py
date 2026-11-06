@@ -21,6 +21,7 @@ class Choices:
     agents_channel: str = ""
     timezone: str = "UTC"
     github: bool = False
+    gitlab: bool = False
     agents: bool = False
 
 
@@ -32,6 +33,7 @@ def detect(hermes: str, *, alerts: str = "", brief: str = "", agents_channel: st
         agents_channel=agents_channel,
         timezone=timezone or local_timezone(),
         github=which("gh") is not None,
+        gitlab=which("glab") is not None,
         agents=bool(agents_channel) or which("claude") is not None or (Path.home() / ".claude").is_dir(),
     )
 
@@ -65,6 +67,8 @@ def starter_config(choices: Choices) -> str:
         blocks.append(f"[brief]\nhour = 8\ntimezone = {json.dumps(choices.timezone, ensure_ascii=False)}")
     if choices.github:
         blocks.append('[connectors.github]\ntype = "github"\nevery = "10m"')
+    if choices.gitlab:
+        blocks.append('[connectors.gitlab]\ntype = "gitlab"\nevery = "10m"')
     if choices.agents:
         agents = ["[connectors.agents]", 'type = "agents"', 'every = "90s"']
         if choices.agents_channel:
@@ -105,7 +109,8 @@ def write_starter(home: Path, text: str) -> Path:
 
 def next_steps(home: Path, choices: Choices, cli: str) -> str:
     base = f"{cli} --home {home}"
-    found = [name for name, on in (("github", choices.github), ("agents", choices.agents)) if on]
+    detected = (("github", choices.github), ("gitlab", choices.gitlab), ("agents", choices.agents))
+    found = [name for name, on in detected if on]
     lines = [f"Wrote {home / CONFIG_FILENAME} with {', '.join(found) or 'no'} connectors.", "Next:"]
     if choices.agents:
         lines += [
