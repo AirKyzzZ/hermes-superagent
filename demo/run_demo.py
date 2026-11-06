@@ -13,10 +13,12 @@ DEMO_DIR = Path(__file__).resolve().parent
 REPO_ROOT = DEMO_DIR.parent
 sys.path.insert(0, str(REPO_ROOT))
 
+from superagent.brief import BriefSettings, build_brief  # noqa: E402
 from superagent.config import WORKDIRS_DIRNAME  # noqa: E402
 from superagent.domain import Trigger  # noqa: E402
+from superagent.ledger import Ledger  # noqa: E402
 from superagent.router import NotAdmittedError  # noqa: E402
-from superagent.runtime import Runtime, open_runtime  # noqa: E402
+from superagent.runtime import Runtime, open_runtime, tick  # noqa: E402
 
 BOLD, DIM, BLUE, GREEN, RED, RESET = "\033[1m", "\033[2m", "\033[38;5;63m", "\033[32m", "\033[31m", "\033[0m"
 CHANNEL = "chat:general"
@@ -131,6 +133,60 @@ def scene_escalation(runtime: Runtime, home: Path) -> None:
     line("tickets", f"still open: {len(runtime.router.status())}", GREEN)
 
 
+TASKS = [
+    "Renew the domain",
+    "Pay the accountant",
+    "Reply to the landlord",
+    "Book the dentist",
+    "Send the invoice",
+    "Fix the backup job",
+    "Call the bank",
+    "Order new keys",
+]
+
+
+def write_tasks(path: Path, statuses: dict[str, str], broken: bool = False) -> None:
+    tasks = [
+        {"id": str(n), "content": title, "status": statuses.get(str(n), "open")} for n, title in enumerate(TASKS, 1)
+    ]
+    path.write_text(json.dumps({"tasks": [task for task in tasks if task["status"] != "deleted"], "broken": broken}))
+
+
+def scene_ledger(home: Path) -> None:
+    scene("5. A task list breaks and loses things. The ledger keeps every item")
+    tasks = home / "tasks.json"
+    argv = json.dumps([sys.executable, str(DEMO_DIR / "task_list.py"), str(tasks)])
+    confirm = json.dumps([sys.executable, str(DEMO_DIR / "task_list.py"), str(tasks), "{id}"])
+    with (home / "superagent.toml").open("a", encoding="utf-8") as config:
+        config.write(
+            f'\n[connectors.tasks]\ntype = "command"\nevery = "0s"\nargv = {argv}\nconfirm_argv = {confirm}\n'
+            'fields = { id = "id", title = "content", status = "status" }\n'
+        )
+    ledger = Ledger(home / "superagent.db")
+    write_tasks(tasks, {})
+    tick(open_runtime(home))
+    line("tasks", f"{len(TASKS)} open tasks in the list")
+    line("ledger", f"{len(ledger.items(open_only=True, connector='tasks'))} items recorded", GREEN)
+    write_tasks(tasks, {}, broken=True)
+    result = tick(open_runtime(home))
+    line("tasks", "the export breaks and returns 2 of 8")
+    for warning in result.warnings:
+        line("alert", warning, RED)
+    line("ledger", f"still {len(ledger.items(open_only=True, connector='tasks'))} open, nothing marked gone", GREEN)
+    write_tasks(tasks, {"2": "done", "6": "deleted"})
+    tick(open_runtime(home))
+    line("tasks", "fixed. One task was completed, one was deleted by mistake")
+    for item in ledger.items(connector="tasks"):
+        if item.state.value == "done" or item.missing_since:
+            note = (
+                "closed, its source confirmed it" if item.state.value == "done" else "gone without a close, kept open"
+            )
+            line("ledger", f"{item.title}: {note}", GREEN)
+    brief = build_brief(ledger, open_runtime(home).config.connectors, 0, time.time() + 60, BriefSettings(86400, "UTC"))
+    section = brief.text.split("Gone from their source without a close")[1].split("\n\n")[0]
+    line("brief", "Gone from their source without a close:" + section.replace("\n", "\n" + " " * 11), GREEN)
+
+
 def main() -> None:
     with tempfile.TemporaryDirectory(prefix="superagent-demo-") as temp:
         home = Path(temp)
@@ -143,6 +199,7 @@ def main() -> None:
         scene_injection(runtime)
         scene_recovery(runtime, home)
         scene_escalation(runtime, home)
+        scene_ledger(home)
         for assignment in runtime.store.running_assignments():
             runtime.router.backend.stop(assignment)
         print(f"\n{BOLD}{GREEN}Demo finished.{RESET}")

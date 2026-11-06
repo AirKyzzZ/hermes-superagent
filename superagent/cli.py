@@ -358,7 +358,9 @@ def run_ledger(args: argparse.Namespace, ledger: Ledger) -> int:
                 print(json.dumps([asdict(item) for item in items], indent=1))
             else:
                 for item in items:
-                    print(f"{item.handle}  {item.state.value:<8} {item.connector:<12} {item.title}")
+                    print(
+                        f"{item.handle}  {item.state.value:<8} {item.connector:<12} {item.area or '-':<10} {item.title}"
+                    )
             return 0
         if args.ledger_command == "show":
             item = ledger.get(args.item)

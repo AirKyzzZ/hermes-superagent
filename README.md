@@ -15,7 +15,7 @@ A <a href="https://github.com/NousResearch/hermes-agent">Hermes Agent</a> plugin
 <a href="LICENSE"><img alt="MIT licence" src="https://img.shields.io/github/license/AirKyzzZ/hermes-superagent?style=flat-square&label=license&labelColor=14142a&color=1a10b8"></a>
 <a href="pyproject.toml"><img alt="Python 3.11 or newer" src="https://img.shields.io/badge/python-3.11%2B-1a10b8?style=flat-square&labelColor=14142a"></a>
 <a href="plugin.yaml"><img alt="Hermes plugin, requires 0.22.7 or newer" src="https://img.shields.io/badge/Hermes_plugin-%3E%3D0.22.7-1a10b8?style=flat-square&labelColor=14142a"></a>
-<a href="tests"><img alt="522 tests" src="https://img.shields.io/badge/tests-522-1a10b8?style=flat-square&labelColor=14142a"></a>
+<a href="tests"><img alt="560 tests" src="https://img.shields.io/badge/tests-560-1a10b8?style=flat-square&labelColor=14142a"></a>
 <a href="docs/hackathon.md"><img alt="Built for the Hermes Agent Plugin Hackathon" src="https://img.shields.io/badge/built_for-Hermes_Plugin_Hackathon-1a10b8?style=flat-square&labelColor=14142a"></a>
 </p>
 
@@ -237,6 +237,17 @@ python3 demo/run_demo.py
   watchdog stuck -> escalate (last 3 reports are identical)
   router   to chat:general: Needs you [solve the impossible migration · tk-21e69361]: last 3 reports are identical
   tickets  still open: 0
+== 5. A task list breaks and loses things. The ledger keeps every item
+  tasks    8 open tasks in the list
+  ledger   8 items recorded
+  tasks    the export breaks and returns 2 of 8
+  alert    connector tasks: its snapshot shrank from 8 to 2 items, so nothing was marked gone. If that's right, run `superagent ledger accept tasks`
+  ledger   still 8 open, nothing marked gone
+  tasks    fixed. One task was completed, one was deleted by mistake
+  ledger   Pay the accountant: closed, its source confirmed it
+  ledger   Fix the backup job: gone without a close, kept open
+  brief    Gone from their source without a close: (1)
+           it-o3rq tasks: Fix the backup job
 ```
 
 </details>
@@ -373,6 +384,8 @@ The rendered prompt becomes the goal, the comment's author is checked against `a
 | `[heartbeat] argv` | none | Runs after every tick with no errors, such as a ping to an external uptime check, so a dead timer gets noticed from outside |
 | `[channels] brief`, `[brief] hour`, `timezone` | none, `8`, `UTC` | The daily brief goes to `brief` once a day, from `hour` until the next day's `hour`, so a box that was down catches up. It lists source problems, what waits on you, what vanished from a source, what reopened, what's new since the last brief, what got ignored and why, and the day's readings. Every other open item shows at least once every `stale_after`, unless it's snoozed or its worker is running. "Since the last brief" only moves once every part of that brief has been delivered. `superagent brief` prints it now, and `--send` sends it |
 | `[brief] stale_after` | `3d` | How long a triaged item can go unchanged before the brief lists it again |
+| `[[triage]] match`, `area`, `ignore`, `name` | none | Rules for new items, the first match wins. `match` maps item fields (`connector`, `title`, `url`, `id`, `due`, `excerpt`) or meta keys such as `repo`, `labels` or `from` to a glob or a list of globs, ignoring case, where only `*` and `?` are wildcards. `labels`, `matched` and `tags` match on any one of their comma-separated parts, and an empty field never matches. `area` files the item there as triaged, and `ignore` sets it aside with that reason, which the next brief lists. An item no rule matches stays new and shows in every brief until someone decides. Rules also file new items already in the ledger, and never touch one someone moved |
+| `[areas.<name>] channel` | none | Where one "New in <area>" message per tick lists what rules filed there, up to 20 items. Once any area is listed, rules can only name listed areas |
 | `[channels] briefs`, `[briefs] notes`, `repos`, `daily_limit` | none, none, none, `20` | `superagent briefs <item>` writes the brief a worker would start from. Code builds a pack of numbered pieces, each marked trusted or not: the item, its issue text and comments (only the owner's own are trusted), related ledger items, its history, `notes`, and where `repos` says the code lives (keys are `owner/repo` for GitHub and `gitlab:group/project` for GitLab). The model drafts, a second call challenges it as a skeptical senior engineer, and a third revises. Code then checks that every line cites a real piece, quotes match their piece, there's an acceptance criterion, nothing looks like a secret, and every address, host, IP, account, shell command and multi-word code span appears in trusted text, after undoing lookalike characters. The first line says READY, NEEDS APPROVAL when any piece is untrusted, or NOT READY with the lint's findings at the end. A quote in the owner's own comment stays untrusted, and so does anything posted through an app. Briefs are cached until the pack or the writer changes, `daily_limit` caps new ones with failed attempts included, and `--send` posts it to `briefs` |
 | `[connectors.<name>] type` | required | `command`, `github`, `gitlab` or `agents`. A connector polls one tool into the item ledger |
 | `[connectors.<name>] every` | `5m` | How often it polls |

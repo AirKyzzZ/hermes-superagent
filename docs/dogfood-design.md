@@ -162,7 +162,7 @@ match = { connector = "github", repo = "your-org/*" }
 area = "work"
 
 [[triage]]
-match = { connector = "todoist", label = "agent" }
+match = { connector = "todoist", labels = "agent" }
 area = "personal"
 assign = "vps"
 ```

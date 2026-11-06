@@ -10,6 +10,7 @@ from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from .connectors import ConnectorConfigError, ConnectorSpec, duration, parse_specs
 from .gate import Rules, RulesError, parse_rules
+from .triage import TriageError, TriageRule, parse_triage
 from .watchdog import WatchdogPolicy
 
 CONFIG_FILENAME = "superagent.toml"
@@ -29,6 +30,8 @@ _KNOWN_KEYS = {
         "tick",
         "connectors",
         "brief",
+        "triage",
+        "areas",
         "briefs",
     },
     "sources": {"policy", "allow", "bots", "pass_strangers", "notify", "via_router"},
@@ -62,6 +65,8 @@ class Config:
     brief_hour: int = 8
     brief_timezone: str = "UTC"
     stale_after_seconds: float = 3 * 86400.0
+    triage: tuple[TriageRule, ...] = ()
+    area_channels: Mapping[str, str] = field(default_factory=dict)
     briefs_channel: str = ""
     brief_notes: str = ""
     brief_repos: Mapping[str, str] = field(default_factory=dict)
@@ -125,6 +130,10 @@ def parse_config(raw: str) -> Config:
         connectors = parse_specs(data.get("connectors", {}))
     except ConnectorConfigError as error:
         raise ConfigError(str(error)) from error
+    try:
+        triage, area_channels = parse_triage(data.get("triage", []), data.get("areas", {}))
+    except TriageError as error:
+        raise ConfigError(str(error)) from error
     briefs_channel = channels.get("briefs", "")
     if not isinstance(briefs_channel, str):
         raise ConfigError("[channels] values must be strings such as discord:123")
@@ -155,6 +164,8 @@ def parse_config(raw: str) -> Config:
         brief_hour=hour,
         brief_timezone=str(timezone),
         stale_after_seconds=stale_after,
+        triage=triage,
+        area_channels=area_channels,
         briefs_channel=briefs_channel,
         brief_notes=notes,
         brief_repos=dict(repos),

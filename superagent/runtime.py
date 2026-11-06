@@ -21,6 +21,7 @@ from .ledger import Ledger
 from .polling import SourceWarning, poll_sources
 from .router import Assessor, Router, Sender, chat_safe
 from .store import Store, split_message
+from .triage import triage_new
 from .watchdog import CheckResult, DriftJudge, check_once
 from .worker import SubprocessBackend
 
@@ -176,6 +177,16 @@ def _run_phases(runtime: Runtime, judge: DriftJudge | None, assessor: Assessor |
     except Exception as error:
         logger.exception("polling failed")
         errors.append(f"poll: {error}")
+    try:
+        triage_new(
+            runtime.ledger,
+            runtime.config.triage,
+            runtime.config.area_channels,
+            lambda channel, text: runtime.store.queue_message(SOURCE_TICKET, channel, chat_safe(text)),
+        )
+    except Exception as error:
+        logger.exception("triage failed")
+        errors.append(f"triage: {error}")
     try:
         send_brief_when_due(runtime)
     except Exception as error:
