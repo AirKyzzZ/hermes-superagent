@@ -90,21 +90,27 @@ class GithubConnector:
         owner = str(user.get("login", "")).lower()
         count = issue.get("comments")
         last_page = max(1, -(-count // PAGE_SIZE)) if isinstance(count, int) else 1
-        comments = self._api(
-            f"{path}/comments", deadline, "-X", "GET", "-f", f"per_page={PAGE_SIZE}", "-f", f"page={last_page}"
-        )
-        if not isinstance(comments, list):
-            raise ConnectorError("GitHub returned comments in an unexpected shape")
-        kind = "pull request" if issue.get("pull_request") else "issue"
-        pieces = [_piece(f"the {kind} text", issue, owner)]
-        shown = [comment for comment in comments if isinstance(comment, Mapping)][-CONTEXT_COMMENTS:]
-        if isinstance(count, int) and count > len(shown):
-            pieces.append(
-                ContextPiece("comments left out", True, f"{count - len(shown)} earlier comments are not included")
+        comments: list[Mapping[str, object]] = []
+        for page in range(last_page, 0, -1):
+            found = self._api(
+                f"{path}/comments", deadline, "-X", "GET", "-f", f"per_page={PAGE_SIZE}", "-f", f"page={page}"
             )
-        pieces += [
-            _piece(f"a comment from {str(comment.get('created_at', ''))[:10]}", comment, owner) for comment in shown
-        ]
+            if not isinstance(found, list):
+                raise ConnectorError("GitHub returned comments in an unexpected shape")
+            comments = [entry for entry in found if isinstance(entry, Mapping)] + comments
+            if len(comments) >= CONTEXT_COMMENTS:
+                break
+        kind = "pull request" if issue.get("pull_request") else "issue"
+        pieces = _pieces(f"the {kind} text", issue, owner)
+        address = str(issue.get("html_url", ""))
+        if address.startswith("https://github.com/"):
+            pieces.append(ContextPiece(f"where the {kind} lives", True, address))
+        shown = comments[-CONTEXT_COMMENTS:]
+        if isinstance(count, int) and count > len(shown):
+            left_out = f"{count - len(shown)} earlier comments are not included"
+            pieces.append(ContextPiece("comments left out", True, left_out))
+        for comment in shown:
+            pieces += _pieces(f"a comment from {str(comment.get('created_at', ''))[:10]}", comment, owner)
         return pieces
 
     def _search(self, query: str, deadline: float) -> list[Mapping[str, object]]:
@@ -193,11 +199,22 @@ def _item(entry: Mapping[str, object]) -> SourceItem:
     )
 
 
-def _piece(label: str, entry: Mapping[str, object], owner: str) -> ContextPiece:
+def _pieces(label: str, entry: Mapping[str, object], owner: str) -> list[ContextPiece]:
     user = entry.get("user")
     author = str(user.get("login", "")) if isinstance(user, Mapping) else ""
-    trusted = bool(owner) and author.lower() == owner
-    return ContextPiece(f"{label} by {author or 'someone'}", trusted, str(entry.get("body") or ""))
+    body = str(entry.get("body") or "")
+    by = f"{label} by {author or 'someone'}"
+    if entry.get("performed_via_github_app"):
+        return [ContextPiece(f"{by} through an app", False, body)]
+    if not owner or author.lower() != owner:
+        return [ContextPiece(by, False, body)]
+    lines = body.splitlines()
+    quoted = [line for line in lines if line.lstrip().startswith(">")]
+    own = "\n".join(line for line in lines if not line.lstrip().startswith(">")).strip()
+    pieces = [ContextPiece(by, True, own)]
+    if quoted:
+        pieces.append(ContextPiece(f"text quoted in {label} by {author}", False, "\n".join(quoted)))
+    return pieces
 
 
 def build(spec: ConnectorSpec) -> GithubConnector:

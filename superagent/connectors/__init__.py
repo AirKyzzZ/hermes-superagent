@@ -10,6 +10,7 @@ from ..ledger import SourceItem, Upstream
 
 DEFAULT_EVERY_SECONDS = 300.0
 DEFAULT_NOTIFY = ("waiting", "stuck", "limited", "gone")
+UNTRUSTABLE = frozenset({"github", "agents"})
 _DURATION = re.compile(r"^(\d+(?:\.\d+)?)([smhd])$")
 _UNITS = {"s": 1.0, "m": 60.0, "h": 3600.0, "d": 86400.0}
 COMMON_KEYS = frozenset(
@@ -106,6 +107,8 @@ def parse_specs(section: object) -> tuple[ConnectorSpec, ...]:
         trusted = body.get("trusted", False)
         if not isinstance(detail, bool) or not isinstance(trusted, bool):
             raise ConnectorConfigError(f"[connectors.{name}] notify_detail and trusted must be true or false")
+        if trusted and kind in UNTRUSTABLE:
+            raise ConnectorConfigError(f"[connectors.{name}] can't be trusted: {kind} carries other people's words")
         notify = body.get("notify", list(DEFAULT_NOTIFY) if kind == "agents" else [])
         if not isinstance(channel, str) or not isinstance(notify, list) or not all(isinstance(s, str) for s in notify):
             raise ConnectorConfigError(f"[connectors.{name}] channel must be a string and notify a list of states")

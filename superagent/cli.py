@@ -312,12 +312,13 @@ def run_briefs(args: argparse.Namespace, runtime: Runtime, writer: BriefWriter |
                 file=sys.stderr,
             )
             return 1
+        attempt = runtime.ledger.begin_worker_brief(item.id, pack.digest)
         try:
             written = writer.write(pack)
         except Exception as error:
             print(f"the brief couldn't be written: {error}", file=sys.stderr)
             return 1
-        runtime.ledger.save_worker_brief(item.id, pack.digest, written.text, written.failures, written.needs_approval)
+        runtime.ledger.finish_worker_brief(attempt, written.text, written.failures, written.needs_approval)
         text = written.text
     print(text)
     if args.send:

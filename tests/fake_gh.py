@@ -31,7 +31,9 @@ elif path == "user":
     body = {"login": fixture.get("login", "owner")}
 elif path.startswith("repos/") and path.endswith("/comments"):
     key = path[len("repos/") : -len("/comments")].replace("/issues/", "#")
-    body = fixture.get("comments", {}).get(key, [])
+    found = fixture.get("comments", {}).get(key, [])
+    size, page = int(fields.get("per_page", 30)), int(fields.get("page", 1))
+    body = found[(page - 1) * size : page * size]
 elif path.startswith("repos/"):
     key = path[len("repos/") :].replace("/issues/", "#")
     if key not in fixture.get("issues", {}):

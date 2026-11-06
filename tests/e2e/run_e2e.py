@@ -392,7 +392,8 @@ def stage_router(work: Path, log: Path) -> None:
             "briefs: the CLI writes a linted brief through Hermes's model",
             written.returncode == 0
             and "Acceptance criteria\n- The renewal shows on the account [p2]" in written.stdout
-            and "Not ready" not in written.stdout,
+            and "NEEDS APPROVAL" in written.stdout.splitlines()[0]
+            and "NOT READY" not in written.stdout,
             written.stdout[-500:] + written.stderr[-300:],
         )
         second = hermes("-p", "watchdog", "superagent", "tick")

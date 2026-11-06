@@ -502,20 +502,27 @@ class Ledger:
             connection.executemany("UPDATE items SET last_briefed = ? WHERE id = ?", [(built_at, i) for i in shown])
         return True
 
-    def save_worker_brief(
-        self, item_id: str, digest: str, text: str, failures: Sequence[str], needs_approval: bool
-    ) -> None:
+    def begin_worker_brief(self, item_id: str, digest: str) -> int:
+        with self._connect() as connection:
+            cursor = connection.execute(
+                "INSERT INTO worker_briefs (item_id, digest, at, text, failures, needs_approval) "
+                "VALUES (?, ?, ?, '', '[]', 0)",
+                (item_id, digest, time.time()),
+            )
+        return int(cursor.lastrowid or 0)
+
+    def finish_worker_brief(self, seq: int, text: str, failures: Sequence[str], needs_approval: bool) -> None:
         with self._connect() as connection:
             connection.execute(
-                "INSERT INTO worker_briefs (item_id, digest, at, text, failures, needs_approval) "
-                "VALUES (?, ?, ?, ?, ?, ?)",
-                (item_id, digest, time.time(), text, json.dumps(list(failures)), int(needs_approval)),
+                "UPDATE worker_briefs SET text = ?, failures = ?, needs_approval = ? WHERE seq = ?",
+                (text, json.dumps(list(failures)), int(needs_approval), seq),
             )
 
     def cached_worker_brief(self, item_id: str, digest: str) -> str | None:
         with self._connect() as connection:
             row = connection.execute(
-                "SELECT text FROM worker_briefs WHERE item_id = ? AND digest = ? ORDER BY seq DESC LIMIT 1",
+                "SELECT text FROM worker_briefs WHERE item_id = ? AND digest = ? AND text != '' "
+                "ORDER BY seq DESC LIMIT 1",
                 (item_id, digest),
             ).fetchone()
         return None if row is None else str(row["text"])

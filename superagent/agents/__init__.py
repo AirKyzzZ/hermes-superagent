@@ -38,8 +38,9 @@ _SECRETS = (
     (re.compile(r"\b(?:gh[pousr]_[A-Za-z0-9]{20,}|github_pat_[A-Za-z0-9_]{20,})"), "[redacted]"),
     (re.compile(r"\b(?:sk-[A-Za-z0-9_-]{16,}|xox[abposr]-[A-Za-z0-9-]{10,}|AKIA[0-9A-Z]{16})"), "[redacted]"),
     (re.compile(r"-----BEGIN [A-Z ]*PRIVATE KEY-----"), "[redacted]"),
-    (re.compile(r"[A-Za-z0-9+_-]{40,}={0,2}"), "[redacted]"),
 )
+_LONG_TOKEN = re.compile(r"[A-Za-z0-9+_-]{40,}={0,2}")
+_NOT_SECRET = re.compile(r"[0-9a-f]{40}|[a-z0-9]+(?:[_-][a-z0-9]+){3,}")
 
 
 class SessionState(StrEnum):
@@ -69,7 +70,7 @@ class SessionView:
 def redact(text: str) -> str:
     for pattern, replacement in _SECRETS:
         text = pattern.sub(replacement, text)
-    return text
+    return _LONG_TOKEN.sub(lambda match: match[0] if _NOT_SECRET.fullmatch(match[0]) else "[redacted]", text)
 
 
 def _asks(event: Mapping[str, object]) -> bool:
