@@ -41,7 +41,7 @@ DeepSeek's article puts the limit at three to five active sessions: past that, a
 - **Efficient:** each task gets its own worker, so a new request never waits for an old one.
 - **Proactive:** events pass a gate on who sent them, then rules your team writes in plain language. A daily digest shows what each rule in record mode would have started, so you switch it to `act` only once it's right.
 - **Persistent:** state lives in SQLite, and a scheduled process outside the workers checks that the work is really moving.
-- **Nothing dropped:** connectors read GitHub, any tool that prints JSON, and every Claude Code session on your machines into a ledger. An item stays open until its source confirms it closed or you close it with a reason, and a daily brief shows each open one at least every few days.
+- **Nothing dropped:** connectors read GitHub, GitLab, any tool that prints JSON, and every Claude Code session on your machines into a ledger, and triage rules file what comes in by area. An item stays open until its source confirms it closed or you close it with a reason, and a daily brief shows each open one at least every few days.
 
 A prompt or skill can only ask a model to stay in its lane, or to remember a task. Here the gate, the tool allowlist, fencing, the watchdog process and the ledger's completeness checks are code the model can't talk its way past or forget, which is why this has to be a plugin.
 
@@ -161,7 +161,7 @@ A live worker gets a nudge first, and it waits for that worker's next report, so
 
 ```mermaid
 flowchart TB
-    sources(["GitHub, any tool that prints JSON,<br/>Claude Code sessions over ssh"])
+    sources(["GitHub, GitLab, any tool that prints JSON,<br/>Claude Code sessions over ssh"])
     check{"Whole and plausible?<br/>no cut list, no shifting total,<br/>not shrunk by half"}
     ledger[("Item ledger<br/>new, triaged, assigned, waiting,<br/>done or ignored, always with a reason")]
     held["Nothing marked gone<br/>a shrunk snapshot waits for accept"]
@@ -191,8 +191,9 @@ A poll that can't prove it saw everything marks nothing as gone, and the source 
 | Sources | Sessions | Every day |
 | --- | --- | --- |
 | **A ledger that keeps everything**<br> Items are never deleted. Closing or ignoring one takes a reason, and every change is kept with the content it saw. | **An agents board**<br> A small hook on each machine and a read-only probe over ssh put every Claude Code session on one board: working, waiting, stuck, rate-limited, gone. | **A daily brief**<br> Source problems, what waits on you, what vanished, what reopened, what's new, and every other open item at least every few days. A box that was down catches up. |
-| **Sources that fail loudly**<br> GitHub through your `gh` login, or any tool that prints JSON. A cut list, a total that shifts mid-scan or a snapshot that shrinks by half is held back, never read as done. | **One line when one needs you**<br> A session waiting for you, stuck, rate-limited or gone for two polls posts one line to its channel. Its text stays out unless you opt in, and it's redacted then. | **Alerts and an outbox that never gives up**<br> Messages retry with backoff and stay in order. Lasting errors and stuck ticks are alerted, and a heartbeat lets an outside check notice a dead timer. |
+| **Sources that fail loudly**<br> GitHub and GitLab through your `gh` and `glab` logins, or any tool that prints JSON. A cut list, a total that shifts mid-scan or a snapshot that shrinks by half is held back, never read as done. | **One line when one needs you**<br> A session waiting for you, stuck, rate-limited or gone for two polls posts one line to its channel. Its text stays out unless you opt in, and it's redacted then. | **Alerts and an outbox that never gives up**<br> Messages retry with backoff and stay in order. Lasting errors and stuck ticks are alerted, and a heartbeat lets an outside check notice a dead timer. |
 | **Briefs that cite their sources**<br> `superagent briefs <item>` writes what a worker starts from, and every line names the piece it came from: the issue, the owner's comments, related items, the repo's guide. | **Drafted, challenged, revised**<br> A second model call reads the draft like a skeptical senior engineer, and a third fixes what it found. | **A lint the model can't argue with**<br> A URL or command that only a stranger's comment or mail holds never reaches a brief marked ready, and untrusted text means the owner approves first. |
+| **Triage by plain rules**<br> `[[triage]]` rules file new items into areas, each with its own channel, or set them aside with a reason the brief shows. An item no rule matches stays new and keeps showing up. | **A nudge, only if you ask**<br> With `relaunch = true`, a session stopped by an API error or a rate limit gets one `continue`, typed only after its pane, process and screen check out. | **Setup and doctor**<br> `setup` writes a starter config from the tools it finds, and `doctor` checks delivery, the timer and every connector, live, without recording anything. |
 
 ## Quickstart
 
@@ -503,7 +504,9 @@ If the gate itself fails, the message is dropped and logged, so a person gets si
 - [x] GitHub and other webhook sources
 - [x] Item ledger with GitHub and command connectors, source health and a daily brief, see [the dogfood design](docs/dogfood-design.md)
 - [x] Agents board for Claude Code sessions on several machines
-- [ ] Todoist, GitLab, mail, calendar and WhatsApp connectors
+- [x] GitLab issues, merge requests and todos, and triage rules with areas
+- [x] `setup`, `doctor`, and an offline demo of the ledger
+- [ ] Todoist, mail, calendar and WhatsApp connectors
 - [x] Worker briefs written from the ledger's context, challenged and linted
 - [x] Nudging sessions stopped by API errors or rate limits, off by default
 - [ ] Claude Code workers on tmux and cmux over ssh
