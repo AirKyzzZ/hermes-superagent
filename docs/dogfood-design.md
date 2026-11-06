@@ -278,21 +278,23 @@ A `waiting` session is a `waiting` item. Its excerpt is the session's last quest
   - the PR it opened, from the transcript's PR rows.
 - In shadow mode, the board posts to the `agents` channel on each change of state, never re-posting an unchanged board. It can also show the bottom of a pane, read with `tmux capture-pane`.
 
-**Relaunch:** off by default, and turned on per host with `relaunch = true`, because it types into the owner's terminals. It acts only on hooked sessions, and only in two cases:
-- **A `limited` session gets one `continue`,** once the quota has reset. Claude Code resumes by itself on claude.ai plans, so the nudge waits until Claude Code reports its own auto-resume as stale or disabled.
-- **A `gone` session is resumed** with `claude --resume <session id>`, in a new pane in the same directory. That happens only when its process is confirmed dead and no `SessionEnd` was ever recorded.
+**Relaunch:** off by default, and turned on per host with `relaunch = true`, because it types into the owner's terminals. It acts only on hooked sessions, and only in one case: **a `limited` session gets one `continue`**, after `retry_after` for an API error, and for a rate limit only once Claude Code reports its own auto-resume as stale.
 
-Before any keystroke, the plugin checks three things, and escalates to the owner instead of typing when any fails:
-- the recorded process is a descendant of the pane's `pane_pid`;
-- it's the latest session to have claimed the pane;
-- `capture-pane` shows Claude's input box empty, with no dialog and no "Interrupted" mark.
+A `gone` session is never restarted by the plugin. cmux restores its own sessions after a restart, and a tab the owner closed looks the same as a crash, so resuming would risk two processes on one transcript or reviving work the owner ended. Its alert carries the `claude --resume <id>` command instead.
+
+Before any keystroke, the plugin checks, and escalates to the owner instead of typing when any check fails:
+- the session hasn't logged anything since it was judged `limited`;
+- its `claude` process is alive (its start time matches on Linux) and in the foreground of its terminal;
+- for tmux, that terminal is the pane's, the process descends from `pane_pid`, and the pane isn't in copy mode, synchronized or dead;
+- no other live session shares the pane;
+- the last prompt line on screen is empty, between its two rules, with no dialog, vim mode, "Interrupted" mark or work in progress.
 
 What relaunch leaves alone:
 - **`stuck`:** it only escalates. Pressing Esc to unstick a running tool is the owner's call.
 - **`waiting`:** never touched. It may hold a question or a permission.
-- **Interrupts and exits:** an Esc ends a turn without a `Stop` event, but the pane check sees "Interrupted", so the session is left as the owner left it. Ctrl-C and `/exit` record a `SessionEnd`, so they're never resumed.
+- **Interrupts and exits:** an Esc ends a turn without a `Stop` event, but the pane check sees "Interrupted", so the session is left as the owner left it. Ctrl-C and `/exit` record a `SessionEnd`.
 
-Each session has a budget, one nudge and one resume by default. Every relaunch is an item event, so `ledger show` has the full history. Relaunch only ever types the configured nudge text or the resume command.
+Each session gets one nudge, and an attempt that times out counts, since it may have typed. Every attempt is an item event, so `ledger show` has the full history. Relaunch only ever types the configured nudge text.
 
 The old setup's relay scripts may relaunch in other cases. Those get added here once Hermes sends them, each with the same pane checks.
 

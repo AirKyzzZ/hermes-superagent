@@ -107,6 +107,18 @@ hermes superagent --home ~/superagent agents
 
 `doctor` prints one line per check and exits non-zero when one fails. It runs each connector's poll once without recording anything, skipped while a tick holds the lock, so a host whose hook never ran, an ssh alias that doesn't connect or a `gh` login that lapsed shows up here with its error. The tick prints JSON. `errors` must be empty. `warnings` lists any source that fails, for example a host ssh can't reach. `agents` prints the board, sessions that need someone first.
 
+## Relaunch, once shadow mode looks right
+
+Relaunch stays off until the owner turns it on per machine, because it types into terminals. Add to a host's agents connector:
+
+```toml
+relaunch = true
+tmux = "/full/path/to/tmux"
+cmux = "/Applications/cmux.app/Contents/Resources/bin/cmux"
+```
+
+`tmux` and `cmux` need full paths when ssh's `PATH` doesn't have them, which is the case for Homebrew on a Mac. A session stopped on an API error gets one `continue` after 10 minutes, and one stopped by a rate limit gets it once Claude Code says its auto-resume went stale. Every other case is posted to the agents channel as needing the owner, with the reason. A session whose process died is never restarted by the plugin, since cmux restores its own sessions and a closed tab looks the same as a crash: its line carries the `claude --resume` command instead.
+
 ## 5. Schedule the tick
 
 ```ini

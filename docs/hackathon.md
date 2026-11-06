@@ -74,6 +74,7 @@ Hermes surfaces: `ctx.register_tool` (7 tools), the hooks `pre_gateway_dispatch`
 Disclosure, also in the README:
 - Spawns long-running worker processes from the argv the operator configures, and runs the outbound send command and the connector commands the operator configures.
 - The `agents` connector sends a read-only probe script through the host command the operator configures, usually `ssh`. The Claude Code hook it reads is printed by the plugin and installed by the operator.
+- Only when the operator sets `relaunch = true`, it types one short nudge into a Claude Code session stopped by an API error or a rate limit, after checking the pane and screen.
 - Stops or restarts its own workers by process group.
 - Spends tokens on the profile's model during ticks, and three calls per worker brief, capped per day.
 - Writes its database and worker directories under the configured home.
