@@ -38,4 +38,5 @@ else:
     if key not in fixture.get("no_total", []):
         headers.append(f"X-Total: {total}")
     headers.append(f"X-Next-Page: {page + 1 if page * size < len(entries) else ''}")
+    headers.append(f"X-Total-Pages: {max(1, -(-len(entries) // size))}")
 print("\r\n".join(headers) + "\r\n\r\n" + json.dumps(body))

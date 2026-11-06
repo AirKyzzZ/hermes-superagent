@@ -1,15 +1,18 @@
 from __future__ import annotations
 
 import json
+import logging
 import re
 import time
 import urllib.parse
 from collections.abc import Mapping
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
 from ..ledger import SourceItem, Upstream
 from . import ConnectorConfigError, ConnectorError, ConnectorSpec, Poll
 from .process import run_text
+
+logger = logging.getLogger(__name__)
 
 KEYS = frozenset({"queries", "glab", "hostname", "timeout", "env"})
 DEFAULT_QUERIES = {
@@ -21,7 +24,7 @@ DEFAULT_QUERIES = {
 OPEN_STATES = {"issues": "opened", "merge_requests": "opened", "todos": "pending"}
 PAGE_SIZE = 100
 MAX_PAGES = 50
-DONE_TODO_PAGES = 3
+DONE_CACHE_SECONDS = 120.0
 CALL_TIMEOUT_SECONDS = 30.0
 NEUTRAL_DIRECTORY = "/"
 _ID = re.compile(r"(?P<project>[A-Za-z0-9_.-]+(?:/[A-Za-z0-9_.-]+)+)(?P<kind>[#!])(?P<iid>\d+)")
@@ -40,15 +43,17 @@ class GitlabConnector:
     hostname: str
     timeout: float
     env_names: tuple[str, ...]
+    done_pages: dict[int, tuple[float, int, list[int]]] = field(default_factory=dict, compare=False, repr=False)
 
     def poll(self, cursor: str) -> Poll:
         deadline = time.monotonic() + self.timeout
-        endpoints = {endpoint(query) for query in self.queries.values()}
         found: dict[str, SourceItem] = {}
         matched: dict[str, list[str]] = {}
         problems: list[str] = []
+        failed: set[str] = set()
         me = ""
-        for name, query in self.queries.items():
+        ordered = sorted(self.queries.items(), key=lambda pair: endpoint(pair[1]) == "todos")
+        for name, query in ordered:
             kind = endpoint(query)
             try:
                 if "{me}" in query and not me:
@@ -56,10 +61,11 @@ class GitlabConnector:
                 entries = self._list(query.replace("{me}", urllib.parse.quote(me)), deadline, kind == "todos")
             except ConnectorError as error:
                 problems.append(f"query {name}: {error}")
+                failed.add(kind)
                 continue
             for entry in entries:
                 try:
-                    item = _todo(entry, endpoints) if kind == "todos" else _work_item(entry)
+                    item = _todo(entry, set(found), failed) if kind == "todos" else _work_item(entry)
                 except ConnectorError as error:
                     problems.append(f"query {name}: {error}")
                     continue
@@ -86,15 +92,7 @@ class GitlabConnector:
         deadline = time.monotonic() + self.timeout
         todo = _TODO_ID.fullmatch(external_id)
         if todo is not None:
-            for page in range(1, DONE_TODO_PAGES + 1):
-                done = self._api(f"todos?state=done&per_page={PAGE_SIZE}&page={page}", deadline)[1]
-                if not isinstance(done, list):
-                    raise ConnectorError("GitLab returned done todos in an unexpected shape")
-                if any(isinstance(entry, Mapping) and str(entry.get("id")) == todo[1] for entry in done):
-                    return Upstream.CLOSED
-                if len(done) < PAGE_SIZE:
-                    break
-            return Upstream.UNKNOWN
+            return Upstream.CLOSED if self._done_todo(int(todo[1]), deadline) else Upstream.UNKNOWN
         match = _ID.fullmatch(external_id)
         if match is None:
             return Upstream.UNKNOWN
@@ -108,6 +106,34 @@ class GitlabConnector:
         if isinstance(moved, str) and moved.lower() != external_id.lower():
             raise ConnectorError(f"{external_id} moved to {moved[:120]}, close the old item by hand")
         return Upstream.CLOSED if entry["state"] in _CLOSED else Upstream.OPEN
+
+    def _done_todo(self, wanted: int, deadline: float) -> bool:
+        low, high = 1, self._done_page(1, deadline)[0]
+        while low <= high:
+            middle = (low + high) // 2
+            ids = self._done_page(middle, deadline)[1]
+            if wanted in ids:
+                return True
+            if not ids or wanted > max(ids):
+                high = middle - 1
+            elif wanted < min(ids):
+                low = middle + 1
+            else:
+                return False
+        return False
+
+    def _done_page(self, page: int, deadline: float) -> tuple[int, list[int]]:
+        cached = self.done_pages.get(page)
+        if cached is not None and time.monotonic() - cached[0] < DONE_CACHE_SECONDS:
+            return cached[1], cached[2]
+        headers, body = self._api(f"todos?state=done&per_page={PAGE_SIZE}&page={page}", deadline)
+        if not isinstance(body, list):
+            raise ConnectorError("GitLab returned done todos in an unexpected shape")
+        pages = headers.get("x-total-pages", "")
+        count = int(pages) if pages.isdigit() else page
+        ids = [entry["id"] for entry in body if isinstance(entry, Mapping) and isinstance(entry.get("id"), int)]
+        self.done_pages[page] = (time.monotonic(), count, ids)
+        return count, ids
 
     def _username(self, deadline: float) -> str:
         user = self._api("user", deadline)[1]
@@ -132,8 +158,9 @@ class GitlabConnector:
                 raise ConnectorError(f"the total moved from {total} to {count} while paging, retrying next poll")
             total = int(count)
             expected = max(0, min(PAGE_SIZE, total - (page - 1) * PAGE_SIZE))
-            if hidden_allowed:
-                hidden += max(0, expected - len(body))
+            if hidden_allowed and len(body) < expected:
+                hidden += expected - len(body)
+                logger.info("GitLab counted %d todos it didn't return on page %d", expected - len(body), page)
             for entry in body:
                 if isinstance(entry, Mapping):
                     entries[str(entry.get("id"))] = entry
@@ -195,14 +222,13 @@ def _work_item(entry: Mapping[str, object]) -> SourceItem:
     )
 
 
-def _todo(entry: Mapping[str, object], endpoints: set[str]) -> SourceItem | None:
+def _todo(entry: Mapping[str, object], tracked: set[str], failed: set[str]) -> SourceItem | None:
     identifier, action = entry.get("id"), str(entry.get("action_name") or "")
     if not isinstance(identifier, int) or not action:
         raise ConnectorError("GitLab returned a todo without an id or an action")
     target, target_type = entry.get("target"), str(entry.get("target_type") or "")
     covered = _COVERED.get((action, target_type))
-    state = target.get("state") if isinstance(target, Mapping) else None
-    if covered in endpoints and state not in _CLOSED:
+    if covered is not None and (_reference(target) in tracked or covered in failed):
         return None
     project = entry.get("project")
     path = str(project.get("path_with_namespace", "")) if isinstance(project, Mapping) else ""

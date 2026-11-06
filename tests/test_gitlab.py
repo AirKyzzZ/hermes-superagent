@@ -209,3 +209,20 @@ def test_a_gitlab_project_never_borrows_a_github_checkout(tmp_path: Path) -> Non
     assert repo_key("github", "acme/app") == "acme/app"
     assert repo_key("gitlab", "acme/app") == "gitlab:acme/app"
     assert repo_key("command", "acme/app") == repo_key("", "acme/app") == "acme/app"
+
+
+def test_a_narrowed_issue_query_never_hides_an_assignment_todo(tmp_path: Path, fixture: Path) -> None:
+    backend = "issues?scope=assigned_to_me&state=opened&labels=backend"
+    unlabelled = work("acme/app", 8, labels=[])
+    write(fixture, lists={backend: [], TODOS: [{**todo(30, unlabelled), "action_name": "assigned"}]})
+    poll = build_connector(gitlab_spec(tmp_path, queries={"backend": backend, "todos": TODOS})).poll("")
+    assert [item.external_id for item in poll.items] == ["todo-30"]
+
+
+def test_a_todo_done_long_ago_is_still_found(tmp_path: Path, fixture: Path) -> None:
+    done = [todo(number) for number in range(1000, 600, -1)] + [todo(5)]
+    write(fixture, lists={"todos?state=done": done})
+    connector = build_connector(gitlab_spec(tmp_path))
+    assert connector.confirm("todo-5") is Upstream.CLOSED
+    assert connector.confirm("todo-700") is Upstream.CLOSED
+    assert connector.confirm("todo-6") is Upstream.UNKNOWN
