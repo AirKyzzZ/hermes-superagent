@@ -7,7 +7,7 @@ from collections.abc import Mapping
 from dataclasses import dataclass
 
 from ..ledger import SourceItem, Upstream
-from . import ConnectorConfigError, ConnectorError, ConnectorSpec, Poll
+from . import ConnectorConfigError, ConnectorError, ConnectorSpec, ContextPiece, Poll
 from .process import run_text
 
 KEYS = frozenset({"queries", "gh", "timeout", "env"})
@@ -19,6 +19,8 @@ DEFAULT_QUERIES = {
 PAGE_SIZE = 100
 SEARCH_CAP = 1000
 CALL_TIMEOUT_SECONDS = 30.0
+CONTEXT_COMMENTS = 20
+_FENCE = re.compile(r"```.*?(?:```|$)", re.S)
 _ID = re.compile(r"(?P<repo>[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+)#(?P<number>\d+)")
 _REPO_FROM_URL = re.compile(r"/repos/([^/]+/[^/]+)$")
 _HEADER_END = re.compile(r"\r?\n\r?\n")
@@ -75,6 +77,42 @@ class GithubConnector:
         if state not in ("open", "closed"):
             raise ConnectorError(f"GitHub returned no state for {external_id}")
         return Upstream.CLOSED if state == "closed" else Upstream.OPEN
+
+    def context(self, external_id: str) -> list[ContextPiece]:
+        match = _ID.fullmatch(external_id)
+        if match is None:
+            raise ConnectorError(f"not a GitHub issue id: {external_id[:80]!r}")
+        deadline = time.monotonic() + self.timeout
+        path = f"repos/{match['repo']}/issues/{match['number']}"
+        issue = self._api(path, deadline)
+        user = self._api("user", deadline)
+        if not isinstance(issue, Mapping) or not isinstance(user, Mapping):
+            raise ConnectorError("GitHub returned an unexpected shape")
+        owner = str(user.get("login", "")).lower()
+        count = issue.get("comments")
+        last_page = max(1, -(-count // PAGE_SIZE)) if isinstance(count, int) else 1
+        comments: list[Mapping[str, object]] = []
+        for page in range(last_page, 0, -1):
+            found = self._api(
+                f"{path}/comments", deadline, "-X", "GET", "-f", f"per_page={PAGE_SIZE}", "-f", f"page={page}"
+            )
+            if not isinstance(found, list):
+                raise ConnectorError("GitHub returned comments in an unexpected shape")
+            comments = [entry for entry in found if isinstance(entry, Mapping)] + comments
+            if len(comments) >= CONTEXT_COMMENTS:
+                break
+        kind = "pull request" if issue.get("pull_request") else "issue"
+        pieces = _pieces(f"the {kind} text", issue, owner)
+        address = str(issue.get("html_url", ""))
+        if address.startswith("https://github.com/"):
+            pieces.append(ContextPiece(f"where the {kind} lives", True, address))
+        shown = comments[-CONTEXT_COMMENTS:]
+        if isinstance(count, int) and count > len(shown):
+            left_out = f"{count - len(shown)} earlier comments are not included"
+            pieces.append(ContextPiece("comments left out", True, left_out))
+        for comment in shown:
+            pieces += _pieces(f"a comment from {str(comment.get('created_at', ''))[:10]}", comment, owner)
+        return pieces
 
     def _search(self, query: str, deadline: float) -> list[Mapping[str, object]]:
         entries: dict[str, Mapping[str, object]] = {}
@@ -160,6 +198,25 @@ def _item(entry: Mapping[str, object]) -> SourceItem:
         updated=str(entry.get("updated_at", "")),
         meta=meta,
     )
+
+
+def _pieces(label: str, entry: Mapping[str, object], owner: str) -> list[ContextPiece]:
+    user = entry.get("user")
+    author = str(user.get("login", "")) if isinstance(user, Mapping) else ""
+    body = str(entry.get("body") or "")
+    by = f"{label} by {author or 'someone'}"
+    if entry.get("performed_via_github_app"):
+        return [ContextPiece(f"{by} through an app", False, body)]
+    if not owner or author.lower() != owner:
+        return [ContextPiece(by, False, body)]
+    fenced = _FENCE.findall(body)
+    lines = _FENCE.sub("", body).splitlines()
+    quoted = [line for line in lines if line.lstrip().startswith(">")] + fenced
+    own = "\n".join(line for line in lines if not line.lstrip().startswith(">")).strip()
+    pieces = [ContextPiece(by, True, own, weak=True)]
+    if quoted:
+        pieces.append(ContextPiece(f"text quoted or pasted in {label} by {author}", False, "\n".join(quoted)))
+    return pieces
 
 
 def build(spec: ConnectorSpec) -> GithubConnector:

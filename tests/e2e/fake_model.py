@@ -124,6 +124,14 @@ def structured_reply(text: str) -> str | None:
             for trigger_id in dict.fromkeys(TRIGGER.findall(text))
         ]
         return json.dumps({"decisions": decisions})
+    if "You are a skeptical senior engineer" in text:
+        return json.dumps({"issues": [{"kind": "missing_acceptance", "text": "Say how to check it"}]})
+    if "You write the brief a coding agent" in text or "You rewrite a brief" in text:
+        lines = [
+            {"section": "context", "text": "The task comes from the owner's list", "cites": ["p2"]},
+            {"section": "acceptance", "text": "The renewal shows on the account", "cites": ["p2"]},
+        ]
+        return json.dumps({"goal": "Renew the domain", "asked_by": "the owner", "lines": lines})
     if "You watch one worker for goal drift" in text:
         return json.dumps({"verdict": "on_track", "reason": "the reports serve the goal"})
     return None
