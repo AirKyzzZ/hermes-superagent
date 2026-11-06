@@ -8,6 +8,7 @@ from typing import Any
 
 import pytest
 
+from superagent.agents import redact
 from superagent.briefwriter import REPORT_CONTRACT, BriefWriter, build_pack
 from superagent.cli import run, setup_parser
 from superagent.config import CONFIG_FILENAME, DB_FILENAME, ConfigError, parse_config
@@ -330,3 +331,18 @@ def test_a_broken_model_reply_fails_loudly_and_saves_nothing(
 def test_the_briefs_section_is_checked(section: str, message: str) -> None:
     with pytest.raises(ConfigError, match=message.replace("[", r"\[").replace("]", r"\]")):
         parse_config(section)
+
+
+@pytest.mark.parametrize(
+    ("text", "kept"),
+    [
+        ("see commit " + "a1" * 20, True),
+        ("https://github.com/acme/app/commit/" + "b2" * 20, True),
+        ("test_the_lint_passes_what_trusted_text_holds", True),
+        ("key " + "a1" * 20, False),
+        ("abcd1234-efgh5678-ijkl9012-mnop3456-qrst7890", False),
+        ("a1b2c3d4_e5f6g7h8_i9j0k1l2_m3n4o5p6_q7r8s9t0", False),
+    ],
+)
+def test_redaction_spares_only_commit_shas_in_context_and_plain_names(text: str, kept: bool) -> None:
+    assert (redact(text) == text) is kept

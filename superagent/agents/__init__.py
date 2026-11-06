@@ -40,7 +40,9 @@ _SECRETS = (
     (re.compile(r"-----BEGIN [A-Z ]*PRIVATE KEY-----"), "[redacted]"),
 )
 _LONG_TOKEN = re.compile(r"[A-Za-z0-9+_-]{40,}={0,2}")
-_NOT_SECRET = re.compile(r"[0-9a-f]{40}|[a-z0-9]+(?:[_-][a-z0-9]+){3,}")
+_SNAKE_NAME = re.compile(r"[a-z]{1,12}(?:_[a-z]{1,12}){3,}")
+_SHA = re.compile(r"[0-9a-f]{40}")
+_SHA_CONTEXT = re.compile(r"(?i)(?:commit|sha|/commit/|/commits/)\W{0,3}$")
 
 
 class SessionState(StrEnum):
@@ -70,7 +72,16 @@ class SessionView:
 def redact(text: str) -> str:
     for pattern, replacement in _SECRETS:
         text = pattern.sub(replacement, text)
-    return _LONG_TOKEN.sub(lambda match: match[0] if _NOT_SECRET.fullmatch(match[0]) else "[redacted]", text)
+
+    def keep(match: re.Match[str]) -> str:
+        token = match[0]
+        if _SNAKE_NAME.fullmatch(token):
+            return token
+        if _SHA.fullmatch(token) and _SHA_CONTEXT.search(match.string[max(0, match.start() - 12) : match.start()]):
+            return token
+        return "[redacted]"
+
+    return _LONG_TOKEN.sub(keep, text)
 
 
 def _asks(event: Mapping[str, object]) -> bool:
