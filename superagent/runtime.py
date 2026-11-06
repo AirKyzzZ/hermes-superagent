@@ -9,15 +9,18 @@ import subprocess
 import time
 from collections.abc import Mapping
 from dataclasses import dataclass, replace
+from datetime import datetime, timedelta
 from pathlib import Path
+from zoneinfo import ZoneInfo
 
+from .brief import BriefSettings, build_brief
 from .config import DB_FILENAME, WORKDIRS_DIRNAME, Config, load_config
 from .connectors import Connector, build_connector
 from .domain import Ticket
 from .ledger import Ledger
 from .polling import SourceWarning, poll_sources
 from .router import Assessor, Router, Sender, chat_safe
-from .store import Store
+from .store import Store, split_message
 from .watchdog import CheckResult, DriftJudge, check_once
 from .worker import SubprocessBackend
 
@@ -164,6 +167,11 @@ def _run_phases(runtime: Runtime, judge: DriftJudge | None, assessor: Assessor |
     except Exception as error:
         logger.exception("polling failed")
         errors.append(f"poll: {error}")
+    try:
+        send_brief_when_due(runtime)
+    except Exception as error:
+        logger.exception("the brief failed")
+        errors.append(f"brief: {error}")
     if assessor is not None:
         try:
             tickets = runtime.router.assess_candidates(assessor)
@@ -203,6 +211,27 @@ def _run_phases(runtime: Runtime, judge: DriftJudge | None, assessor: Assessor |
             errors.append(f"heartbeat: {error}")
     texts = tuple(warning.text for warning in warnings)
     return TickResult(tuple(tickets), tuple(checks), tuple(delivered), tuple(errors), warnings=texts)
+
+
+def send_brief_when_due(runtime: Runtime, now: float | None = None) -> bool:
+    if not runtime.config.brief_channel:
+        return False
+    moment = time.time() if now is None else now
+    local = datetime.fromtimestamp(moment, ZoneInfo(runtime.config.brief_timezone))
+    day = (local - timedelta(hours=runtime.config.brief_hour)).date().isoformat()
+    if day in runtime.ledger.brief_days():
+        return False
+    return save_brief(runtime, day, moment)
+
+
+def save_brief(runtime: Runtime, day: str, moment: float) -> bool:
+    since = runtime.ledger.last_brief(moment) or moment - 86400
+    settings = BriefSettings(runtime.config.stale_after_seconds, runtime.config.brief_timezone)
+    live = {ticket.id for ticket in runtime.store.live_tickets()}
+    brief = build_brief(runtime.ledger, runtime.config.connectors, since, moment, settings, live)
+    first, *rest = split_message(brief.text)
+    parts = [first, *(part.replace(") ", f") [{day}] ", 1) for part in rest)]
+    return runtime.ledger.save_brief(day, moment, runtime.config.brief_channel, parts, brief.shown)
 
 
 def _raise_alerts(runtime: Runtime, errors: list[str], warnings: list[SourceWarning]) -> list[tuple[str, str, str]]:

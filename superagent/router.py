@@ -34,6 +34,7 @@ ASSESS_ATTEMPTS = 3
 OFFER_VALID_SECONDS = 3600.0
 _ATTACHMENT_TAG = re.compile(r"media:", re.IGNORECASE)
 _DIRECTIVE_OPENING = re.compile(r"\[(?=\[)")
+_MENTION = re.compile(r"@(?=everyone|here)|<@|<#")
 
 
 class Outcome(StrEnum):
@@ -281,7 +282,8 @@ class Router:
 
 
 def chat_safe(text: str) -> str:
-    return _DIRECTIVE_OPENING.sub("[ ", _ATTACHMENT_TAG.sub("media ", text))
+    quiet = _MENTION.sub(lambda match: match.group(0)[0] + "\u200b" + match.group(0)[1:], text)
+    return _DIRECTIVE_OPENING.sub("[ ", _ATTACHMENT_TAG.sub("media ", quiet))
 
 
 def shorten(text: str, limit: int = CHAT_WORD_LIMIT) -> str:

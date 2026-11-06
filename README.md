@@ -328,6 +328,8 @@ The rendered prompt becomes the goal, the comment's author is checked against `a
 | `[tick] deadline_seconds` | `600` | A CLI tick running longer is stopped. A tick that finds the lock held longer than this fails loudly instead of skipping |
 | `[tick] alert_after_seconds` | `300` | How long an error has to last before it's alerted |
 | `[heartbeat] argv` | none | Runs after every tick with no errors, such as a ping to an external uptime check, so a dead timer gets noticed from outside |
+| `[channels] brief`, `[brief] hour`, `timezone` | none, `8`, `UTC` | The daily brief goes to `brief` once a day, from `hour` until the next day's `hour`, so a box that was down catches up. It lists source problems, what waits on you, what vanished from a source, what reopened, what's new since the last brief, what got ignored and why, and the day's readings. Every other open item shows at least once every `stale_after`, unless it's snoozed or its worker is running. "Since the last brief" only moves once every part of that brief has been delivered. `superagent brief` prints it now, and `--send` sends it |
+| `[brief] stale_after` | `3d` | How long a triaged item can go unchanged before the brief lists it again |
 | `[connectors.<name>] type` | required | `command`, `github` or `agents`. A connector polls one tool into the item ledger |
 | `[connectors.<name>] every` | `5m` | How often it polls |
 | `[connectors.<name>] track` | `true` | `false` keeps its items, such as readings or events, without anyone owning them |

@@ -290,7 +290,8 @@ def stage_router(work: Path, log: Path) -> None:
             f'\n[sources."webhook:github"]\npolicy = "explicit_only"\nallow = ["alice"]\nnotify = "discord:team"\n'
             f'\n[sources."webhook:ci"]\npolicy = "candidate"\nbots = ["github-actions[bot]"]\n'
             f'\n[digest]\nchannel = "discord:team"\n'
-            f'\n[channels]\nalerts = "discord:alerts"\n'
+            f'\n[channels]\nalerts = "discord:alerts"\nbrief = "discord:brief"\n'
+            f"\n[brief]\nhour = 0\n"
             f"\n[tick]\nalert_after_seconds = 0\n"
             f'\n[connectors.tasks]\ntype = "command"\nevery = "0s"\nargv = {tasks_argv}\n'
             'fields = { id = "id", title = "content" }\n'
@@ -390,6 +391,11 @@ def stage_router(work: Path, log: Path) -> None:
             "discord:agents\tsite [agents-here] is waiting: permission for Bash (it-" in sent_now,
             sent_now[-400:],
         )
+        briefed = any(
+            line.startswith("discord:brief\t") and ("Brief for" in line or "(1/" in line)
+            for line in sent_now.splitlines()
+        )
+        check("brief: the first tick of the day sends the brief", briefed, sent_now[-300:])
         board = hermes("-p", "watchdog", "superagent", "agents")
         check("agents: the board lists it", "waiting" in board.stdout and "site" in board.stdout, board.stdout[-300:])
         check(

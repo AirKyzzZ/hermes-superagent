@@ -13,13 +13,14 @@ from datetime import datetime
 from pathlib import Path
 
 from .agents import ATTENTION_STATES, HOOK_SCRIPT, SessionState, settings_block
+from .brief import BriefSettings, build_brief
 from .config import DB_FILENAME
 from .digest import build_digest, send_digest
 from .domain import ReportState, Trigger
 from .ledger import Item, ItemState, Ledger, LedgerError
 from .reporting import identity_from_workdir, submit_report
 from .router import Assessor
-from .runtime import open_runtime, tick
+from .runtime import open_runtime, save_brief, tick
 from .watchdog import DriftJudge
 
 _WORKER_STATES = [state.value for state in ReportState]
@@ -50,6 +51,8 @@ def setup_parser(parser: argparse.ArgumentParser) -> None:
     outbox = commands.add_parser("outbox", help="list messages not delivered yet, or drop one")
     outbox.add_argument("--drop", type=int, default=None, metavar="SEQ", help="stop retrying this message")
     outbox.add_argument("--reason", default="dropped by an operator")
+    brief = commands.add_parser("brief", help="what is open, waiting, gone or untouched, since the last brief")
+    brief.add_argument("--send", action="store_true", help="also queue it for [channels] brief")
     agents = commands.add_parser("agents", help="every Claude Code session the agents connectors see")
     agents.add_argument("--json", action="store_true")
     agents.add_argument("--hook-script", action="store_true", help="print the hook script to put on a host")
@@ -115,6 +118,19 @@ def run(
     if args.superagent_command == "cancel":
         ticket = runtime.router.cancel(args.ticket, args.by)
         print(json.dumps({"ticket": ticket.id, "status": ticket.status.value}))
+        return 0
+    if args.superagent_command == "brief":
+        now = time.time()
+        if args.send:
+            if not runtime.config.brief_channel:
+                print("set brief under [channels] to send the brief", file=sys.stderr)
+                return 1
+            save_brief(runtime, f"manual-{int(now)}", now)
+            print("queued for", runtime.config.brief_channel)
+            return 0
+        settings = BriefSettings(runtime.config.stale_after_seconds, runtime.config.brief_timezone)
+        since = runtime.ledger.last_brief(now) or now - 86400
+        print(build_brief(runtime.ledger, runtime.config.connectors, since, now, settings).text)
         return 0
     if args.superagent_command == "agents":
         names = {spec.name for spec in runtime.config.connectors if spec.type == "agents"}

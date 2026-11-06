@@ -21,6 +21,11 @@ argv = ["hermes", "send", "-q", "--to", "{channel}", "--", "{text}"]
 
 [channels]
 alerts = "discord:ALERTS_CHANNEL_ID"
+brief = "discord:BRIEF_CHANNEL_ID"
+
+[brief]
+hour = 8
+timezone = "Europe/Berlin"
 
 [heartbeat]
 argv = ["curl", "-fsS", "-m", "10", "https://hc-ping.com/YOUR-CHECK-ID"]

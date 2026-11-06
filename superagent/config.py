@@ -5,8 +5,9 @@ import os
 import tomllib
 from dataclasses import dataclass, fields, replace
 from pathlib import Path
+from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
-from .connectors import ConnectorConfigError, ConnectorSpec, parse_specs
+from .connectors import ConnectorConfigError, ConnectorSpec, duration, parse_specs
 from .gate import Rules, RulesError, parse_rules
 from .watchdog import WatchdogPolicy
 
@@ -26,13 +27,15 @@ _KNOWN_KEYS = {
         "heartbeat",
         "tick",
         "connectors",
+        "brief",
     },
     "sources": {"policy", "allow", "bots", "pass_strangers", "notify", "via_router"},
     "semantic": {"name", "text", "mode"},
     "worker": {"argv", "allow_same_user"},
     "outbound": {"argv"},
     "digest": {"channel"},
-    "channels": {"alerts"},
+    "channels": {"alerts", "brief"},
+    "brief": {"hour", "timezone", "stale_after"},
     "heartbeat": {"argv"},
     "tick": {"deadline_seconds", "alert_after_seconds"},
 }
@@ -52,6 +55,10 @@ class Config:
     tick_deadline_seconds: float = 600.0
     alert_after_seconds: float = 300.0
     connectors: tuple[ConnectorSpec, ...] = ()
+    brief_channel: str = ""
+    brief_hour: int = 8
+    brief_timezone: str = "UTC"
+    stale_after_seconds: float = 3 * 86400.0
 
 
 class ConfigError(ValueError):
@@ -88,9 +95,25 @@ def parse_config(raw: str) -> Config:
     tick_section = _table(data, "tick")
     deadline = _number(tick_section, "tick", "deadline_seconds", 600.0, minimum=1.0)
     alert_after = _number(tick_section, "tick", "alert_after_seconds", 300.0, minimum=0.0)
-    alerts_channel = _table(data, "channels").get("alerts", "")
-    if not isinstance(alerts_channel, str):
-        raise ConfigError("[channels] alerts must be a string such as discord:123")
+    channels = _table(data, "channels")
+    alerts_channel, brief_channel = channels.get("alerts", ""), channels.get("brief", "")
+    if not isinstance(alerts_channel, str) or not isinstance(brief_channel, str):
+        raise ConfigError("[channels] values must be strings such as discord:123")
+    brief = _table(data, "brief")
+    if brief and not brief_channel:
+        raise ConfigError("[brief] is set but [channels] brief isn't, so no brief would ever be sent")
+    hour = brief.get("hour", 8)
+    if isinstance(hour, bool) or not isinstance(hour, int) or not 0 <= hour <= 23:
+        raise ConfigError("[brief] hour must be a whole hour from 0 to 23")
+    timezone = brief.get("timezone", "UTC")
+    try:
+        ZoneInfo(str(timezone))
+    except (ZoneInfoNotFoundError, ValueError) as error:
+        raise ConfigError(f"[brief] timezone must be a zone such as Europe/Berlin, got {timezone!r}") from error
+    try:
+        stale_after = duration(brief.get("stale_after", "3d"), "[brief] stale_after")
+    except ConnectorConfigError as error:
+        raise ConfigError(str(error)) from error
     try:
         connectors = parse_specs(data.get("connectors", {}))
     except ConnectorConfigError as error:
@@ -110,6 +133,10 @@ def parse_config(raw: str) -> Config:
         tick_deadline_seconds=deadline,
         alert_after_seconds=alert_after,
         connectors=connectors,
+        brief_channel=brief_channel,
+        brief_hour=hour,
+        brief_timezone=str(timezone),
+        stale_after_seconds=stale_after,
     )
 
 
@@ -135,7 +162,7 @@ def _reject_unknown_keys(data: dict[str, object]) -> None:
     for rule in data.get("semantic") or []:  # type: ignore[attr-defined]
         if unknown := set(rule) - _KNOWN_KEYS["semantic"]:
             problems.append(f"unknown keys in [[semantic]]: {sorted(unknown)}")
-    for section in ("worker", "outbound", "digest", "channels", "heartbeat", "tick"):
+    for section in ("worker", "outbound", "digest", "channels", "heartbeat", "tick", "brief"):
         body = data.get(section) or {}
         if not isinstance(body, dict):
             problems.append(f"[{section}] must be a table")
