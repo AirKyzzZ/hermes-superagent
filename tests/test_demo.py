@@ -25,3 +25,7 @@ def test_demo_runs_the_whole_vertical_slice() -> None:
     assert "]: last 3 reports are identical" in output
     assert "Needs you [solve the impossible migration · tk-" in output
     assert "still open: 0" in output
+    assert "its snapshot shrank from 8 to 2 items, so nothing was marked gone" in output
+    assert "still 8 open, nothing marked gone" in output
+    assert "Pay the accountant: closed, its source confirmed it" in output
+    assert "Fix the backup job: gone without a close, kept open" in output
