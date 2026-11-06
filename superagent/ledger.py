@@ -29,7 +29,9 @@ CREATE TABLE IF NOT EXISTS item_events (
 );
 CREATE INDEX IF NOT EXISTS item_events_by_item ON item_events (item_id, seq);
 CREATE TABLE IF NOT EXISTS ledger_schema (version INTEGER NOT NULL);
-CREATE TABLE IF NOT EXISTS briefs (day TEXT PRIMARY KEY, built_at REAL NOT NULL);
+CREATE TABLE IF NOT EXISTS briefs (
+    day TEXT PRIMARY KEY, built_at REAL NOT NULL, first_seq INTEGER NOT NULL, last_seq INTEGER NOT NULL
+);
 CREATE TABLE IF NOT EXISTS announcements (
     item_id TEXT NOT NULL, key TEXT NOT NULL, at REAL NOT NULL, PRIMARY KEY (item_id, key)
 );
@@ -43,7 +45,10 @@ CREATE TABLE IF NOT EXISTS source_runs (
     count INTEGER NOT NULL, new_items INTEGER NOT NULL, held INTEGER NOT NULL, error TEXT NOT NULL
 );
 """
-_MIGRATIONS: tuple[str, ...] = ("ALTER TABLE items ADD COLUMN confirm_attempt REAL",)
+_MIGRATIONS: tuple[str, ...] = (
+    "ALTER TABLE items ADD COLUMN confirm_attempt REAL",
+    "ALTER TABLE items ADD COLUMN last_briefed REAL",
+)
 
 
 class ItemState(StrEnum):
@@ -120,6 +125,7 @@ class Item:
     missing_since: float | None
     snoozed_until: float | None
     ticket_id: str | None
+    last_briefed: float | None = None
 
     @property
     def is_open(self) -> bool:
@@ -432,33 +438,64 @@ class Ledger:
             )
         return cursor.rowcount == 1
 
-    def ignored_since(self, since: float) -> list[tuple[Item, ItemEvent]]:
+    def events_since(
+        self, since: float, until: float, *, to_state: ItemState, note: str = ""
+    ) -> list[tuple[Item, ItemEvent]]:
+        query = "SELECT * FROM item_events WHERE to_state = ? AND at > ? AND at <= ?"
+        params: list[object] = [to_state.value, since, until]
+        if note:
+            query += " AND note = ?"
+            params.append(note)
+        else:
+            query += " AND (from_state IS NULL OR from_state != ?)"
+            params.append(to_state.value)
         with self._connect() as connection:
-            events = connection.execute(
-                "SELECT * FROM item_events WHERE to_state = ? AND (from_state IS NULL OR from_state != ?) AND at > ? "
-                "ORDER BY seq",
-                (ItemState.IGNORED.value, ItemState.IGNORED.value, since),
-            ).fetchall()
-        found: list[tuple[Item, ItemEvent]] = []
+            events = connection.execute(query + " ORDER BY seq", params).fetchall()
+        latest: dict[str, tuple[Item, ItemEvent]] = {}
         for event in events:
             item = self.peek(event["item_id"])
             if item is not None:
-                found.append((item, _event(event)))
-        return found
+                latest[item.id] = (item, _event(event))
+        return list(latest.values())
 
-    def last_brief(self) -> float | None:
+    def last_brief(self, now: float) -> float | None:
         with self._connect() as connection:
-            row = connection.execute("SELECT MAX(built_at) AS at FROM briefs").fetchone()
+            has_outbox = connection.execute(
+                "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'outbox'"
+            ).fetchone()
+            delivered = (
+                " AND NOT EXISTS (SELECT 1 FROM outbox o WHERE o.seq BETWEEN b.first_seq AND b.last_seq "
+                "AND o.sent_at IS NULL)"
+                if has_outbox
+                else ""
+            )
+            row = connection.execute(
+                f"SELECT MAX(b.built_at) AS at FROM briefs b WHERE b.built_at <= ?{delivered}", (now,)
+            ).fetchone()
         return row["at"] if row and row["at"] is not None else None
 
     def brief_days(self) -> set[str]:
         with self._connect() as connection:
             return {row["day"] for row in connection.execute("SELECT day FROM briefs")}
 
-    def record_brief(self, day: str) -> bool:
+    def save_brief(self, day: str, built_at: float, channel: str, parts: Sequence[str], shown: Sequence[str]) -> bool:
         with self._connect() as connection:
-            cursor = connection.execute("INSERT OR IGNORE INTO briefs VALUES (?, ?)", (day, time.time()))
-        return cursor.rowcount == 1
+            if connection.execute("SELECT 1 FROM briefs WHERE day = ?", (day,)).fetchone():
+                return False
+            seqs = [
+                int(
+                    connection.execute(
+                        "INSERT INTO outbox (ticket_id, channel, text) VALUES (?, ?, ?)", ("brief", channel, part)
+                    ).lastrowid
+                    or 0
+                )
+                for part in parts
+            ]
+            connection.execute(
+                "INSERT INTO briefs VALUES (?, ?, ?, ?)", (day, built_at, min(seqs, default=0), max(seqs, default=0))
+            )
+            connection.executemany("UPDATE items SET last_briefed = ? WHERE id = ?", [(built_at, i) for i in shown])
+        return True
 
     def peek(self, identifier: str) -> Item | None:
         with self._connect() as connection:
@@ -623,4 +660,5 @@ def _item(row: sqlite3.Row) -> Item:
         missing_since=row["missing_since"],
         snoozed_until=row["snoozed_until"],
         ticket_id=row["ticket_id"],
+        last_briefed=row["last_briefed"],
     )

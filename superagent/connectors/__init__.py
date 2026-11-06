@@ -61,10 +61,11 @@ class ConnectorType:
 
 
 def connector_types() -> dict[str, ConnectorType]:
-    from . import agents, command
+    from . import agents, command, github
 
     return {
         "command": ConnectorType(command.KEYS, command.build),
+        "github": ConnectorType(github.KEYS, github.build),
         "agents": ConnectorType(agents.KEYS, agents.build),
     }
 

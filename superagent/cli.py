@@ -20,7 +20,7 @@ from .domain import ReportState, Trigger
 from .ledger import Item, ItemState, Ledger, LedgerError
 from .reporting import identity_from_workdir, submit_report
 from .router import Assessor
-from .runtime import open_runtime, tick
+from .runtime import open_runtime, save_brief, tick
 from .watchdog import DriftJudge
 
 _WORKER_STATES = [state.value for state in ReportState]
@@ -121,15 +121,16 @@ def run(
         return 0
     if args.superagent_command == "brief":
         now = time.time()
-        settings = BriefSettings(runtime.config.stale_after_seconds, runtime.config.brief_timezone)
-        since = runtime.ledger.last_brief() or now - 86400
-        text = build_brief(runtime.ledger, runtime.config.connectors, since, now, settings)
         if args.send:
             if not runtime.config.brief_channel:
                 print("set brief under [channels] to send the brief", file=sys.stderr)
                 return 1
-            runtime.store.queue_message("brief", runtime.config.brief_channel, text)
-        print(text)
+            save_brief(runtime, f"manual-{int(now)}", now)
+            print("queued for", runtime.config.brief_channel)
+            return 0
+        settings = BriefSettings(runtime.config.stale_after_seconds, runtime.config.brief_timezone)
+        since = runtime.ledger.last_brief(now) or now - 86400
+        print(build_brief(runtime.ledger, runtime.config.connectors, since, now, settings).text)
         return 0
     if args.superagent_command == "agents":
         names = {spec.name for spec in runtime.config.connectors if spec.type == "agents"}

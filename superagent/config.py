@@ -100,6 +100,8 @@ def parse_config(raw: str) -> Config:
     if not isinstance(alerts_channel, str) or not isinstance(brief_channel, str):
         raise ConfigError("[channels] values must be strings such as discord:123")
     brief = _table(data, "brief")
+    if brief and not brief_channel:
+        raise ConfigError("[brief] is set but [channels] brief isn't, so no brief would ever be sent")
     hour = brief.get("hour", 8)
     if isinstance(hour, bool) or not isinstance(hour, int) or not 0 <= hour <= 23:
         raise ConfigError("[brief] hour must be a whole hour from 0 to 23")
