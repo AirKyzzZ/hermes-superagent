@@ -6,6 +6,7 @@ from pathlib import Path
 
 import pytest
 
+from superagent.cli import repo_key
 from superagent.connectors import ConnectorConfigError, ConnectorSpec, build_connector, parse_specs
 from superagent.ledger import ItemState, Ledger, Upstream
 from superagent.polling import poll_sources
@@ -137,3 +138,8 @@ def test_queries_must_ask_for_whats_open_and_leave_paging_alone(queries: dict[st
 def test_gitlab_is_never_trusted_wholesale() -> None:
     with pytest.raises(ConnectorConfigError, match="trusted"):
         parse_specs({"gitlab": {"type": "gitlab", "trusted": True}})
+
+
+def test_a_gitlab_project_never_borrows_a_github_checkout(tmp_path: Path) -> None:
+    assert repo_key("github", "acme/app") == "acme/app"
+    assert repo_key("gitlab", "acme/app") == "gitlab:acme/app"

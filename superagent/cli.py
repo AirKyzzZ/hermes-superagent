@@ -299,7 +299,7 @@ def run_briefs(args: argparse.Namespace, runtime: Runtime, writer: BriefWriter |
         trusted_source=spec.trusted if spec else False,
         context=context,
         notes=config.brief_notes,
-        repo_path=config.brief_repos.get(repo, ""),
+        repo_path=config.brief_repos.get(repo_key(spec.type if spec else "", repo), ""),
     )
     text = None if args.fresh else runtime.ledger.cached_worker_brief(item.id, pack.digest)
     if text is None:
@@ -324,6 +324,10 @@ def run_briefs(args: argparse.Namespace, runtime: Runtime, writer: BriefWriter |
     if args.send:
         runtime.store.queue_message(BRIEFS_TICKET, config.briefs_channel, chat_safe(text))
     return 0
+
+
+def repo_key(kind: str, repo: str) -> str:
+    return repo if kind == "github" else f"{kind}:{repo}"
 
 
 def run_setup(args: argparse.Namespace, home: Path) -> int:
