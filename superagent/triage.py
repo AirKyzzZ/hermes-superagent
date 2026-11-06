@@ -1,17 +1,21 @@
 from __future__ import annotations
 
-import fnmatch
 import logging
 import re
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
+from functools import lru_cache
 
+from .agents import redact
 from .ledger import Item, ItemState, Ledger, LedgerError
 from .polling import Notify
 
 logger = logging.getLogger(__name__)
 
 FIELDS = ("connector", "title", "url", "due", "excerpt")
+LIST_KEYS = frozenset({"labels", "matched", "tags"})
+RESERVED_NAMES = frozenset({"untracked", "owned"})
+LINES_PER_MESSAGE = 20
 _NAME = re.compile(r"[a-z0-9][a-z0-9_-]*")
 
 
@@ -31,22 +35,23 @@ class TriageRule:
             value = field_value(item, key)
             if value is None:
                 return False
-            candidates = [value, *(part.strip() for part in value.split(","))] if "," in value else [value]
-            lowered = [pattern.lower() for pattern in patterns]
-            if not any(
-                fnmatch.fnmatchcase(candidate.lower(), pattern) for candidate in candidates for pattern in lowered
-            ):
+            candidates = [part.strip() for part in value.split(",")] if key in LIST_KEYS else [value]
+            if not any(glob(pattern).fullmatch(candidate) for candidate in candidates for pattern in patterns):
                 return False
         return True
+
+
+@lru_cache(maxsize=512)
+def glob(pattern: str) -> re.Pattern[str]:
+    parts = (".*" if char == "*" else "." if char == "?" else re.escape(char) for char in pattern)
+    return re.compile("".join(parts), re.IGNORECASE | re.DOTALL)
 
 
 def field_value(item: Item, key: str) -> str | None:
     if key == "id":
         return item.external_id
-    if key in FIELDS:
-        return str(getattr(item, key))
-    value = item.meta.get(key)
-    return None if value is None else str(value)
+    value = getattr(item, key) if key in FIELDS else item.meta.get(key)
+    return str(value) if value else None
 
 
 def parse_triage(rules: object, areas: object) -> tuple[tuple[TriageRule, ...], dict[str, str]]:
@@ -62,7 +67,7 @@ def parse_triage(rules: object, areas: object) -> tuple[tuple[TriageRule, ...], 
         channels[str(name)] = channel
     if not isinstance(rules, list):
         raise TriageError("[[triage]] must be a list of rules")
-    parsed = []
+    parsed: list[TriageRule] = []
     for number, body in enumerate(rules, 1):
         where = f"triage rule {number}"
         if not isinstance(body, Mapping) or set(body) - {"name", "match", "area", "ignore"}:
@@ -70,6 +75,10 @@ def parse_triage(rules: object, areas: object) -> tuple[tuple[TriageRule, ...], 
         name = body.get("name", str(number))
         if not isinstance(name, str) or not _NAME.fullmatch(name):
             raise TriageError(f"{where} name must use lowercase letters, digits, - and _")
+        if name in RESERVED_NAMES:
+            raise TriageError(f"{where} can't be named {name}, the plugin's own rules use that name")
+        if any(rule.name == name for rule in parsed):
+            raise TriageError(f"{where} reuses the name {name}, and each rule needs its own")
         match = body.get("match")
         if not isinstance(match, Mapping) or not match:
             raise TriageError(f'{where} needs a match table, such as {{ connector = "github", repo = "acme/*" }}')
@@ -95,6 +104,7 @@ def triage_new(
 ) -> None:
     if not rules:
         return
+    filed: dict[str, list[tuple[Item, str]]] = {}
     for item in ledger.items(open_only=True):
         if item.state is not ItemState.NEW:
             continue
@@ -106,11 +116,22 @@ def triage_new(
             if rule.ignore:
                 ledger.move(item.id, ItemState.IGNORED, actor, rule.ignore, expected=ItemState.NEW)
                 continue
-            ledger.move(item.id, ItemState.TRIAGED, actor, "", expected=ItemState.NEW, area=rule.area)
+            moved = ledger.move(item.id, ItemState.TRIAGED, actor, "", expected=ItemState.NEW, area=rule.area)
         except LedgerError as error:
             logger.info("left %s as it is: %s", item.handle, error)
             continue
-        channel = channels.get(rule.area, "")
-        if notify is not None and channel and ledger.announce_once(item.id, f"area:{rule.area}@{item.last_changed}"):
-            title = " ".join(item.title.split())[:200]
-            notify(channel, f"New in {rule.area}: {title} [{item.connector}] ({item.handle})")
+        key = f"area:{rule.area}@{moved.last_changed}"
+        if channels.get(rule.area) and not ledger.announced(item.id, key):
+            filed.setdefault(rule.area, []).append((moved, key))
+    if notify is None:
+        return
+    for area, entries in filed.items():
+        lines = [
+            f"- {' '.join(redact(item.title).split())[:200]} [{item.connector}] ({item.handle})"
+            for item, _ in entries[:LINES_PER_MESSAGE]
+        ]
+        if len(entries) > LINES_PER_MESSAGE:
+            lines.append(f"- and {len(entries) - LINES_PER_MESSAGE} more, see superagent ledger list")
+        notify(channels[area], "\n".join([f"New in {area}:", *lines]))
+        for item, key in entries:
+            ledger.announce_once(item.id, key)

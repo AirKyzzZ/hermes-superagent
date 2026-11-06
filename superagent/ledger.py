@@ -436,6 +436,13 @@ class Ledger:
             if cursor.rowcount != 1:
                 raise LedgerError(f"no source {connector} has been polled yet")
 
+    def announced(self, identifier: str, key: str) -> bool:
+        with self._connect() as connection:
+            row = connection.execute(
+                "SELECT 1 FROM announcements WHERE item_id = ? AND key = ?", (identifier, key)
+            ).fetchone()
+        return row is not None
+
     def announce_once(self, identifier: str, key: str) -> bool:
         with self._connect() as connection:
             cursor = connection.execute(

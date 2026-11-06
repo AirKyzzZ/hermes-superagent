@@ -58,7 +58,7 @@ def test_the_first_matching_rule_files_or_ignores_each_new_item(tmp_path: Path) 
     assert ledger.get(other).state is ItemState.NEW
     assert [event.actor for event in ledger.history(paper)][-1] == "rule:newsletters"
     assert [event.actor for event in ledger.history(issue)][-1] == "rule:2"
-    assert sent == [("discord:work", f"New in work: Item acme/app#1 [github] ({ledger.get(issue).handle})")]
+    assert sent == [("discord:work", f"New in work:\n- Item acme/app#1 [github] ({ledger.get(issue).handle})")]
     triage_new(ledger, rules, channels, lambda channel, text: sent.append((channel, text)))
     assert len(sent) == 1
 
@@ -91,6 +91,12 @@ def test_an_ignored_item_shows_in_the_brief_with_its_reason(tmp_path: Path) -> N
         ('[areas.work]\n[[triage]]\nmatch = { repo = "a/*" }\narea = "play"\n', "isn't one of the [areas]"),
         ('[areas.work]\ncolour = "red"\n', "only a channel"),
         ('[[triage]]\nmatch = { repo = "a/*" }\narea = "w"\nassign = "vps"\n', "takes name, match"),
+        (
+            '[[triage]]\nname = "a"\nmatch = { x = "1" }\narea = "w"\n'
+            '[[triage]]\nname = "a"\nmatch = { x = "2" }\narea = "w"\n',
+            "reuses",
+        ),
+        ('[[triage]]\nname = "untracked"\nmatch = { x = "1" }\nignore = "x"\n', "can't be named"),
     ],
 )
 def test_a_broken_rule_is_refused(section: str, message: str) -> None:
@@ -126,7 +132,86 @@ def test_the_tick_files_new_items_including_ones_seen_before_the_rule(
     [item] = Ledger(home / DB_FILENAME).items()
     assert (item.state, item.area) == (ItemState.TRIAGED, "work")
     assert [(channel, text) for _, channel, text in result.delivered] == [
-        ("discord:work", f"New in work: Ship the release [github] ({item.handle})")
+        ("discord:work", f"New in work:\n- Ship the release [github] ({item.handle})")
     ]
     assert main(["--home", str(home), "ledger", "list"]) == 0
     assert "work" in capsys.readouterr().out
+
+
+def rule(**match: str) -> tuple:
+    return parse_triage([{"match": match, "ignore": "set aside"}], {})
+
+
+@pytest.mark.parametrize(
+    ("match", "value", "hit"),
+    [
+        ({"author": "*[bot]"}, {"author": "dependabot[bot]"}, True),
+        ({"author": "*[bot]"}, {"author": "octocat"}, False),
+        ({"title": "[WIP]*"}, {"title": "[WIP] refactor"}, True),
+        ({"title": "[WIP]*"}, {"title": "Weekly plan"}, False),
+        ({"title": "draft*"}, {"title": "Contract renewal, draft attached"}, False),
+        ({"labels": "urgent"}, {"labels": "bug, urgent"}, True),
+        ({"due": "*"}, {"due": ""}, False),
+        ({"id": "acme/app#1?"}, {"id": "acme/app#12"}, True),
+        ({"repo": "acme/*"}, {"repo": "ACME/App"}, True),
+    ],
+)
+def test_globs_mean_only_star_and_question_mark(tmp_path: Path, match: dict, value: dict, hit: bool) -> None:
+    ledger = Ledger(tmp_path / DB_FILENAME)
+    title, due, external_id = value.pop("title", "Item"), value.pop("due", ""), value.pop("id", "x1")
+    item = ledger.record("github", SourceItem(external_id=external_id, title=title, due=due, meta=value)).id
+    triage_new(ledger, *rule(**match))
+    assert (ledger.get(item).state is ItemState.IGNORED) is hit
+
+
+def test_an_ignore_with_any_reason_reaches_the_brief(tmp_path: Path) -> None:
+    ledger = Ledger(tmp_path / DB_FILENAME)
+    record(ledger, "mail", "m9")
+    triage_new(ledger, *parse_triage([{"match": {"connector": "mail"}, "ignore": "informational source"}], {}))
+    brief = build_brief(ledger, (), 0, 4_000_000_000, BriefSettings(3 * 86400, "UTC")).text
+    assert "Item m9" in brief and "because informational source" in brief
+
+
+def test_a_backlog_sends_one_capped_message_per_area(tmp_path: Path) -> None:
+    ledger = Ledger(tmp_path / DB_FILENAME)
+    for number in range(30):
+        record(ledger, "github", f"acme/app#{number}", repo="acme/app")
+    sent: list[tuple[str, str]] = []
+    triage_new(ledger, *config_rules(), lambda channel, text: sent.append((channel, text)))
+    [(channel, text)] = sent
+    assert channel == "discord:work" and text.count("\n- Item") == 20 and "and 10 more" in text
+    triage_new(ledger, *config_rules(), lambda channel, text: sent.append((channel, text)))
+    assert len(sent) == 1
+
+
+def test_a_failed_announcement_is_retried_on_the_next_tick(tmp_path: Path) -> None:
+    ledger = Ledger(tmp_path / DB_FILENAME)
+    record(ledger, "github", "acme/app#5", repo="acme/app")
+
+    def broken(channel: str, text: str) -> None:
+        raise OSError("database is locked")
+
+    with pytest.raises(OSError):
+        triage_new(ledger, *config_rules(), broken)
+    sent: list[tuple[str, str]] = []
+    record(ledger, "github", "acme/app#6", repo="acme/app")
+    triage_new(ledger, *config_rules(), lambda channel, text: sent.append((channel, text)))
+    assert sent and "acme/app#6" in sent[0][1]
+
+
+def test_rules_leave_assigned_and_waiting_items_alone(tmp_path: Path) -> None:
+    ledger = Ledger(tmp_path / DB_FILENAME)
+    held = record(ledger, "github", "acme/app#7", repo="acme/app")
+    ledger.move(held, ItemState.ASSIGNED, "owner", "", ticket_id="tk-1")
+    triage_new(ledger, *config_rules())
+    assert ledger.get(held).state is ItemState.ASSIGNED and ledger.get(held).area == ""
+
+
+def test_area_lines_redact_secrets_in_titles(tmp_path: Path) -> None:
+    ledger = Ledger(tmp_path / DB_FILENAME)
+    ledger.record(
+        "github", SourceItem(external_id="acme/app#8", title="Rotate token=abcdef123456", meta={"repo": "acme/app"})
+    )
+    sent: list[tuple[str, str]] = []
+    triage_new(ledger, *config_rules(), lambda channel, text: sent.append((channel, text)))
+    assert "abcdef123456" not in sent[0][1]
