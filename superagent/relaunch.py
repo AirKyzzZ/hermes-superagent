@@ -12,21 +12,17 @@ from .polling import Notify
 logger = logging.getLogger(__name__)
 
 RELAUNCH_ACTOR = "relaunch"
-BUDGET = {"nudge": 1, "resume": 1}
-AUTO_RESUME_GAVE_UP = frozenset({"stale", "disabled"})
+NUDGES = 1
 
 
 def due_action(item: Item, connector: AgentsConnector, now: float) -> str | None:
     if not item.meta.get("since") or item.last_seen <= item.last_changed:
         return None
-    state = item.meta.get("state")
-    if state == "limited":
-        if item.meta.get("error") == "rate_limit":
-            return "nudge" if item.meta.get("auto_resume") in AUTO_RESUME_GAVE_UP else None
-        return "nudge" if now - item.last_changed >= connector.retry_after else None
-    if state == "gone":
-        return "resume"
-    return None
+    if item.meta.get("state") != "limited":
+        return None
+    if item.meta.get("error") == "rate_limit":
+        return "nudge" if item.meta.get("auto_resume") == "stale" else None
+    return "nudge" if now - item.last_changed >= connector.retry_after else None
 
 
 def relaunch_sessions(
@@ -57,16 +53,23 @@ def relaunch_one(
     used = sum(
         1
         for event in ledger.history(item.id)
-        if event.actor == RELAUNCH_ACTOR and event.note.startswith(f"{action} done")
+        if event.actor == RELAUNCH_ACTOR and event.note.startswith((f"{action} done", f"{action} unknown"))
     )
-    if used >= BUDGET[action]:
+    outcome, log = "held", ""
+    if used >= NUDGES:
         done, detail = False, f"it was already given its {action}"
     else:
         try:
-            done, detail = connector.act(item.external_id, action, str(item.meta["since"]))
+            done, detail, log = connector.act(item.external_id, action, str(item.meta["since"]))
+            outcome = "done" if done else "held"
         except ConnectorError as error:
-            done, detail = False, str(error)
-    ledger.note(item.id, RELAUNCH_ACTOR, f"{action} {'done' if done else 'held'}: {detail}")
+            done, detail, log, outcome = (
+                False,
+                "the relaunch didn't answer in time, so it may have typed",
+                str(error),
+                "unknown",
+            )
+    ledger.note(item.id, RELAUNCH_ACTOR, f"{action} {outcome}: {detail}" + (f" ({log})" if log else ""))
     if notify is None or not spec.channel:
         return
     state = item.meta.get("state")

@@ -107,11 +107,11 @@ Relaunch stays off until the owner turns it on per machine, because it types int
 
 ```toml
 relaunch = true
-claude = "/full/path/to/claude"
+tmux = "/full/path/to/tmux"
 cmux = "/Applications/cmux.app/Contents/Resources/bin/cmux"
 ```
 
-`claude` and `cmux` need full paths when ssh's `PATH` doesn't have them. A session stopped on an API error gets one `continue` after 10 minutes, and one stopped by a rate limit gets it once Claude Code says its auto-resume went stale or was turned off. A session lost to a reboot is resumed with `claude --resume` in a new tmux session or cmux workspace. Every other case is posted to the agents channel as needing the owner, with the reason.
+`tmux` and `cmux` need full paths when ssh's `PATH` doesn't have them, which is the case for Homebrew on a Mac. A session stopped on an API error gets one `continue` after 10 minutes, and one stopped by a rate limit gets it once Claude Code says its auto-resume went stale. Every other case is posted to the agents channel as needing the owner, with the reason. A session whose process died is never restarted by the plugin, since cmux restores its own sessions and a closed tab looks the same as a crash: its line carries the `claude --resume` command instead.
 
 ## 5. Schedule the tick
 

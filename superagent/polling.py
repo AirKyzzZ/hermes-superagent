@@ -121,7 +121,8 @@ def announce(ledger: Ledger, spec: ConnectorSpec, before: Item | None, item: Ite
     if not ledger.announce_once(item.id, f"{state}@{item.last_changed}"):
         return
     detail = f": {redact(item.excerpt)[:200]}" if spec.notify_detail and item.excerpt else ""
-    notify(spec.channel, f"{item.title} [{spec.name}] is {state}{detail} ({item.handle})")
+    hint = f". Resume it with claude --resume {item.external_id} in its folder" if state == "gone" else ""
+    notify(spec.channel, f"{item.title} [{spec.name}] is {state}{detail} ({item.handle}){hint}")
 
 
 def confirm_vanished(ledger: Ledger, spec: ConnectorSpec, connector: Connector, deadline: float | None) -> None:

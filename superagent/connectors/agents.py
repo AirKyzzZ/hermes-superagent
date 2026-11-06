@@ -12,10 +12,9 @@ from ..agents import PROBE_SCRIPT, RELAUNCH_SCRIPT, SessionState, classify
 from ..ledger import SourceItem, Upstream
 from . import ConnectorConfigError, ConnectorError, ConnectorSpec, Poll, duration
 
-KEYS = frozenset(
-    {"host", "python", "stall_after", "timeout", "relaunch", "nudge", "retry_after", "claude", "cmux", "tmux"}
-)
+KEYS = frozenset({"host", "python", "stall_after", "timeout", "relaunch", "nudge", "retry_after", "cmux", "tmux"})
 GONE_CLOSES_AFTER_SECONDS = 3600.0
+ACT_MARGIN_SECONDS = 10.0
 NOT_HOOKED = "no Claude Code hook has written to {where} on this host, install it with superagent agents --hook-script"
 _BASE_ENV = ("PATH", "HOME", "LANG", "LC_ALL", "TMPDIR", "USER", "SSH_AUTH_SOCK")
 
@@ -29,7 +28,6 @@ class AgentsConnector:
     relaunch: bool = False
     nudge: str = "continue"
     retry_after: float = 600.0
-    claude: str = "claude"
     cmux: str = "cmux"
     tmux: str = "tmux"
 
@@ -81,22 +79,22 @@ class AgentsConnector:
     def confirm(self, external_id: str) -> Upstream:
         return Upstream.CLOSED
 
-    def act(self, session: str, action: str, since: str) -> tuple[bool, str]:
+    def act(self, session: str, action: str, since: str) -> tuple[bool, str, str]:
         args = {
             "session": session,
             "action": action,
             "since": float(since),
             "text": self.nudge,
-            "claude": self.claude,
             "cmux": self.cmux,
             "tmux": self.tmux,
+            "budget": max(1.0, self.timeout - ACT_MARGIN_SECONDS),
         }
         script = RELAUNCH_SCRIPT.read_text(encoding="utf-8") + f"\nmain({json.dumps(args)!r})\n"
         result = self._run(script)
-        done, detail = result.get("done"), result.get("detail")
+        done, detail, log = result.get("done"), result.get("detail"), result.get("log", "")
         if not isinstance(done, bool) or not isinstance(detail, str):
             raise ConnectorError("the relaunch script returned an unexpected shape")
-        return done, detail[:300]
+        return done, detail[:300], str(log)[:300]
 
     def _probe(self) -> Mapping[str, object]:
         return self._run(PROBE_SCRIPT.read_text(encoding="utf-8"))
@@ -159,9 +157,9 @@ def build(spec: ConnectorSpec) -> AgentsConnector:
         raise ConnectorConfigError(f"{where} relaunch must be true or false")
     if not isinstance(nudge, str) or not nudge.strip() or len(nudge) > 200 or any(c in nudge for c in "\r\n\\"):
         raise ConnectorConfigError(f"{where} nudge must be one short line of text, such as continue")
-    commands = {key: spec.settings.get(key, key) for key in ("claude", "cmux", "tmux")}
+    commands = {key: spec.settings.get(key, key) for key in ("cmux", "tmux")}
     if not all(isinstance(value, str) and value for value in commands.values()):
-        raise ConnectorConfigError(f"{where} claude, cmux and tmux must be commands or paths")
+        raise ConnectorConfigError(f"{where} cmux and tmux must be commands or paths")
     return AgentsConnector(
         host=tuple(host),
         python=python,
@@ -170,7 +168,6 @@ def build(spec: ConnectorSpec) -> AgentsConnector:
         relaunch=relaunch,
         nudge=nudge,
         retry_after=duration(spec.settings.get("retry_after", "10m"), f"{where} retry_after"),
-        claude=str(commands["claude"]),
         cmux=str(commands["cmux"]),
         tmux=str(commands["tmux"]),
     )
