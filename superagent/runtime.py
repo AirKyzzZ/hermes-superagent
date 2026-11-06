@@ -19,6 +19,7 @@ from .connectors import Connector, build_connector
 from .domain import Ticket
 from .ledger import Ledger
 from .polling import SourceWarning, poll_sources
+from .relaunch import relaunch_sessions
 from .router import Assessor, Router, Sender, chat_safe
 from .store import Store, split_message
 from .watchdog import CheckResult, DriftJudge, check_once
@@ -176,6 +177,16 @@ def _run_phases(runtime: Runtime, judge: DriftJudge | None, assessor: Assessor |
     except Exception as error:
         logger.exception("polling failed")
         errors.append(f"poll: {error}")
+    try:
+        relaunch_sessions(
+            runtime.ledger,
+            runtime.config.connectors,
+            runtime.connectors,
+            lambda channel, text: runtime.store.queue_message(SOURCE_TICKET, channel, chat_safe(text)),
+        )
+    except Exception as error:
+        logger.exception("relaunching failed")
+        errors.append(f"relaunch: {error}")
     try:
         send_brief_when_due(runtime)
     except Exception as error:

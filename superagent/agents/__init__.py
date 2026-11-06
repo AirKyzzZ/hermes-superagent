@@ -8,6 +8,7 @@ from pathlib import Path
 
 HOOK_SCRIPT = Path(__file__).with_name("hook.py")
 PROBE_SCRIPT = Path(__file__).with_name("probe.py")
+RELAUNCH_SCRIPT = Path(__file__).with_name("relaunch.py")
 HOOK_EVENTS = (
     "SessionStart",
     "UserPromptSubmit",

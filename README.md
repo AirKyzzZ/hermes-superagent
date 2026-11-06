@@ -15,7 +15,7 @@ A <a href="https://github.com/NousResearch/hermes-agent">Hermes Agent</a> plugin
 <a href="LICENSE"><img alt="MIT licence" src="https://img.shields.io/github/license/AirKyzzZ/hermes-superagent?style=flat-square&label=license&labelColor=14142a&color=1a10b8"></a>
 <a href="pyproject.toml"><img alt="Python 3.11 or newer" src="https://img.shields.io/badge/python-3.11%2B-1a10b8?style=flat-square&labelColor=14142a"></a>
 <a href="plugin.yaml"><img alt="Hermes plugin, requires 0.22.7 or newer" src="https://img.shields.io/badge/Hermes_plugin-%3E%3D0.22.7-1a10b8?style=flat-square&labelColor=14142a"></a>
-<a href="tests"><img alt="448 tests" src="https://img.shields.io/badge/tests-448-1a10b8?style=flat-square&labelColor=14142a"></a>
+<a href="tests"><img alt="468 tests" src="https://img.shields.io/badge/tests-468-1a10b8?style=flat-square&labelColor=14142a"></a>
 <a href="docs/hackathon.md"><img alt="Built for the Hermes Agent Plugin Hackathon" src="https://img.shields.io/badge/built_for-Hermes_Plugin_Hackathon-1a10b8?style=flat-square&labelColor=14142a"></a>
 </p>
 
@@ -383,6 +383,7 @@ The rendered prompt becomes the goal, the comment's author is checked against `a
 | `command`: `complete = false`, `overlap`, `backfill` | `true`, `10m`, `14d` | A delta source gets `{since}` (UTC, `2026-11-05T22:00:00Z`), `{since_epoch}` or `{since_date}` (`2026/11/05`) in its `argv`. It starts `backfill` ago and each window reaches `overlap` back into the previous one |
 | `[connectors.<name>] owned`, `channel`, `notify`, `notify_detail` | `false`, none, none, `false` (agents: `true`, none, `waiting`, `stuck`, `limited`, `gone`, `false`) | Owned items start as the owner's instead of new. When an item's `state` has been one in `notify` for two polls, one line goes to `channel`. It names the item and its state, and adds its redacted text only with `notify_detail` |
 | `agents`: `host`, `stall_after`, `python`, `timeout` | this machine, `20m`, `python3`, `30` | Reads every Claude Code session on a host from the hook's logs, over ssh when `host` is set, and turns each into an item with its state: working, waiting, stuck, limited, background, idle, gone or ended. `superagent agents` prints the board. Setup is in [the shadow install guide](docs/dogfood-install.md) |
+| `agents`: `relaunch`, `nudge`, `retry_after`, `claude`, `tmux`, `cmux` | `false`, `continue`, `10m`, `claude`, `tmux`, `cmux` | Off by default, because it types into your terminals. When on, a session that stopped on an API error gets one `nudge` after `retry_after`, and one stopped by a rate limit gets it only once Claude Code says its own auto-resume went stale or was turned off. Before typing, a script on the host checks that the session hasn't moved, that its `claude` process runs in that tmux pane or cmux surface, that no newer session took the pane, and that the screen shows an empty input box with no dialog, no interruption and no work in progress. A session whose process died is resumed with `claude --resume` in a new tmux session or cmux workspace only when the host restarted after its last event, so one you closed stays closed. Each session gets one nudge and one resume, every attempt is in `ledger show`, and anything held goes to the connector's `channel` as needing you |
 | `github`: `queries`, `gh`, `timeout`, `env` | assigned, review requested and mentioned, `gh`, `120`, none | Searches GitHub through `gh api` with your existing `gh` login. Each query must include `is:open`. Every page is read in creation order, the total must hold across pages and match the distinct items returned, and results that GitHub hides behind SSO fail the query. A failing query still lets the others' items in, but marks nothing gone. `timeout` covers a whole poll. Issues that leave every query are checked one by one, and only a closed one is closed |
 | `[watchdog] stall_after_seconds` | `900` | Silence that counts as stuck |
 | `[watchdog] repeat_limit` | `3` | Identical reports in a row that count as stuck |
@@ -485,7 +486,8 @@ If the gate itself fails, the message is dropped and logged, so a person gets si
 - [x] Item ledger with GitHub and command connectors, source health and a daily brief, see [the dogfood design](docs/dogfood-design.md)
 - [x] Agents board for Claude Code sessions on several machines
 - [ ] Todoist, GitLab, mail, calendar and WhatsApp connectors
-- [ ] Relaunching stuck sessions, and briefs written from the ledger's context
+- [x] Relaunching sessions stopped by API errors, rate limits or a reboot, off by default
+- [ ] Worker briefs written from the ledger's context
 - [ ] Claude Code workers on tmux and cmux over ssh
 - [ ] Demo video
 
