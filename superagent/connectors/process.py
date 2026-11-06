@@ -19,13 +19,16 @@ def run_json(argv: Sequence[str], env_names: Sequence[str], timeout: float, stdi
         raise ConnectorError(f"{argv[0]} did not print JSON: {error}") from error
 
 
-def run_text(argv: Sequence[str], env_names: Sequence[str], timeout: float, stdin: str | None = None) -> str:
+def run_text(
+    argv: Sequence[str], env_names: Sequence[str], timeout: float, stdin: str | None = None, cwd: str | None = None
+) -> str:
     if timeout <= 0:
         raise ConnectorError(f"no time left to run {argv[0]}")
     env = {name: os.environ[name] for name in (*BASE_ENV, *env_names) if name in os.environ}
     try:
         process = subprocess.Popen(
             list(argv),
+            cwd=cwd,
             stdin=subprocess.PIPE if stdin is not None else subprocess.DEVNULL,
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
