@@ -98,6 +98,14 @@ def tick(runtime: Runtime, judge: DriftJudge | None = None, assessor: Assessor |
         os.close(lock_fd)
 
 
+def last_tick(home: Path) -> dict[str, object]:
+    try:
+        record = json.loads((home / _TICK_LOCK_FILENAME).read_bytes() or b"{}")
+    except (OSError, ValueError):
+        return {}
+    return record if isinstance(record, dict) else {}
+
+
 def _lock_record(lock_fd: int) -> dict[str, object]:
     try:
         record = json.loads(os.pread(lock_fd, 300, 0) or b"{}")

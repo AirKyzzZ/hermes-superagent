@@ -134,7 +134,7 @@ def main() -> None:
                     "branch": branch(cwd, branches, deadline),
                 }
             )
-    print(json.dumps({"now": now, "sessions": sessions}))
+    print(json.dumps({"now": now, "sessions": sessions, "hooked": SESSIONS.is_dir()}))
 
 
 if __name__ == "__main__":

@@ -398,6 +398,10 @@ def stage_router(work: Path, log: Path) -> None:
         check("brief: the first tick of the day sends the brief", briefed, sent_now[-300:])
         board = hermes("-p", "watchdog", "superagent", "agents")
         check("agents: the board lists it", "waiting" in board.stdout and "site" in board.stdout, board.stdout[-300:])
+        doctor = hermes("-p", "watchdog", "superagent", "doctor", "--json")
+        polled = json.loads(doctor.stdout) if doctor.stdout.lstrip().startswith("[") else []
+        healthy = {entry["name"] for entry in polled if entry["status"] == "ok"}
+        check("doctor: polls every connector live", {"tasks", "agents-here"} <= healthy, doctor.stdout[-600:])
         check(
             "ledger: the tick polled a command connector into the ledger",
             titles == ["Pay rent", "Renew the domain"],
@@ -495,6 +499,20 @@ def scenario_digest(sent: Path) -> None:
     check("digest: it reaches the digest channel", "discord:team\tSuperagent, last 24 hours" in delivered)
 
 
+def scenario_setup(work: Path) -> None:
+    fresh = work / "fresh"
+    written = hermes("-p", "watchdog", "superagent", "--home", str(fresh), "setup", "--alerts", "discord:alerts")
+    print("setup:", written.returncode, written.stdout[-600:], written.stderr[-300:], flush=True)
+    config = (fresh / "superagent.toml").read_text(encoding="utf-8") if (fresh / "superagent.toml").exists() else ""
+    sends = '"send", "-q", "--to", "{channel}", "--", "{text}"]' in config and 'argv = ["/' in config
+    check("setup: writes a config that sends through this Hermes", written.returncode == 0 and sends, config)
+    again = hermes("-p", "watchdog", "superagent", "--home", str(fresh), "setup")
+    check("setup: never overwrites a config", again.returncode == 1 and "already exists" in again.stderr)
+    doctor = hermes("-p", "watchdog", "superagent", "--home", str(fresh), "doctor", "--no-poll")
+    print("doctor:", doctor.returncode, doctor.stdout[-800:], doctor.stderr[-300:], flush=True)
+    check("doctor: a fresh setup has no failures", doctor.returncode == 0 and "outbound" in doctor.stdout)
+
+
 def scenario_host_env() -> None:
     found = subprocess.run(["pgrep", "-f", "gateway run"], capture_output=True, text=True, check=False)
     pids = found.stdout.split()
@@ -557,6 +575,7 @@ def main() -> int:
         scenario_wander(opened)
         scenario_stop(opened, log)
         scenario_host_env()
+        scenario_setup(work)
         scenario_environment_untouched(hermes_home)
         stage_router(work, log)
     finally:

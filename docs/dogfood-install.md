@@ -13,7 +13,14 @@ Leave `role` unset. With no role, the plugin's hooks do nothing and its tools st
 
 ## 2. Write `~/superagent/superagent.toml`
 
-Create the Discord channels first and use their ids. Leave out any machine you don't have.
+Create the Discord channels first and use their ids. `setup` writes the local part, sending through the `hermes` that runs it, and never overwrites an existing file:
+
+```bash
+hermes superagent --home ~/superagent setup --alerts discord:ALERTS_CHANNEL_ID \
+  --brief discord:BRIEF_CHANNEL_ID --agents-channel discord:AGENTS_CHANNEL_ID
+```
+
+Then add the heartbeat and the other machines by hand, so the file looks like this. Leave out any machine you don't have.
 
 ```toml
 [outbound]
@@ -34,7 +41,7 @@ argv = ["curl", "-fsS", "-m", "10", "https://hc-ping.com/YOUR-CHECK-ID"]
 type = "github"
 every = "10m"
 
-[connectors.agents-vps]
+[connectors.agents]
 type = "agents"
 every = "90s"
 channel = "discord:AGENTS_CHANNEL_ID"
@@ -87,12 +94,12 @@ Claude Code's settings watcher normally picks up the new hooks in sessions that 
 ## 4. Check it
 
 ```bash
+hermes superagent --home ~/superagent doctor
 hermes superagent --home ~/superagent tick
 hermes superagent --home ~/superagent agents
-hermes superagent --home ~/superagent status
 ```
 
-The tick prints JSON. `errors` must be empty. `warnings` lists any source that fails, for example a host ssh can't reach. `agents` prints the board, sessions that need someone first.
+`doctor` prints one line per check and exits non-zero when one fails. It polls each connector once without recording anything, so a host whose hook never ran, an ssh alias that doesn't connect or a `gh` login that lapsed shows up here with its error. The tick prints JSON. `errors` must be empty. `warnings` lists any source that fails, for example a host ssh can't reach. `agents` prints the board, sessions that need someone first.
 
 ## 5. Schedule the tick
 
