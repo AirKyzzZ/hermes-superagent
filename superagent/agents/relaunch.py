@@ -27,6 +27,7 @@ WORKING = re.compile(r"…\s*\(\d")
 STARTED = time.time()
 PANE_ID = re.compile(r"%\d+")
 START_SLACK_SECONDS = 5.0
+MTIME_SLACK_SECONDS = 2.0
 GUARD = "#{&&:#{==:#{pane_in_mode},0},#{&&:#{==:#{pane_synchronized},0},#{==:#{pane_input_off},0}}}"
 
 
@@ -187,7 +188,7 @@ def shared_with_live_session(session: str, pane: dict[str, str]) -> bool:
 
 def process_moved_on(session: str, pid: int, since: float) -> bool:
     for path in SESSIONS.glob("*.jsonl"):
-        if path.stem == session or path.stat().st_mtime < since:
+        if path.stem == session or path.stat().st_mtime < since - MTIME_SLACK_SECONDS:
             continue
         events = tail(path)
         if latest(events, "pid") == pid and last_time(events) > since:

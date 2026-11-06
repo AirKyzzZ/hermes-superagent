@@ -79,6 +79,12 @@ def claude(tmp_path: Path) -> Iterator[Claude]:
         fcntl.ioctl(0, termios.TIOCSCTTY, 0)
 
     process = subprocess.Popen([str(named), "120"], stdin=follower, stdout=follower, stderr=follower, preexec_fn=attach)
+    seen = subprocess.run(["ps", "-o", "tty=,tpgid=,pgid=", "-p", str(process.pid)], capture_output=True, text=True)
+    fields = seen.stdout.split()
+    if len(fields) != 3 or fields[1] != fields[2]:
+        process.kill()
+        process.wait()
+        pytest.skip(f"this runner can't give a test process its own terminal: ps shows {seen.stdout.strip()!r}")
     yield Claude(process.pid, os.ttyname(follower))
     process.kill()
     process.wait()
