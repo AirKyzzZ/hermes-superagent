@@ -5,7 +5,7 @@ import time
 from collections.abc import Mapping, Sequence
 
 from .connectors import Connector, ConnectorError, ConnectorSpec
-from .connectors.agents import AgentsConnector
+from .connectors.agents import AgentsConnector, ConnectorTimeout
 from .ledger import Item, Ledger
 from .polling import Notify
 
@@ -57,18 +57,15 @@ def relaunch_one(
     )
     outcome, log = "held", ""
     if used >= NUDGES:
-        done, detail = False, f"it was already given its {action}"
+        detail = f"it was already given its {action}"
     else:
         try:
-            done, detail, log = connector.act(item.external_id, action, str(item.meta["since"]))
-            outcome = "done" if done else "held"
+            outcome, detail, log = connector.act(item.external_id, action, str(item.meta["since"]))
+        except ConnectorTimeout as error:
+            outcome, detail, log = "unknown", "the relaunch didn't answer in time, so it may have typed", str(error)
         except ConnectorError as error:
-            done, detail, log, outcome = (
-                False,
-                "the relaunch didn't answer in time, so it may have typed",
-                str(error),
-                "unknown",
-            )
+            detail, log = "the relaunch script couldn't run", str(error)
+    done = outcome == "done"
     ledger.note(item.id, RELAUNCH_ACTOR, f"{action} {outcome}: {detail}" + (f" ({log})" if log else ""))
     if notify is None or not spec.channel:
         return

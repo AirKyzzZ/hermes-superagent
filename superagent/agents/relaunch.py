@@ -20,11 +20,13 @@ BLOCKERS = (
     "esc to interrupt",
     "-- normal --",
 )
-PROMPT_START = re.compile(r"\s*[│|]?\s*[❯>]")
+PROMPT_START = re.compile(r"\s*[│|]?\s*[❯>!#]")
 PROMPT_EMPTY = re.compile(r"\s*[│|]?\s*[❯>]\s*[│|]?\s*")
 RULE = re.compile(r"\s*[─━]{8,}\s*")
 WORKING = re.compile(r"…\s*\(\d")
 STARTED = time.time()
+START_SLACK_SECONDS = 5.0
+GUARD = "#{&&:#{==:#{pane_in_mode},0},#{&&:#{==:#{pane_synchronized},0},#{==:#{pane_input_off},0}}}"
 
 
 def tail(path: Path) -> list[dict[str, object]]:
@@ -57,16 +59,18 @@ def ready(screen: str) -> str:
             return f"its screen shows {marker!r}"
     if any(WORKING.search(line) for line in lines):
         return "its screen shows it still working"
+    boxed = [
+        index
+        for index in range(1, len(lines) - 1)
+        if RULE.fullmatch(lines[index - 1]) and RULE.fullmatch(lines[index + 1])
+    ]
     starts = [index for index, line in enumerate(lines) if PROMPT_START.match(line)]
-    if not starts:
+    if not boxed or not starts:
         return "its screen shows no input box"
-    index = starts[-1]
-    if not PROMPT_EMPTY.fullmatch(lines[index]):
+    if starts[-1] != boxed[-1]:
+        return "its input box isn't a single empty line"
+    if not PROMPT_EMPTY.fullmatch(lines[boxed[-1]]):
         return "its input box isn't empty"
-    above = index > 0 and RULE.fullmatch(lines[index - 1])
-    below = index + 1 < len(lines) and RULE.fullmatch(lines[index + 1])
-    if not above or not below:
-        return "its screen shows no empty input box"
     return ""
 
 
@@ -83,6 +87,10 @@ def last_time(events: list[dict[str, object]]) -> float:
     return max(float(str(event.get("t") or 0)) for event in events)
 
 
+def first_time(events: list[dict[str, object]]) -> float:
+    return min(float(str(event.get("t") or 0)) for event in events)
+
+
 def start_ticks(pid: int) -> str:
     try:
         stat = Path(f"/proc/{pid}/stat").read_text()
@@ -91,7 +99,15 @@ def start_ticks(pid: int) -> str:
     return stat.rsplit(")", 1)[-1].split()[19]
 
 
-def same_process(pid: object, start: object) -> bool:
+def started_at(pid: int) -> float | None:
+    text = run(["ps", "-o", "lstart=", "-p", str(pid)], timeout=5).strip()
+    try:
+        return time.mktime(time.strptime(" ".join(text.split()), "%a %b %d %H:%M:%S %Y"))
+    except ValueError:
+        return None
+
+
+def same_process(pid: object, start: object, first: float) -> bool:
     if not isinstance(pid, int) or pid <= 1:
         return False
     try:
@@ -102,7 +118,34 @@ def same_process(pid: object, start: object) -> bool:
         pass
     if start and Path("/proc").is_dir():
         return start_ticks(pid) == str(start)
-    return True
+    began = started_at(pid)
+    return began is not None and began <= first + START_SLACK_SECONDS
+
+
+def pgid_of(pid: int) -> int:
+    found = run(["ps", "-o", "pgid=", "-p", str(pid)], timeout=5).strip()
+    return int(found) if found.isdigit() else -1
+
+
+def in_cmux_surface(pid: int, pane: dict[str, str], cmux: str) -> bool:
+    top = run([cmux, "--json", "--id-format", "both", "top", "--processes", "--workspace", pane["CMUX_WORKSPACE_ID"]])
+    try:
+        data = json.loads(top)
+    except ValueError:
+        return False
+    surfaces = [
+        surface
+        for window in data.get("windows", [])
+        for workspace in window.get("workspaces", [])
+        for each in workspace.get("panes", [])
+        for surface in each.get("surfaces", [])
+        if isinstance(surface, dict) and surface.get("id") == pane["CMUX_SURFACE_ID"]
+    ]
+    return (
+        len(surfaces) == 1
+        and pid in surfaces[0].get("tty_process_pids", [])
+        and (pgid_of(pid) in surfaces[0].get("foreground_pgids", []))
+    )
 
 
 def foreground_tty(pid: int) -> str:
@@ -132,7 +175,7 @@ def shared_with_live_session(session: str, pane: dict[str, str]) -> bool:
         other = pane_of(events)
         if any(other.get(key) == value for key, value in mine.items()):
             ended = any(event.get("event") == "SessionEnd" for event in events[-3:])
-            if not ended and same_process(latest(events, "pid"), latest(events, "pid_start")):
+            if not ended and same_process(latest(events, "pid"), latest(events, "pid_start"), first_time(events)):
                 return True
     return False
 
@@ -144,7 +187,7 @@ def out_of_time(args: dict[str, object]) -> bool:
 def nudge(session: str, events: list[dict[str, object]], args: dict[str, object]) -> dict[str, object]:
     pane, text = pane_of(events), str(args["text"])
     pid = latest(events, "pid")
-    if not isinstance(pid, int) or not same_process(pid, latest(events, "pid_start")):
+    if not isinstance(pid, int) or not same_process(pid, latest(events, "pid_start"), first_time(events)):
         return refuse("its claude process isn't running")
     if shared_with_live_session(session, pane):
         return refuse("another live session shares its pane")
@@ -154,13 +197,13 @@ def nudge(session: str, events: list[dict[str, object]], args: dict[str, object]
     if pane.get("TMUX_PANE"):
         socket, target = pane.get("TMUX", "").split(",")[0], pane["TMUX_PANE"]
         base = [str(args["tmux"]), "-S", socket] if socket else [str(args["tmux"])]
-        query = "#{pane_pid}\t#{pane_tty}\t#{pane_in_mode}\t#{pane_synchronized}\t#{pane_dead}"
+        query = "#{pane_pid}\t#{pane_tty}\t#{pane_dead}\t" + GUARD
         fields = run([*base, "display-message", "-p", "-t", target, query]).rstrip("\n").split("\t")
-        if len(fields) != 5 or not fields[0].isdigit():
+        if len(fields) != 4 or not fields[0].isdigit():
             return refuse(f"tmux couldn't describe pane {target}")
-        pane_pid, pane_tty, in_mode, synchronized, dead = fields
-        if dead == "1" or in_mode == "1" or synchronized == "1":
-            return refuse(f"tmux pane {target} is dead, scrolled back or synchronized with other panes")
+        pane_pid, pane_tty, dead, clear = fields
+        if dead == "1" or clear != "1":
+            return refuse(f"tmux pane {target} is dead, scrolled back, synchronized or not taking input")
         if int(pane_pid) not in ancestors(pid) or not pane_tty.endswith(tty):
             return refuse(f"its claude process doesn't run in tmux pane {target}")
         problem = ready(run([*base, "capture-pane", "-p", "-t", target, "-S", "-40"]))
@@ -168,19 +211,35 @@ def nudge(session: str, events: list[dict[str, object]], args: dict[str, object]
             return refuse(problem)
         if out_of_time(args):
             return refuse("it ran out of time before typing")
-        run([*base, "send-keys", "-t", target, "-l", text])
-        run([*base, "send-keys", "-t", target, "Enter"])
+        send = f'send-keys -t {target} -l "{text}" ; send-keys -t {target} Enter ; display-message -p sent'
+        try:
+            answer = run([*base, "if-shell", "-F", "-t", target, GUARD, send, "display-message -p held"]).strip()
+        except Exception as error:
+            return unknown(error)
+        if answer != "sent":
+            return refuse(f"tmux pane {target} changed just before typing")
         return {"done": True, "detail": f"typed {text!r} in tmux pane {target}"}
     if pane.get("CMUX_SURFACE_ID") and pane.get("CMUX_WORKSPACE_ID"):
+        cmux = str(args["cmux"])
+        if not in_cmux_surface(pid, pane, cmux):
+            return refuse("its claude process isn't the one in the foreground of its cmux surface")
         where = ["--workspace", pane["CMUX_WORKSPACE_ID"], "--surface", pane["CMUX_SURFACE_ID"]]
-        problem = ready(run([str(args["cmux"]), "read-screen", *where, "--lines", "40"]))
+        problem = ready(run([cmux, "read-screen", *where, "--lines", "40"]))
         if problem:
             return refuse(problem)
         if out_of_time(args):
             return refuse("it ran out of time before typing")
-        run([str(args["cmux"]), "send", *where, "--", text + "\\n"])
+        try:
+            run([cmux, "send", *where, "--", text + "\\n"])
+        except Exception as error:
+            return unknown(error)
         return {"done": True, "detail": f"typed {text!r} in its cmux surface"}
     return refuse("it runs outside tmux and cmux")
+
+
+def unknown(error: Exception) -> dict[str, object]:
+    log = f"{type(error).__name__}: {error}"[:300]
+    return {"done": False, "unknown": True, "detail": "it failed while typing, so it may have typed", "log": log}
 
 
 def refuse(detail: str) -> dict[str, object]:

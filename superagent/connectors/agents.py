@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import subprocess
 import sys
 from collections.abc import Mapping
@@ -14,9 +15,14 @@ from . import ConnectorConfigError, ConnectorError, ConnectorSpec, Poll, duratio
 
 KEYS = frozenset({"host", "python", "stall_after", "timeout", "relaunch", "nudge", "retry_after", "cmux", "tmux"})
 GONE_CLOSES_AFTER_SECONDS = 3600.0
+NUDGE_TEXT = re.compile(r"[A-Za-z0-9 .,!?-]{1,200}")
 ACT_MARGIN_SECONDS = 10.0
 NOT_HOOKED = "no Claude Code hook has written to {where} on this host, install it with superagent agents --hook-script"
 _BASE_ENV = ("PATH", "HOME", "LANG", "LC_ALL", "TMPDIR", "USER", "SSH_AUTH_SOCK")
+
+
+class ConnectorTimeout(ConnectorError):
+    pass
 
 
 @dataclass(frozen=True)
@@ -79,7 +85,7 @@ class AgentsConnector:
     def confirm(self, external_id: str) -> Upstream:
         return Upstream.CLOSED
 
-    def act(self, session: str, action: str, since: str) -> tuple[bool, str, str]:
+    def act(self, session: str, action: str, since: str) -> tuple[str, str, str]:
         args = {
             "session": session,
             "action": action,
@@ -94,7 +100,8 @@ class AgentsConnector:
         done, detail, log = result.get("done"), result.get("detail"), result.get("log", "")
         if not isinstance(done, bool) or not isinstance(detail, str):
             raise ConnectorError("the relaunch script returned an unexpected shape")
-        return done, detail[:300], str(log)[:300]
+        outcome = "done" if done else "unknown" if result.get("unknown") is True else "held"
+        return outcome, detail[:300], str(log)[:300]
 
     def _probe(self) -> Mapping[str, object]:
         return self._run(PROBE_SCRIPT.read_text(encoding="utf-8"))
@@ -114,7 +121,7 @@ class AgentsConnector:
                 check=False,
             )
         except subprocess.TimeoutExpired as error:
-            raise ConnectorError(f"the probe on {' '.join(self.host) or 'this host'} took too long") from error
+            raise ConnectorTimeout(f"the script on {' '.join(self.host) or 'this host'} took too long") from error
         except OSError as error:
             raise ConnectorError(f"the probe could not run: {error}") from error
         if done.returncode != 0:
@@ -155,8 +162,10 @@ def build(spec: ConnectorSpec) -> AgentsConnector:
     relaunch, nudge = spec.settings.get("relaunch", False), spec.settings.get("nudge", "continue")
     if not isinstance(relaunch, bool):
         raise ConnectorConfigError(f"{where} relaunch must be true or false")
-    if not isinstance(nudge, str) or not nudge.strip() or len(nudge) > 200 or any(c in nudge for c in "\r\n\\"):
-        raise ConnectorConfigError(f"{where} nudge must be one short line of text, such as continue")
+    if not isinstance(nudge, str) or not nudge.strip() or not NUDGE_TEXT.fullmatch(nudge):
+        raise ConnectorConfigError(
+            f"{where} nudge must be a short line of letters, digits and . , ! ? -, such as continue"
+        )
     commands = {key: spec.settings.get(key, key) for key in ("cmux", "tmux")}
     if not all(isinstance(value, str) and value for value in commands.values()):
         raise ConnectorConfigError(f"{where} cmux and tmux must be commands or paths")

@@ -31,11 +31,19 @@ state = json.load(open({fixture!r}))
 with open({log!r}, "a") as log:
     log.write(json.dumps(sys.argv[1:]) + "\\n")
 args = sys.argv[1:]
-if "display-message" in args:
-    print("\\t".join(str(state[key]) for key in ("pane_pid", "pane_tty", "in_mode", "sync", "dead")))
+if "display-message" in args and "if-shell" not in args:
+    clear = "0" if state["in_mode"] or state["sync"] or state["input_off"] else "1"
+    print("\\t".join([str(state["pane_pid"]), state["pane_tty"], str(state["dead"]), clear]))
+elif "if-shell" in args:
+    print(state.get("if_shell", "sent"))
+    sys.exit(state.get("if_shell_exit", 0))
 elif "capture-pane" in args or "read-screen" in args:
     print(state["screen"])
-sys.exit(state.get("fail", 0) if "send" in args or "send-keys" in args else 0)
+elif "top" in args:
+    surface = {{"id": "S-1", "tty_process_pids": state["top_pids"], "foreground_pgids": state["top_fg"]}}
+    print(json.dumps({{"windows": [{{"workspaces": [{{"panes": [{{"surfaces": [surface]}}]}}]}}]}}))
+elif "send" in args:
+    sys.exit(state.get("send_exit", 0))
 """
 
 
@@ -79,7 +87,17 @@ def claude(tmp_path: Path) -> Iterator[Claude]:
 
 
 def stage(paths: dict[str, Path], claude: Claude, **state: object) -> None:
-    base = {"screen": READY, "pane_pid": claude.pid, "pane_tty": claude.tty, "in_mode": 0, "sync": 0, "dead": 0}
+    base = {
+        "screen": READY,
+        "pane_pid": claude.pid,
+        "pane_tty": claude.tty,
+        "in_mode": 0,
+        "sync": 0,
+        "input_off": 0,
+        "dead": 0,
+        "top_pids": [claude.pid],
+        "top_fg": [claude.pid],
+    }
     paths["fixture"].write_text(json.dumps({**base, **state}))
 
 
@@ -97,7 +115,7 @@ def session_log(paths: dict[str, Path], session: str, *events: dict[str, Any]) -
 
 
 def failure(at: float, pane: dict[str, str], pid: int, error: str = "overloaded") -> list[dict[str, Any]]:
-    start = {"event": "UserPromptSubmit", "t": at - 60, "cwd": "/tmp", "pane": pane, "pid": pid}
+    start = {"event": "UserPromptSubmit", "t": at - 0.5, "cwd": "/tmp", "pane": pane, "pid": pid}
     return [start, {"event": "StopFailure", "t": at, "cwd": "/tmp", "error": error, "pane": pane, "pid": pid}]
 
 
@@ -115,12 +133,11 @@ CMUX_PANE = {"CMUX_WORKSPACE_ID": "W-1", "CMUX_SURFACE_ID": "S-1"}
 def test_a_session_at_an_empty_prompt_gets_one_continue_in_its_tmux_pane(host: dict[str, Path], claude: Claude) -> None:
     stage(host, claude)
     since = session_log(host, "s-nudge-1", *failure(time.time(), TMUX_PANE, claude.pid))
-    assert connector(host).act("s-nudge-1", "nudge", repr(since)) == (True, "typed 'continue' in tmux pane %3", "")
-    sent = [call for call in calls(host) if "send-keys" in call]
-    assert sent == [
-        ["-S", "/tmp/tmux-test/default", "send-keys", "-t", "%3", "-l", "continue"],
-        ["-S", "/tmp/tmux-test/default", "send-keys", "-t", "%3", "Enter"],
-    ]
+    assert connector(host).act("s-nudge-1", "nudge", repr(since)) == ("done", "typed 'continue' in tmux pane %3", "")
+    [sent] = [call for call in calls(host) if "if-shell" in call]
+    assert sent[:6] == ["-S", "/tmp/tmux-test/default", "if-shell", "-F", "-t", "%3"]
+    assert sent[7] == 'send-keys -t %3 -l "continue" ; send-keys -t %3 Enter ; display-message -p sent'
+    assert sent[8] == "display-message -p held"
 
 
 PRINTED_BOX = "─" * 40 + "\n❯\n" + "─" * 40 + "\nThat is the input box.\n"
@@ -133,12 +150,19 @@ PRINTED_BOX = "─" * 40 + "\n❯\n" + "─" * 40 + "\nThat is the input box.\n"
         ({"screen": DIALOG}, "'do you want'"),
         ({"screen": TYPED}, "isn't empty"),
         ({"screen": PRINTED_BOX + TYPED}, "isn't empty"),
-        ({"screen": PRINTED_BOX + "─" * 40 + "\n❯ \n  second line of a draft\n" + "─" * 40}, "no empty input box"),
+        (
+            {"screen": PRINTED_BOX + "─" * 40 + "\n❯ \n  second line of a draft\n" + "─" * 40},
+            "isn't a single empty line",
+        ),
         ({"screen": "-- NORMAL --\n" + READY}, "'-- normal --'"),
         ({"screen": "Interrupted · What should Claude do instead?\n" + READY}, "'interrupted'"),
         ({"in_mode": 1}, "scrolled back"),
         ({"sync": 1}, "synchronized"),
+        ({"input_off": 1}, "not taking input"),
         ({"dead": 1}, "dead"),
+        ({"if_shell": "held"}, "changed just before typing"),
+        ({"screen": "─" * 40 + "\n❯\n" + "─" * 40 + "\n" + "─" * 40 + "\n! \n" + "─" * 40}, "isn't empty"),
+        ({"screen": "─" * 40 + "\n❯\n" + "─" * 40 + "\n" + "─" * 40 + "\n! rm -rf build\n" + "─" * 40}, "isn't"),
         ({"pane_pid": 1}, "doesn't run in tmux pane %3"),
         ({"pane_tty": "/dev/ttys999"}, "doesn't run in tmux pane %3"),
     ],
@@ -148,9 +172,11 @@ def test_nothing_is_typed_unless_the_pane_is_waiting_at_an_empty_prompt(
 ) -> None:
     stage(host, claude, **state)
     since = session_log(host, "s-held-1", *failure(time.time(), TMUX_PANE, claude.pid))
-    done, detail, _ = connector(host).act("s-held-1", "nudge", repr(since))
-    assert not done and reason in detail
-    assert not [call for call in calls(host) if "send-keys" in call]
+    outcome, detail, _ = connector(host).act("s-held-1", "nudge", repr(since))
+    assert outcome == "held" and reason in detail
+    assert not [
+        call for call in calls(host) if "send-keys" in call or ("if-shell" in call and state.get("if_shell") != "held")
+    ]
 
 
 def test_a_claude_in_the_background_of_its_terminal_is_left_alone(host: dict[str, Path], tmp_path: Path) -> None:
@@ -172,39 +198,54 @@ def test_a_claude_in_the_background_of_its_terminal_is_left_alone(host: dict[str
 def test_a_pane_shared_with_another_live_session_is_left_alone(host: dict[str, Path], claude: Claude) -> None:
     stage(host, claude)
     since = session_log(host, "s-old-01", *failure(time.time(), TMUX_PANE, claude.pid))
-    session_log(
-        host, "s-new-01", {"event": "SessionStart", "t": time.time() - 600, "pane": TMUX_PANE, "pid": claude.pid}
-    )
+    session_log(host, "s-new-01", {"event": "SessionStart", "t": time.time(), "pane": TMUX_PANE, "pid": claude.pid})
     assert connector(host).act("s-old-01", "nudge", repr(since))[1] == "another live session shares its pane"
 
 
 def test_a_session_that_moved_since_the_check_is_left_alone(host: dict[str, Path], claude: Claude) -> None:
     stage(host, claude)
-    since = session_log(host, "s-moved-1", *failure(time.time() - 30, TMUX_PANE, claude.pid))
-    session_log(host, "s-moved-1", {"event": "UserPromptSubmit", "t": time.time(), "pane": TMUX_PANE})
-    assert connector(host).act("s-moved-1", "nudge", repr(since)) == (False, "it moved on since it was checked", "")
+    since = session_log(host, "s-moved-1", *failure(time.time(), TMUX_PANE, claude.pid))
+    session_log(host, "s-moved-1", {"event": "UserPromptSubmit", "t": time.time() + 5, "pane": TMUX_PANE})
+    assert connector(host).act("s-moved-1", "nudge", repr(since)) == ("held", "it moved on since it was checked", "")
 
 
 def test_a_cmux_session_gets_its_continue_through_cmux_send(host: dict[str, Path], claude: Claude) -> None:
     stage(host, claude)
     since = session_log(host, "s-cmux-1", *failure(time.time(), CMUX_PANE, claude.pid))
-    assert connector(host).act("s-cmux-1", "nudge", repr(since))[0]
+    assert connector(host).act("s-cmux-1", "nudge", repr(since))[0] == "done"
     assert calls(host)[-1] == ["send", "--workspace", "W-1", "--surface", "S-1", "--", "continue\\n"]
+
+
+@pytest.mark.parametrize(
+    ("state", "outcome"), [({"top_pids": [1]}, "held"), ({"top_fg": [1]}, "held"), ({"send_exit": 1}, "unknown")]
+)
+def test_a_cmux_nudge_needs_claude_in_the_foreground_of_that_surface(
+    host: dict[str, Path], claude: Claude, state: dict[str, object], outcome: str
+) -> None:
+    stage(host, claude, **state)
+    since = session_log(host, "s-cmux-2", *failure(time.time(), CMUX_PANE, claude.pid))
+    assert connector(host).act("s-cmux-2", "nudge", repr(since))[0] == outcome
 
 
 def test_a_failing_tool_is_reported_without_its_output(host: dict[str, Path], claude: Claude) -> None:
     stage(host, claude, screen=READY)
     host["tmux"].write_text("#!/bin/sh\necho 'secret socket detail' >&2\nexit 1\n")
     since = session_log(host, "s-fail-01", *failure(time.time(), TMUX_PANE, claude.pid))
-    done, detail, log = connector(host).act("s-fail-01", "nudge", repr(since))
-    assert (done, detail) == (False, "the relaunch script failed") and "secret socket detail" in log
+    outcome, detail, log = connector(host).act("s-fail-01", "nudge", repr(since))
+    assert (outcome, detail) == ("held", "the relaunch script failed") and "secret socket detail" in log
+
+
+def test_a_failure_while_typing_counts_as_maybe_typed(host: dict[str, Path], claude: Claude) -> None:
+    stage(host, claude, if_shell_exit=1)
+    since = session_log(host, "s-typing-1", *failure(time.time(), TMUX_PANE, claude.pid))
+    assert connector(host).act("s-typing-1", "nudge", repr(since))[0] == "unknown"
 
 
 def test_the_tick_nudges_once_then_hands_the_session_to_the_owner(
     host: dict[str, Path], tmp_path: Path, claude: Claude
 ) -> None:
     stage(host, claude)
-    session_log(host, "s-tick-1", *failure(time.time() - 3600, TMUX_PANE, claude.pid))
+    session_log(host, "s-tick-1", *failure(time.time(), TMUX_PANE, claude.pid))
     agents = connector(host, channel="discord:agents", retry_after="0s")
     [spec] = parse_specs({"agents": {"type": "agents", "every": "0s", "channel": "discord:agents"}})
     ledger = Ledger(tmp_path / "s.db")
@@ -223,12 +264,12 @@ def test_the_tick_nudges_once_then_hands_the_session_to_the_owner(
         poll_sources(ledger, [spec], {"agents": agents}, 60)
         relaunch_sessions(ledger, [spec], {"agents": agents}, lambda channel, text: sent.append((channel, text)))
     assert "already given its nudge" in sent[-1][1] and "needs you" in sent[-1][1]
-    assert len([call for call in calls(host) if call[-1] == "Enter"]) == 1
+    assert len([call for call in calls(host) if "if-shell" in call]) == 1
 
 
 def test_a_relaunch_that_times_out_spends_the_nudge(host: dict[str, Path], tmp_path: Path, claude: Claude) -> None:
     stage(host, claude)
-    session_log(host, "s-slow-01", *failure(time.time() - 3600, TMUX_PANE, claude.pid))
+    session_log(host, "s-slow-01", *failure(time.time(), TMUX_PANE, claude.pid))
     agents = connector(host, retry_after="0s", timeout=1)
     host["tmux"].write_text("#!/bin/sh\nsleep 5\n")
     [spec] = parse_specs({"agents": {"type": "agents", "every": "0s"}})
@@ -248,7 +289,7 @@ def test_a_rate_limited_session_waits_for_claude_code_to_give_up_resuming(
     host: dict[str, Path], tmp_path: Path, claude: Claude, notice: str, nudged: bool
 ) -> None:
     stage(host, claude)
-    session_log(host, "s-quota-1", *failure(time.time() - 3600, TMUX_PANE, claude.pid, error="rate_limit"))
+    session_log(host, "s-quota-1", *failure(time.time(), TMUX_PANE, claude.pid, error="rate_limit"))
     agents = connector(host, retry_after="0s")
     [spec] = parse_specs({"agents": {"type": "agents", "every": "0s"}})
     ledger = Ledger(tmp_path / "s.db")
@@ -262,12 +303,12 @@ def test_a_rate_limited_session_waits_for_claude_code_to_give_up_resuming(
     for _ in range(2):
         poll_sources(ledger, [spec], {"agents": agents}, 60)
         relaunch_sessions(ledger, [spec], {"agents": agents})
-    assert bool([call for call in calls(host) if call[-1] == "Enter"]) is nudged
+    assert bool([call for call in calls(host) if "if-shell" in call]) is nudged
 
 
 def test_relaunch_is_off_unless_turned_on(host: dict[str, Path], tmp_path: Path, claude: Claude) -> None:
     stage(host, claude)
-    session_log(host, "s-off-01", *failure(time.time() - 3600, TMUX_PANE, claude.pid))
+    session_log(host, "s-off-01", *failure(time.time(), TMUX_PANE, claude.pid))
     [spec] = parse_specs({"agents": {"type": "agents", "every": "0s", "retry_after": "0s"}})
     agents = build_connector(spec)
     ledger = Ledger(tmp_path / "s.db")
@@ -318,10 +359,16 @@ def test_a_real_tmux_pane_receives_the_continue(host: dict[str, Path], tmp_path:
             time.sleep(0.1)
         pane = {"TMUX_PANE": pane_id, "TMUX": f"{socket},1,0"}
         since = session_log(host, "s-real-1", *failure(time.time(), pane, int(pane_pid)))
-        done, detail, _ = connector(host, tmux=tmux).act("s-real-1", "nudge", repr(since))
-        assert done, detail
+        outcome, detail, _ = connector(host, tmux=tmux).act("s-real-1", "nudge", repr(since))
+        assert outcome == "done", detail
         while "continue" not in (received.read_text() if received.exists() else ""):
             assert time.time() < deadline
             time.sleep(0.1)
+        subprocess.run([*base, "copy-mode", "-t", pane_id], check=True)
+        since = session_log(host, "s-real-1", *failure(time.time() + 1, pane, int(pane_pid)))
+        outcome, detail, _ = connector(host, tmux=tmux).act("s-real-1", "nudge", repr(since))
+        assert (outcome, "scrolled back" in detail) == ("held", True)
+        time.sleep(0.3)
+        assert received.read_text().count("continue") == 1
     finally:
         subprocess.run([*base, "kill-server"], check=False)
