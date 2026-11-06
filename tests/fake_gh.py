@@ -27,12 +27,20 @@ if path == "search/issues":
         "incomplete_results": query in fixture.get("incomplete", []),
         "items": items[(page - 1) * size : page * size],
     }
+elif path == "user":
+    body = {"login": fixture.get("login", "owner")}
+elif path.startswith("repos/") and path.endswith("/comments"):
+    key = path[len("repos/") : -len("/comments")].replace("/issues/", "#")
+    found = fixture.get("comments", {}).get(key, [])
+    size, page = int(fields.get("per_page", 30)), int(fields.get("page", 1))
+    body = found[(page - 1) * size : page * size]
 elif path.startswith("repos/"):
     key = path[len("repos/") :].replace("/issues/", "#")
     if key not in fixture.get("issues", {}):
         sys.stderr.write("HTTP 404\n")
         sys.exit(1)
-    body = {"state": fixture["issues"][key]}
+    issue = fixture["issues"][key]
+    body = issue if isinstance(issue, dict) else {"state": issue}
 else:
     sys.exit(2)
 print(("\r\n".join(headers) + "\r\n\r\n" if include else "") + json.dumps(body))

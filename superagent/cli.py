@@ -14,18 +14,21 @@ from pathlib import Path
 
 from .agents import ATTENTION_STATES, HOOK_SCRIPT, SessionState, settings_block
 from .brief import BriefSettings, build_brief
+from .briefwriter import BriefWriter, build_pack
 from .config import CONFIG_FILENAME, DB_FILENAME
+from .connectors import ConnectorError
 from .digest import build_digest, send_digest
 from .doctor import Status, diagnose
 from .domain import ReportState, Trigger
 from .ledger import Item, ItemState, Ledger, LedgerError
 from .reporting import identity_from_workdir, submit_report
-from .router import Assessor
-from .runtime import open_runtime, save_brief, tick
+from .router import Assessor, chat_safe
+from .runtime import Runtime, open_runtime, save_brief, tick
 from .starter import check_choices, detect, next_steps, starter_config, write_starter
 from .watchdog import DriftJudge
 
 _WORKER_STATES = [state.value for state in ReportState]
+BRIEFS_TICKET = "briefs"
 
 
 def setup_parser(parser: argparse.ArgumentParser) -> None:
@@ -64,6 +67,10 @@ def setup_parser(parser: argparse.ArgumentParser) -> None:
     outbox.add_argument("--reason", default="dropped by an operator")
     brief = commands.add_parser("brief", help="what is open, waiting, gone or untouched, since the last brief")
     brief.add_argument("--send", action="store_true", help="also queue it for [channels] brief")
+    briefs = commands.add_parser("briefs", help="write the brief a worker would start from for one ledger item")
+    briefs.add_argument("item", help="a handle such as it-7f3k")
+    briefs.add_argument("--send", action="store_true", help="also queue it for [channels] briefs")
+    briefs.add_argument("--fresh", action="store_true", help="write it again even if nothing changed")
     agents = commands.add_parser("agents", help="every Claude Code session the agents connectors see")
     agents.add_argument("--json", action="store_true")
     agents.add_argument("--hook-script", action="store_true", help="print the hook script to put on a host")
@@ -99,6 +106,7 @@ def run(
     default_home: Callable[[], Path] | None = None,
     judge: DriftJudge | None = None,
     assessor: Assessor | None = None,
+    writer: BriefWriter | None = None,
 ) -> int:
     if args.superagent_command == "report":
         print(
@@ -153,6 +161,8 @@ def run(
         since = runtime.ledger.last_brief(now) or now - 86400
         print(build_brief(runtime.ledger, runtime.config.connectors, since, now, settings).text)
         return 0
+    if args.superagent_command == "briefs":
+        return run_briefs(args, runtime, writer)
     if args.superagent_command == "agents":
         names = {spec.name for spec in runtime.config.connectors if spec.type == "agents"}
         sessions = board(runtime.ledger, names)
@@ -263,6 +273,57 @@ def board(ledger: Ledger, connectors: set[str]) -> list[Item]:
         sessions,
         key=lambda item: (item.meta.get("state") not in attention, order.get(item.meta.get("state", ""), 99)),
     )
+
+
+def run_briefs(args: argparse.Namespace, runtime: Runtime, writer: BriefWriter | None) -> int:
+    config = runtime.config
+    try:
+        item = runtime.ledger.get(args.item)
+    except LedgerError as error:
+        print(str(error), file=sys.stderr)
+        return 1
+    if args.send and not config.briefs_channel:
+        print("set briefs under [channels] to send briefs", file=sys.stderr)
+        return 1
+    spec = next((spec for spec in config.connectors if spec.name == item.connector), None)
+    fetch = getattr(runtime.connectors.get(item.connector), "context", None)
+    try:
+        context = fetch(item.external_id) if callable(fetch) else ()
+    except ConnectorError as error:
+        print(f"couldn't read the context from {item.connector}: {error}", file=sys.stderr)
+        return 1
+    repo = str(item.meta.get("repo", ""))
+    pack = build_pack(
+        runtime.ledger,
+        item,
+        trusted_source=spec.trusted if spec else False,
+        context=context,
+        notes=config.brief_notes,
+        repo_path=config.brief_repos.get(repo, ""),
+    )
+    text = None if args.fresh else runtime.ledger.cached_worker_brief(item.id, pack.digest)
+    if text is None:
+        if writer is None:
+            print("writing a brief needs a model, so run it as hermes superagent briefs", file=sys.stderr)
+            return 2
+        if runtime.ledger.worker_briefs_since(time.time() - 86400) >= config.briefs_daily_limit:
+            print(
+                f"{config.briefs_daily_limit} briefs were written in the last 24 hours, the daily limit",
+                file=sys.stderr,
+            )
+            return 1
+        attempt = runtime.ledger.begin_worker_brief(item.id, pack.digest)
+        try:
+            written = writer.write(pack)
+        except Exception as error:
+            print(f"the brief couldn't be written: {error}", file=sys.stderr)
+            return 1
+        runtime.ledger.finish_worker_brief(attempt, written.text, written.failures, written.needs_approval)
+        text = written.text
+    print(text)
+    if args.send:
+        runtime.store.queue_message(BRIEFS_TICKET, config.briefs_channel, chat_safe(text))
+    return 0
 
 
 def run_setup(args: argparse.Namespace, home: Path) -> int:

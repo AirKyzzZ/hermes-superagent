@@ -8,6 +8,7 @@ from collections.abc import Callable, Mapping
 from pathlib import Path
 from typing import Any
 
+from .briefwriter import BriefWriter
 from .cli import run, setup_parser
 from .config import load_config
 from .digest import DigestError, build_digest, send_digest
@@ -332,6 +333,7 @@ class Plugin:
             default_home=self.home,
             judge=LlmDriftJudge(self.ctx.llm),
             assessor=LlmAssessor(self.ctx.llm),
+            writer=BriefWriter(self.ctx.llm),
         )
 
 

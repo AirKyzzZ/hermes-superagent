@@ -9,14 +9,16 @@ MAX_FRAMED_CHARS = 4000
 _CONTROL_CHARS = re.compile(r"[\x00-\x08\x0b\x0c\x0e-\x1f\x7f​-‏‪-‮⁦-⁩]")
 
 
-def sanitize(text: str, *, keep_tail: bool = False) -> str:
+def sanitize(text: str, *, keep_tail: bool = False, limit: int = MAX_FRAMED_CHARS) -> str:
     clean = _CONTROL_CHARS.sub("", text)
-    return clean[-MAX_FRAMED_CHARS:] if keep_tail else clean[:MAX_FRAMED_CHARS]
+    return clean[-limit:] if keep_tail else clean[:limit]
 
 
-def frame_untrusted(label: str, text: str, *, nonce: str | None = None, keep_tail: bool = False) -> str:
+def frame_untrusted(
+    label: str, text: str, *, nonce: str | None = None, keep_tail: bool = False, limit: int = MAX_FRAMED_CHARS
+) -> str:
     fence = nonce or secrets.token_hex(8)
-    body = sanitize(text, keep_tail=keep_tail).replace(fence, "")
+    body = sanitize(text, keep_tail=keep_tail, limit=limit).replace(fence, "")
     return (
         f"<untrusted-data label={sanitize(label)!r} fence={fence}>\n"
         f"{body}\n"

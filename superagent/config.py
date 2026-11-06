@@ -32,13 +32,15 @@ _KNOWN_KEYS = {
         "brief",
         "triage",
         "areas",
+        "briefs",
     },
     "sources": {"policy", "allow", "bots", "pass_strangers", "notify", "via_router"},
     "semantic": {"name", "text", "mode"},
     "worker": {"argv", "allow_same_user"},
     "outbound": {"argv"},
     "digest": {"channel"},
-    "channels": {"alerts", "brief"},
+    "channels": {"alerts", "brief", "briefs"},
+    "briefs": {"notes", "repos", "daily_limit"},
     "brief": {"hour", "timezone", "stale_after"},
     "heartbeat": {"argv"},
     "tick": {"deadline_seconds", "alert_after_seconds"},
@@ -65,6 +67,10 @@ class Config:
     stale_after_seconds: float = 3 * 86400.0
     triage: tuple[TriageRule, ...] = ()
     area_channels: Mapping[str, str] = field(default_factory=dict)
+    briefs_channel: str = ""
+    brief_notes: str = ""
+    brief_repos: Mapping[str, str] = field(default_factory=dict)
+    briefs_daily_limit: int = 20
 
 
 class ConfigError(ValueError):
@@ -128,6 +134,17 @@ def parse_config(raw: str) -> Config:
         triage, area_channels = parse_triage(data.get("triage", []), data.get("areas", {}))
     except TriageError as error:
         raise ConfigError(str(error)) from error
+    briefs_channel = channels.get("briefs", "")
+    if not isinstance(briefs_channel, str):
+        raise ConfigError("[channels] values must be strings such as discord:123")
+    briefs = _table(data, "briefs")
+    notes, repos, limit = briefs.get("notes", ""), briefs.get("repos", {}), briefs.get("daily_limit", 20)
+    if not isinstance(notes, str):
+        raise ConfigError("[briefs] notes must be a string")
+    if not isinstance(repos, dict) or not all(isinstance(path, str) for path in repos.values()):
+        raise ConfigError('[briefs] repos maps owner/repo to a path, such as { "your-org/app" = "~/code/app" }')
+    if isinstance(limit, bool) or not isinstance(limit, int) or limit < 0:
+        raise ConfigError("[briefs] daily_limit must be a whole number, 0 or more")
     heartbeat = _table(data, "heartbeat").get("argv", [])
     if not isinstance(heartbeat, list) or not all(isinstance(part, str) for part in heartbeat):
         raise ConfigError("[heartbeat] argv must be a list of strings")
@@ -149,6 +166,10 @@ def parse_config(raw: str) -> Config:
         stale_after_seconds=stale_after,
         triage=triage,
         area_channels=area_channels,
+        briefs_channel=briefs_channel,
+        brief_notes=notes,
+        brief_repos=dict(repos),
+        briefs_daily_limit=limit,
     )
 
 
