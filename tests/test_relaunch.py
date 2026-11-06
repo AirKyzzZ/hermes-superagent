@@ -198,7 +198,7 @@ def test_a_claude_in_the_background_of_its_terminal_is_left_alone(host: dict[str
 def test_a_pane_shared_with_another_live_session_is_left_alone(host: dict[str, Path], claude: Claude) -> None:
     stage(host, claude)
     since = session_log(host, "s-old-01", *failure(time.time(), TMUX_PANE, claude.pid))
-    session_log(host, "s-new-01", {"event": "SessionStart", "t": time.time(), "pane": TMUX_PANE, "pid": claude.pid})
+    session_log(host, "s-new-01", {"event": "SessionStart", "t": since - 0.2, "pane": TMUX_PANE, "pid": claude.pid})
     assert connector(host).act("s-old-01", "nudge", repr(since))[1] == "another live session shares its pane"
 
 
@@ -318,7 +318,7 @@ def test_relaunch_is_off_unless_turned_on(host: dict[str, Path], tmp_path: Path,
     assert calls(host) == []
 
 
-@pytest.mark.parametrize("nudge", ["", "continue\nrm -rf ~", "x" * 300, "continue\\n"])
+@pytest.mark.parametrize("nudge", ["", "continue\nrm -rf ~", "x" * 300, "continue\\n", "!continue", "/clear"])
 def test_the_nudge_is_one_short_plain_line(nudge: str) -> None:
     with pytest.raises(ConnectorConfigError, match="nudge"):
         parse_specs({"agents": {"type": "agents", "nudge": nudge}})
@@ -372,3 +372,33 @@ def test_a_real_tmux_pane_receives_the_continue(host: dict[str, Path], tmp_path:
         assert received.read_text().count("continue") == 1
     finally:
         subprocess.run([*base, "kill-server"], check=False)
+
+
+def test_a_process_that_moved_to_another_session_is_left_alone(host: dict[str, Path], claude: Claude) -> None:
+    stage(host, claude)
+    since = session_log(host, "s-first-01", *failure(time.time(), TMUX_PANE, claude.pid))
+    old = {"event": "UserPromptSubmit", "t": time.time() - 86400, "pane": TMUX_PANE, "pid": 999999}
+    session_log(
+        host, "s-older-01", old, {"event": "SessionStart", "t": time.time() + 1, "pane": TMUX_PANE, "pid": claude.pid}
+    )
+    assert (
+        connector(host).act("s-first-01", "nudge", repr(since))[1]
+        == "its claude process has moved on to another session"
+    )
+
+
+def test_a_resumed_session_with_older_events_can_still_be_nudged(host: dict[str, Path], claude: Claude) -> None:
+    stage(host, claude)
+    yesterday = {"event": "UserPromptSubmit", "t": time.time() - 86400, "pane": TMUX_PANE, "pid": 999999}
+    since = session_log(host, "s-resumed-1", yesterday, *failure(time.time(), TMUX_PANE, claude.pid))
+    assert connector(host).act("s-resumed-1", "nudge", repr(since))[0] == "done"
+
+
+def test_a_french_locale_does_not_hide_the_process(
+    host: dict[str, Path], claude: Claude, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv("LC_ALL", "fr_FR.UTF-8")
+    monkeypatch.setenv("LANG", "fr_FR.UTF-8")
+    stage(host, claude)
+    since = session_log(host, "s-locale-1", *failure(time.time(), TMUX_PANE, claude.pid))
+    assert connector(host).act("s-locale-1", "nudge", repr(since))[0] == "done"

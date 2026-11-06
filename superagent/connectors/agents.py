@@ -15,7 +15,7 @@ from . import ConnectorConfigError, ConnectorError, ConnectorSpec, Poll, duratio
 
 KEYS = frozenset({"host", "python", "stall_after", "timeout", "relaunch", "nudge", "retry_after", "cmux", "tmux"})
 GONE_CLOSES_AFTER_SECONDS = 3600.0
-NUDGE_TEXT = re.compile(r"[A-Za-z0-9 .,!?-]{1,200}")
+NUDGE_TEXT = re.compile(r"[A-Za-z0-9][A-Za-z0-9 .,!?-]{0,199}")
 ACT_MARGIN_SECONDS = 10.0
 NOT_HOOKED = "no Claude Code hook has written to {where} on this host, install it with superagent agents --hook-script"
 _BASE_ENV = ("PATH", "HOME", "LANG", "LC_ALL", "TMPDIR", "USER", "SSH_AUTH_SOCK")
@@ -164,7 +164,7 @@ def build(spec: ConnectorSpec) -> AgentsConnector:
         raise ConnectorConfigError(f"{where} relaunch must be true or false")
     if not isinstance(nudge, str) or not nudge.strip() or not NUDGE_TEXT.fullmatch(nudge):
         raise ConnectorConfigError(
-            f"{where} nudge must be a short line of letters, digits and . , ! ? -, such as continue"
+            f"{where} nudge must be a short line of letters, digits and . , ! ? -, starting with a letter or digit"
         )
     commands = {key: spec.settings.get(key, key) for key in ("cmux", "tmux")}
     if not all(isinstance(value, str) and value for value in commands.values()):

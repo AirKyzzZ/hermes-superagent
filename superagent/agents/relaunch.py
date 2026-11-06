@@ -25,6 +25,7 @@ PROMPT_EMPTY = re.compile(r"\s*[│|]?\s*[❯>]\s*[│|]?\s*")
 RULE = re.compile(r"\s*[─━]{8,}\s*")
 WORKING = re.compile(r"…\s*\(\d")
 STARTED = time.time()
+PANE_ID = re.compile(r"%\d+")
 START_SLACK_SECONDS = 5.0
 GUARD = "#{&&:#{==:#{pane_in_mode},0},#{&&:#{==:#{pane_synchronized},0},#{==:#{pane_input_off},0}}}"
 
@@ -45,7 +46,8 @@ def tail(path: Path) -> list[dict[str, object]]:
 
 
 def run(argv: list[str], timeout: float = 10) -> str:
-    done = subprocess.run(argv, capture_output=True, text=True, timeout=timeout, check=False)
+    env = {**os.environ, "LC_ALL": "C"} if argv[0] == "ps" else None
+    done = subprocess.run(argv, capture_output=True, text=True, timeout=timeout, check=False, env=env)
     if done.returncode != 0:
         raise RuntimeError(f"{' '.join(argv[:2])} exited {done.returncode}: {done.stderr.strip()[-200:]}")
     return done.stdout
@@ -87,8 +89,9 @@ def last_time(events: list[dict[str, object]]) -> float:
     return max(float(str(event.get("t") or 0)) for event in events)
 
 
-def first_time(events: list[dict[str, object]]) -> float:
-    return min(float(str(event.get("t") or 0)) for event in events)
+def first_time(events: list[dict[str, object]], pid: object) -> float:
+    times = [float(str(event.get("t") or 0)) for event in events if event.get("pid") == pid]
+    return min(times) if times else last_time(events)
 
 
 def start_ticks(pid: int) -> str:
@@ -128,7 +131,8 @@ def pgid_of(pid: int) -> int:
 
 
 def in_cmux_surface(pid: int, pane: dict[str, str], cmux: str) -> bool:
-    top = run([cmux, "--json", "--id-format", "both", "top", "--processes", "--workspace", pane["CMUX_WORKSPACE_ID"]])
+    workspace = pane["CMUX_WORKSPACE_ID"]
+    top = run([cmux, "--json", "--id-format", "both", "top", "--all", "--processes", "--workspace", workspace])
     try:
         data = json.loads(top)
     except ValueError:
@@ -174,9 +178,20 @@ def shared_with_live_session(session: str, pane: dict[str, str]) -> bool:
         events = tail(path)
         other = pane_of(events)
         if any(other.get(key) == value for key, value in mine.items()):
+            pid = latest(events, "pid")
             ended = any(event.get("event") == "SessionEnd" for event in events[-3:])
-            if not ended and same_process(latest(events, "pid"), latest(events, "pid_start"), first_time(events)):
+            if not ended and same_process(pid, latest(events, "pid_start"), first_time(events, pid)):
                 return True
+    return False
+
+
+def process_moved_on(session: str, pid: int, since: float) -> bool:
+    for path in SESSIONS.glob("*.jsonl"):
+        if path.stem == session or path.stat().st_mtime < since:
+            continue
+        events = tail(path)
+        if latest(events, "pid") == pid and last_time(events) > since:
+            return True
     return False
 
 
@@ -187,8 +202,10 @@ def out_of_time(args: dict[str, object]) -> bool:
 def nudge(session: str, events: list[dict[str, object]], args: dict[str, object]) -> dict[str, object]:
     pane, text = pane_of(events), str(args["text"])
     pid = latest(events, "pid")
-    if not isinstance(pid, int) or not same_process(pid, latest(events, "pid_start"), first_time(events)):
+    if not isinstance(pid, int) or not same_process(pid, latest(events, "pid_start"), first_time(events, pid)):
         return refuse("its claude process isn't running")
+    if process_moved_on(session, pid, last_time(events)):
+        return refuse("its claude process has moved on to another session")
     if shared_with_live_session(session, pane):
         return refuse("another live session shares its pane")
     tty = foreground_tty(pid)
@@ -196,6 +213,8 @@ def nudge(session: str, events: list[dict[str, object]], args: dict[str, object]
         return refuse("its claude process isn't in the foreground of its terminal")
     if pane.get("TMUX_PANE"):
         socket, target = pane.get("TMUX", "").split(",")[0], pane["TMUX_PANE"]
+        if not PANE_ID.fullmatch(target):
+            return refuse("its tmux pane id looks wrong")
         base = [str(args["tmux"]), "-S", socket] if socket else [str(args["tmux"])]
         query = "#{pane_pid}\t#{pane_tty}\t#{pane_dead}\t" + GUARD
         fields = run([*base, "display-message", "-p", "-t", target, query]).rstrip("\n").split("\t")
