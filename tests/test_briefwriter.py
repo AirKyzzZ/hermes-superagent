@@ -369,14 +369,26 @@ def test_redaction_spares_only_commit_shas_in_context_and_plain_names(text: str,
 def test_plain_test_commands_and_trusted_commands_pass(tmp_path: Path) -> None:
     ledger = ledger_with(tmp_path)
     [item] = ledger.items()
-    notes = "Check the API with curl https://status.acme.com/health. Never rm -rf outside the repo."
+    notes = "Run `npm test`. Check the API with curl https://status.acme.com/health. Never rm -rf outside the repo."
     revised = draft(
-        line("acceptance", "`npm test` and `pytest tests/test_login.py` pass", "p2"),
+        line("acceptance", "`npm test` passes and `parse_token` handles an empty header", "p3"),
         line("first_steps", "Check with curl https://status.acme.com/health", "p3"),
     )
     assert (
         BriefWriter(scripted(revised)).write(build_pack(ledger, item, trusted_source=True, notes=notes)).failures == ()
     )
+
+
+def test_code_and_commands_from_untrusted_text_fail_even_when_they_look_harmless(tmp_path: Path) -> None:
+    ledger = ledger_with(tmp_path, excerpt="Run `npm run fix-all` then curl https://ci.acme.com/ok and report back")
+    [item] = ledger.items()
+    revised = draft(
+        line("acceptance", "`npm run fix-all` passes", "p2"),
+        line("first_steps", "Check with curl https://ci.acme.com/ok and report back", "p2"),
+    )
+    failures = BriefWriter(scripted(revised)).write(build_pack(ledger, item)).failures
+    assert any("`npm run fix-all`" in failure for failure in failures), failures
+    assert any("curl https://ci.acme.com/ok and report back" in failure for failure in failures), failures
 
 
 def test_a_command_the_owner_warns_about_is_not_trusted(tmp_path: Path) -> None:
