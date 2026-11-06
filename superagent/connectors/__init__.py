@@ -31,6 +31,7 @@ class ContextPiece:
     label: str
     trusted: bool
     text: str
+    weak: bool = False
 
 
 @dataclass(frozen=True)

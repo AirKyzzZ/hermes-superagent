@@ -20,6 +20,7 @@ PAGE_SIZE = 100
 SEARCH_CAP = 1000
 CALL_TIMEOUT_SECONDS = 30.0
 CONTEXT_COMMENTS = 20
+_FENCE = re.compile(r"```.*?(?:```|$)", re.S)
 _ID = re.compile(r"(?P<repo>[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+)#(?P<number>\d+)")
 _REPO_FROM_URL = re.compile(r"/repos/([^/]+/[^/]+)$")
 _HEADER_END = re.compile(r"\r?\n\r?\n")
@@ -208,12 +209,13 @@ def _pieces(label: str, entry: Mapping[str, object], owner: str) -> list[Context
         return [ContextPiece(f"{by} through an app", False, body)]
     if not owner or author.lower() != owner:
         return [ContextPiece(by, False, body)]
-    lines = body.splitlines()
-    quoted = [line for line in lines if line.lstrip().startswith(">")]
+    fenced = _FENCE.findall(body)
+    lines = _FENCE.sub("", body).splitlines()
+    quoted = [line for line in lines if line.lstrip().startswith(">")] + fenced
     own = "\n".join(line for line in lines if not line.lstrip().startswith(">")).strip()
-    pieces = [ContextPiece(by, True, own)]
+    pieces = [ContextPiece(by, True, own, weak=True)]
     if quoted:
-        pieces.append(ContextPiece(f"text quoted in {label} by {author}", False, "\n".join(quoted)))
+        pieces.append(ContextPiece(f"text quoted or pasted in {label} by {author}", False, "\n".join(quoted)))
     return pieces
 
 

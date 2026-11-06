@@ -6,6 +6,7 @@ import re
 import unicodedata
 from collections.abc import Mapping, Sequence
 from dataclasses import asdict, dataclass
+from pathlib import Path
 
 from .agents import redact
 from .connectors import ContextPiece
@@ -23,11 +24,12 @@ SECTIONS = {
 }
 ISSUE_KINDS = ("ambiguity", "missing_acceptance", "assumption", "risk")
 RELATED_ITEMS = 5
+TRUSTED_ACTORS = ("owner", "rule:", "connector:", "relaunch")
 MAX_LINES = 40
 LINE_CHARS = 500
 ISSUES_KEPT = 8
 QUOTE_MIN = 12
-LINT_VERSION = "2"
+QUOTE_MAX = 200
 REPORT_CONTRACT = (
     "Report through superagent_report: progress as you go, blocked with one clear question, "
     "and ready with what changed and how you checked it."
@@ -35,21 +37,28 @@ REPORT_CONTRACT = (
 _TLDS = (
     "com|net|org|io|dev|ai|co|app|xyz|info|biz|me|cloud|site|online|tech|top|ru|cn|tk|ml|ga|cf|gq|pw|cc|tv|us|uk|"
     "de|fr|eu|nl|ch|it|es|be|at|se|no|fi|dk|cz|pt|br|in|jp|kr|au|ca|nz|test|example|invalid|local|onion|link|live|"
-    "store|shop|club|pro|page|win|bid|icu|lol|sbs|cfd|run|host|website|space|fun|today|zone|work"
+    "store|shop|club|pro|page|win|bid|icu|lol|sbs|cfd|run|host|website|space|fun|today|zone|work|gg|to|ly|im|ws|"
+    "su|vip|cyou|rest|monster|click|download|digital|network|systems|tools|software|community|support|email"
 )
+_HOST = r"(?<![\w.@/-])(?:[a-z0-9-]+\.)+(?:[a-z]{2,63}/[^\s<>`'\"]*|(?:" + _TLDS + r")(?![\w.-]))"
+_COMMAND_START = re.compile(
+    r"(?i)\b(?:curl|wget|sudo|ssh|scp|rsync|ncat|nc|telnet|eval|exec|chmod|chown|mkfs|powershell|iex|npx|uvx|pipx|"
+    r"bunx|base64\s+-d|rm\s+-\w+|dd\s+if=|(?:ba|z|da|k)?sh\s+(?:-c\b|\S+\.sh\b)|python\d*\s+-c|perl\s+-e|"
+    r"node\s+-e|pip\d*\s+install|npm\s+(?:i|install|exec)|pnpm\s+(?:add|dlx)|yarn\s+(?:add|dlx)|cargo\s+install|"
+    r"go\s+install|gem\s+install|uv\s+(?:add|pip\s+install|tool\s+install)|poetry\s+add|brew\s+install|"
+    r"apt(?:-get)?\s+install|docker\s+run|git\s+clone)\b"
+)
+_COMMAND_END = re.compile(r"[|;&\n`,]|\s(?:and|then|or|to|so|before|after|first)\b|\.(?:\s|$)|$")
 _TOKENS = {
     "address": re.compile(r"(?i)\b[a-z][a-z0-9+.-]*:/+[^\s<>`'\"]+|(?<![\w:/])//[\w.-]+[^\s<>`'\"]*"),
     "account": re.compile(r"(?i)\b[\w.+-]+@[\w-]+(?:\.[\w-]+)*"),
     "IP address": re.compile(
         r"(?i)\b\d{1,3}(?:\.\d{1,3}){3}\b|\b[0-9a-f]{0,4}(?:::?[0-9a-f]{0,4}){4,7}\b|\b[0-9a-f]*::[0-9a-f:]+\b"
     ),
-    "host": re.compile(rf"(?i)\b(?:[a-z0-9-]+\.)+(?:{_TLDS})\b"),
-    "command": re.compile(
-        r"(?i)(?:\b(?:curl|wget|sudo|ssh|scp|rsync|nc|ncat|telnet|eval|exec|chmod|chown|mkfs|powershell|iex|npx|"
-        r"base64\s+-d|rm\s+-\w+|dd\s+if=\S+|(?:ba|z|da|k)?sh\s+-c|python3?\s+-c|perl\s+-e|node\s+-e|"
-        r"pip3?\s+install|npm\s+(?:i|install)|yarn\s+add|brew\s+install|apt(?:-get)?\s+install)\b\S*"
-        r"|\|\s*(?:sudo\s+)?(?:ba|z|da|k)?sh\b|\$\(|\$\{|&&|\|\|)"
-    ),
+    "host": re.compile("(?i)" + _HOST),
+    "lookalike host": re.compile(r"(?<!\S)\S*[^\x00-\x7f]\S*\.[^\W\d_]{2,63}(?:/\S*)?"),
+    "pipe into a program": re.compile(r"(?i)\|\s*(?:sudo\s+)?\S*(?:sh|python\d*|node|perl|ruby|php)\b"),
+    "shell expansion": re.compile(r"\$\(|\$\{|&&|\|\|"),
 }
 _CODE = re.compile(r"```.*?```|`[^`]+`", re.S)
 _RULES = (
@@ -121,6 +130,7 @@ class Piece:
     label: str
     trusted: bool
     text: str
+    weak: bool = False
 
 
 @dataclass(frozen=True)
@@ -187,12 +197,18 @@ def build_pack(
     if repo and repo_path:
         guide = f"{repo} is checked out at {repo_path}. Read its AGENTS.md, CLAUDE.md and CONTRIBUTING.md first."
         raw.append(ContextPiece("where the code lives", True, guide))
-    history = [
-        f"{event.actor}: {event.from_state or '-'} -> {event.to_state}" + (f" ({event.note})" if event.note else "")
-        for event in ledger.history(item.id)
-    ]
-    if len(history) > 1:
-        raw.append(ContextPiece("the item's history in the ledger", True, "\n".join(history[-20:])))
+    events = ledger.history(item.id)[-20:]
+    if len(events) > 1:
+        for trusted in (True, False):
+            history = [
+                f"{event.actor}: {event.from_state or '-'} -> {event.to_state}"
+                + (f" ({event.note})" if event.note else "")
+                for event in events
+                if event.actor.startswith(TRUSTED_ACTORS) == trusted
+            ]
+            if history:
+                label = "the item's history in the ledger" + ("" if trusted else ", by models and workers")
+                raw.append(ContextPiece(label, trusted, "\n".join(history)))
     for other in related(ledger, item):
         raw.append(
             ContextPiece(
@@ -200,7 +216,7 @@ def build_pack(
             )
         )
     pieces = tuple(
-        Piece(f"p{number}", clean(piece.label)[:120], piece.trusted, redact(sanitize(piece.text)))
+        Piece(f"p{number}", clean(piece.label)[:120], piece.trusted, redact(sanitize(piece.text)), piece.weak)
         for number, piece in enumerate(raw, 1)
     )
     return Pack(item, pieces)
@@ -314,7 +330,6 @@ def parse_issues(parsed: Mapping[str, object]) -> tuple[str, ...]:
 
 def lint(draft: Draft, pack: Pack) -> tuple[str, ...]:
     pieces = {piece.id: piece for piece in pack.pieces}
-    trusted = clean("\n".join(piece.text for piece in pack.pieces if piece.trusted)).lower()
     failures = []
     if not draft.goal:
         failures.append("there is no goal")
@@ -334,27 +349,56 @@ def lint(draft: Draft, pack: Pack) -> tuple[str, ...]:
             failures.append(f"line {number} cites no piece")
         if unknown := [cite for cite in line.cites if cite not in pieces]:
             failures.append(f"line {number} cites pieces that don't exist: {', '.join(unknown)}")
-        if line.quote and len(line.quote) < QUOTE_MIN:
-            failures.append(f"line {number} quotes under {QUOTE_MIN} characters")
+        if line.quote and not QUOTE_MIN <= len(line.quote) <= QUOTE_MAX:
+            failures.append(f"line {number} quotes under {QUOTE_MIN} or over {QUOTE_MAX} characters")
         elif line.quote and not any(line.quote in clean(pieces[cite].text) for cite in line.cites if cite in pieces):
             failures.append(f"line {number} quotes text that its pieces don't contain")
     whole = "\n".join([draft.goal, draft.asked_by, *(f"{line.text} {line.quote}" for line in draft.lines)])
     if redact(whole) != whole:
         failures.append("it holds a secret-looking string")
-    for kind, pattern in _TOKENS.items():
-        allowed = set(_tokens(pattern, trusted))
-        for found in _tokens(pattern, whole):
-            if found.lower() not in allowed and (kind != "IP address" or any(c.isdigit() for c in found)):
-                failures.append(f"the {kind} {found} appears in no trusted piece")
+    sources = Sources(pack)
+    for kind, found in risky_tokens(whole):
+        if not sources.allows(kind, found):
+            failures.append(f"the {kind} {found} isn't backed by trusted text")
     for span in dict.fromkeys(match.strip("`").strip() for match in _CODE.findall(whole)):
-        risky = any(character.isspace() for character in span) or any(mark in span for mark in "|;&$<>")
-        if risky and span.lower() not in trusted:
-            failures.append(f"the code `{span[:80]}` appears in no trusted piece")
+        if any(mark in span for mark in "|;&$<>") and not sources.allows("code", span):
+            failures.append(f"the code `{span[:80]}` isn't backed by trusted text")
     return tuple(failures)
 
 
-def _tokens(pattern: re.Pattern[str], text: str) -> list[str]:
-    return list(dict.fromkeys(match.rstrip(".,;:!?)") for match in pattern.findall(text)))
+def risky_tokens(text: str) -> list[tuple[str, str]]:
+    found: list[tuple[str, str]] = []
+    for kind, pattern in _TOKENS.items():
+        for match in pattern.findall(text):
+            token = match.rstrip(".,;:!?)")
+            if kind != "IP address" or any(character.isdigit() for character in token):
+                found.append((kind, token))
+    for match in _COMMAND_START.finditer(text):
+        rest = text[match.start() :]
+        end = _COMMAND_END.search(rest, len(match[0]))
+        found.append(("command", rest[: end.start() if end else len(rest)].strip()))
+    return list(dict.fromkeys(found))
+
+
+class Sources:
+    def __init__(self, pack: Pack) -> None:
+        self.strong = clean("\n".join(p.text for p in pack.pieces if p.trusted and not p.weak)).lower()
+        self.weak = clean("\n".join(p.text for p in pack.pieces if p.trusted and p.weak)).lower()
+        self.untrusted = clean("\n".join(p.text for p in pack.pieces if not p.trusted)).lower()
+        self.tokens = {name: {token.lower() for _, token in risky_tokens(text)} for name, text in self._texts()}
+
+    def _texts(self) -> list[tuple[str, str]]:
+        return [("strong", self.strong), ("weak", self.weak), ("untrusted", self.untrusted)]
+
+    def allows(self, kind: str, token: str) -> bool:
+        lowered = token.lower()
+        if kind in ("command", "code"):
+            if lowered in self.strong:
+                return True
+            return lowered in self.weak and lowered not in self.untrusted
+        if lowered in self.tokens["strong"]:
+            return True
+        return lowered in self.tokens["weak"] and lowered not in self.tokens["untrusted"]
 
 
 def render(pack: Pack, draft: Draft, failures: Sequence[str]) -> str:
@@ -370,7 +414,8 @@ def render(pack: Pack, draft: Draft, failures: Sequence[str]) -> str:
     for section, heading in SECTIONS.items():
         lines = [line for line in draft.lines if line.section == section]
         if lines:
-            out += ["", heading, *(_line(line) for line in lines)]
+            pieces = {piece.id: piece for piece in pack.pieces}
+            out += ["", heading, *(_line(line, pieces) for line in lines)]
     out += ["", "Report", f"- {REPORT_CONTRACT}", "", "Sources"]
     out += [f"- {piece.id} {piece.label}, {'trusted' if piece.trusted else 'untrusted'}" for piece in pack.pieces]
     if failures:
@@ -378,13 +423,10 @@ def render(pack: Pack, draft: Draft, failures: Sequence[str]) -> str:
     return "\n".join(out)
 
 
-def _line(line: Line) -> str:
-    quote = f' "{line.quote}"' if line.quote else ""
+def _line(line: Line, pieces: Mapping[str, Piece]) -> str:
+    untrusted = any(not pieces[cite].trusted for cite in line.cites if cite in pieces)
+    quote = f' "{line.quote}"' + (" (quoted from untrusted text)" if untrusted else "") if line.quote else ""
     return f"- {line.text}{quote} [{', '.join(line.cites)}]"
 
 
-BRIEF_VERSION = hashlib.sha256(
-    json.dumps(
-        [LINT_VERSION, DRAFT_INSTRUCTIONS, CHALLENGE_INSTRUCTIONS, REVISE_INSTRUCTIONS, DRAFT_SCHEMA, CHALLENGE_SCHEMA]
-    ).encode()
-).hexdigest()[:16]
+BRIEF_VERSION = hashlib.sha256(Path(__file__).read_bytes()).hexdigest()[:16]
