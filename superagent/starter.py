@@ -21,8 +21,8 @@ class Choices:
     agents_channel: str = ""
     timezone: str = "UTC"
     github: bool = False
-    gitlab: bool = False
     agents: bool = False
+    gitlab: bool = False
 
 
 def detect(hermes: str, *, alerts: str = "", brief: str = "", agents_channel: str = "", timezone: str = "") -> Choices:
