@@ -337,6 +337,12 @@ class Ledger:
                 _move(connection, current, now, actor, target, reason, None)
             return _reload(connection, row["id"])
 
+    def note(self, reference: str, actor: str, note: str) -> None:
+        with self._connect() as connection:
+            row = _find(connection, reference)
+            state = ItemState(row["state"])
+            _log(connection, row["id"], time.time(), actor, state, state, row["area"], note, None)
+
     def snooze(self, reference: str, until: float, actor: str) -> Item:
         if actor != "owner":
             raise LedgerError("only the owner can snooze an item")
