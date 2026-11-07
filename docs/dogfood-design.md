@@ -356,7 +356,7 @@ The harness is ready for those tasks. Put them in a JSON list, one object per ta
 ]
 ```
 
-Then `hermes superagent briefs --compare past.json --out sheet.md --key key.md` writes a new brief for each task through the profile's model, three calls each, and puts it beside the one that ran in random order. The owner marks A or B in `sheet.md` without seeing `key.md`.
+Then `hermes superagent briefs --compare past.json --out sheet.md --key key.md` writes a new brief for each task through the profile's model, three calls each, with the same notes, repo guide and trust settings as a real brief, and puts it beside the one that ran. Both are shown as plain text, in a random order balanced between A and B, and the verdict, the lint's findings and each side's length go to `key.md`. The owner marks A or B in `sheet.md` without seeing `key.md`. A task whose brief can't be written is noted in the key and the others carry on. Existing files are left alone unless `--force`, and more tasks than `[briefs] daily_limit` need `--yes`. A context piece can carry `"weak": true`, like the owner's comments in a GitHub thread.
 
 ## Safety
 
