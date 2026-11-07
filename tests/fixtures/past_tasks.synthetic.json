@@ -1,0 +1,26 @@
+[
+  {
+    "name": "Fix the login redirect loop",
+    "connector": "github",
+    "title": "acme/app#12 Login redirects forever after password reset",
+    "url": "https://github.com/acme/app/issues/12",
+    "excerpt": "After resetting a password, the login page redirects to itself.",
+    "meta": {"repo": "acme/app", "kind": "issue", "author": "a-user"},
+    "context": [
+      {"label": "the issue text by a-user", "trusted": false, "text": "Steps: reset password, click the link, log in. The page loops."},
+      {"label": "a comment by the owner", "trusted": true, "text": "Probably the session cookie set before the redirect. Keep the old endpoint working."}
+    ],
+    "typed": "fix the login loop on app",
+    "ran": "Fix the login redirect loop in acme/app (issue 12). Look at the session cookie. Open a PR."
+  },
+  {
+    "name": "Renew the domain",
+    "connector": "todoist",
+    "title": "Renew the domain",
+    "excerpt": "The registrar emails a reminder first",
+    "meta": {"project": "Home", "priority": "p1"},
+    "context": [],
+    "typed": "renew domain",
+    "ran": "Renew the domain before it expires."
+  }
+]

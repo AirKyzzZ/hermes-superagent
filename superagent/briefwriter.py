@@ -173,7 +173,7 @@ class WrittenBrief:
 
 
 def build_pack(
-    ledger: Ledger,
+    ledger: Ledger | None,
     item: Item,
     *,
     trusted_source: bool = False,
@@ -198,7 +198,7 @@ def build_pack(
     if repo and repo_path:
         guide = f"{repo} is checked out at {repo_path}. Read its AGENTS.md, CLAUDE.md and CONTRIBUTING.md first."
         raw.append(ContextPiece("where the code lives", True, guide))
-    events = ledger.history(item.id)[-20:]
+    events = ledger.history(item.id)[-20:] if ledger is not None else []
     if len(events) > 1:
         for trusted in (True, False):
             history = [
@@ -210,7 +210,7 @@ def build_pack(
             if history:
                 label = "the item's history in the ledger" + ("" if trusted else ", by models and workers")
                 raw.append(ContextPiece(label, trusted, "\n".join(history)))
-    for other in related(ledger, item):
+    for other in related(ledger, item) if ledger is not None else []:
         raw.append(
             ContextPiece(
                 f"related item {other.handle} from {other.connector}", False, f"{other.title}\n{other.excerpt}"

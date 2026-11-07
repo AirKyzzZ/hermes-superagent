@@ -21,6 +21,7 @@ from .digest import build_digest, send_digest
 from .doctor import Status, diagnose
 from .domain import ReportState, Trigger
 from .ledger import Item, ItemState, Ledger, LedgerError
+from .parity import PastTaskError, compare, load_past_tasks
 from .reporting import identity_from_workdir, submit_report
 from .router import Assessor, chat_safe
 from .runtime import Runtime, open_runtime, save_brief, tick
@@ -68,7 +69,10 @@ def setup_parser(parser: argparse.ArgumentParser) -> None:
     brief = commands.add_parser("brief", help="what is open, waiting, gone or untouched, since the last brief")
     brief.add_argument("--send", action="store_true", help="also queue it for [channels] brief")
     briefs = commands.add_parser("briefs", help="write the brief a worker would start from for one ledger item")
-    briefs.add_argument("item", help="a handle such as it-7f3k")
+    briefs.add_argument("item", nargs="?", help="a handle such as it-7f3k")
+    briefs.add_argument("--compare", type=Path, help="past tasks to rewrite and set beside the briefs that ran")
+    briefs.add_argument("--out", type=Path, help="where --compare writes the blind sheet")
+    briefs.add_argument("--key", type=Path, help="where --compare writes which brief is new")
     briefs.add_argument("--send", action="store_true", help="also queue it for [channels] briefs")
     briefs.add_argument("--fresh", action="store_true", help="write it again even if nothing changed")
     agents = commands.add_parser("agents", help="every Claude Code session the agents connectors see")
@@ -277,6 +281,11 @@ def board(ledger: Ledger, connectors: set[str]) -> list[Item]:
 
 def run_briefs(args: argparse.Namespace, runtime: Runtime, writer: BriefWriter | None) -> int:
     config = runtime.config
+    if args.compare is not None:
+        return run_compare(args, writer)
+    if not args.item:
+        print("name an item, such as it-7f3k, or pass --compare with a file of past tasks", file=sys.stderr)
+        return 2
     try:
         item = runtime.ledger.get(args.item)
     except LedgerError as error:
@@ -328,6 +337,30 @@ def run_briefs(args: argparse.Namespace, runtime: Runtime, writer: BriefWriter |
 
 def repo_key(kind: str, repo: str) -> str:
     return f"gitlab:{repo}" if kind == "gitlab" else repo
+
+
+def run_compare(args: argparse.Namespace, writer: BriefWriter | None) -> int:
+    if writer is None:
+        print("comparing briefs needs a model, so run it as hermes superagent briefs --compare", file=sys.stderr)
+        return 2
+    if args.out is None or args.key is None:
+        print("--compare needs --out for the sheet and --key for the answers", file=sys.stderr)
+        return 2
+    try:
+        tasks = load_past_tasks(args.compare)
+    except PastTaskError as error:
+        print(str(error), file=sys.stderr)
+        return 2
+    print(f"writing {len(tasks)} briefs, three model calls each", file=sys.stderr)
+    try:
+        sheet, key = compare(tasks, writer)
+    except Exception as error:
+        print(f"the comparison stopped: {error}", file=sys.stderr)
+        return 1
+    args.out.write_text(sheet, encoding="utf-8")
+    args.key.write_text(key, encoding="utf-8")
+    print(json.dumps({"tasks": len(tasks), "sheet": str(args.out), "key": str(args.key)}))
+    return 0
 
 
 def run_setup(args: argparse.Namespace, home: Path) -> int:
