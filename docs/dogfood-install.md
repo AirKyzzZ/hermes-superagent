@@ -88,6 +88,7 @@ every = "5m"
 ```bash
 gog --readonly --json --account OWNER_ADDRESS gmail search 'in:inbox' --all --count --max 500 | head -c 600
 wacli --read-only --json doctor
+wacli --read-only --json chats list --limit 500 | grep -c CONTACT_NUMBER   # each listed JID must appear
 wacli --read-only --json messages list --chat CONTACT_NUMBER@s.whatsapp.net --limit 20
 hermes superagent --home ~/superagent doctor
 ```
