@@ -7,8 +7,9 @@
 <p><strong>One voice, a hundred hands.</strong></p>
 
 <p>A <a href="https://github.com/NousResearch/hermes-agent">Hermes Agent</a> plugin for when you run more agents than you can watch.<br>
-You talk to one router. Every task gets its own worker, a watchdog outside them restarts or escalates the stuck ones,<br>
-and a ledger keeps every issue, task and Claude Code session your tools show until it's really closed.<br>
+You talk to one router, and every task gets its own worker.<br>
+A watchdog outside them restarts or escalates the stuck ones,<br>
+and a ledger keeps every issue, task and Claude Code session until it's really closed.<br>
 Based on DeepSeek's <a href="https://mp.weixin.qq.com/s/zoS7GlReWPhfCjENGxXCdg">Super-agent design</a>.</p>
 
 <p>
