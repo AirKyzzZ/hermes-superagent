@@ -1,0 +1,24 @@
+{
+  "threads": [
+    {
+      "id": "18c2f0a1b2c3d4e5",
+      "date": "2026-11-06 18:04",
+      "internalDateIso": "2026-11-06T18:04:11+01:00",
+      "from": "Registrar Support <support@registrar.example>",
+      "subject": "Your domain expires in 7 days",
+      "labels": ["INBOX", "UNREAD", "CATEGORY_UPDATES"],
+      "messageCount": 1
+    },
+    {
+      "id": "18c2f0a1b2c3d4e6",
+      "date": "2026-11-05 09:12",
+      "internalDateIso": "2026-11-05T09:12:40+01:00",
+      "from": "A Client <client@example.org>",
+      "subject": "Re: invoice for October",
+      "labels": ["INBOX", "IMPORTANT"],
+      "messageCount": 3
+    }
+  ],
+  "nextPageToken": "",
+  "totalMatches": 2
+}

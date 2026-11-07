@@ -69,6 +69,30 @@ The `github` connector reads issues and pull requests assigned to you, asking fo
 
 The `gitlab` connector does the same through `glab`: issues and merge requests assigned to you, merge requests asking for your review, and pending todos, which is where GitLab puts mentions. Each todo is its own item and closes once it's marked done in GitLab. Marking most todos done at once shrinks the snapshot by more than half, so nothing is marked gone until `hermes superagent --home ~/superagent ledger accept gitlab`, and an alert says so. `glab auth status` has to pass for the timer's user too, and a token kept in the keyring needs `DBUS_SESSION_BUS_ADDRESS` the same way. Leave the section out if the owner doesn't use GitLab.
 
+Mail and WhatsApp use the tools already on the VPS, one `gmail` block per mailbox:
+
+```toml
+[connectors.gmail-personal]
+type = "gmail"
+account = "OWNER_ADDRESS"
+every = "10m"
+
+[connectors.whatsapp]
+type = "whatsapp"
+chats = ["CONTACT_NUMBER@s.whatsapp.net"]
+every = "5m"
+```
+
+`gog` runs with `--readonly` on every call, and `wacli` only lists messages. Both connectors were built from each tool's public source with synthetic test data, in `tests/fixtures/*.synthetic.json`. Before turning them on, check one real run of each against them, scrubbed of names and numbers:
+
+```bash
+gog --readonly --json --account OWNER_ADDRESS gmail search 'in:inbox' --all --count --max 500 | head -c 600
+wacli --json messages list --chat CONTACT_NUMBER@s.whatsapp.net --limit 1
+hermes superagent --home ~/superagent doctor
+```
+
+If a field is named differently, `doctor` says which thread or chat it couldn't read. Send the scrubbed output so the fixtures can be replaced with the real shape.
+
 The timer below has no ssh agent. So give each alias a dedicated key with no passphrase through `IdentityFile`, and ssh to each host once by hand so its host key is saved. On a Mac, ssh sessions can't read folders that macOS protects, such as `~/Downloads`, so branches of repos kept there show as blank. Grant `sshd` Full Disk Access if you want them.
 
 The agents channel gets one line when a session has been waiting, stuck, rate-limited or gone for two polls in a row. The line holds the project, the state and a handle, never the session's text. Set `notify_detail = true` on a connector to add the question, with anything token-shaped redacted.

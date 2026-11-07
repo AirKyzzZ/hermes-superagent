@@ -1,0 +1,10 @@
+{
+  "thread": {
+    "id": "18c2f0a1b2c3d4e6",
+    "historyId": "1234567",
+    "messages": [
+      {"id": "18c2f0a1b2c3d4e6", "threadId": "18c2f0a1b2c3d4e6", "labelIds": ["IMPORTANT"], "snippet": "Here is the invoice"},
+      {"id": "18c2f0a1b2c3d4e7", "threadId": "18c2f0a1b2c3d4e6", "labelIds": ["IMPORTANT", "SENT"], "snippet": "Thanks, paid"}
+    ]
+  }
+}
