@@ -1,0 +1,7 @@
+{
+  "results": [
+    {"id": "6Jf8VQXxpwv56VQ7", "name": "Home", "color": "blue", "isFavorite": false, "parentId": null, "viewStyle": "list", "url": "https://app.todoist.com/app/project/home-6Jf8VQXxpwv56VQ7"},
+    {"id": "6Jf8VQXxpwv56VQ8", "name": "Work", "color": "red", "isFavorite": true, "parentId": null, "viewStyle": "list", "url": "https://app.todoist.com/app/project/work-6Jf8VQXxpwv56VQ8"}
+  ],
+  "nextCursor": null
+}

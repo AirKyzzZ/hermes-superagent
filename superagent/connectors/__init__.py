@@ -14,7 +14,7 @@ UNTRUSTABLE = frozenset({"github", "gitlab", "agents"})
 _DURATION = re.compile(r"^(\d+(?:\.\d+)?)([smhd])$")
 _UNITS = {"s": 1.0, "m": 60.0, "h": 3600.0, "d": 86400.0}
 COMMON_KEYS = frozenset(
-    {"type", "every", "track", "quiet_after", "owned", "channel", "notify", "notify_detail", "trusted"}
+    {"type", "every", "track", "quiet_after", "owned", "channel", "notify", "notify_detail", "trusted", "announce_new"}
 )
 
 
@@ -64,6 +64,7 @@ class ConnectorSpec:
     notify: frozenset[str] = frozenset()
     notify_detail: bool = False
     trusted: bool = False
+    announce_new: bool = False
 
 
 @dataclass(frozen=True)
@@ -73,12 +74,13 @@ class ConnectorType:
 
 
 def connector_types() -> dict[str, ConnectorType]:
-    from . import agents, command, github, gitlab
+    from . import agents, command, github, gitlab, todoist
 
     return {
         "command": ConnectorType(command.KEYS, command.build),
         "github": ConnectorType(github.KEYS, github.build),
         "gitlab": ConnectorType(gitlab.KEYS, gitlab.build),
+        "todoist": ConnectorType(todoist.KEYS, todoist.build),
         "agents": ConnectorType(agents.KEYS, agents.build),
     }
 
@@ -109,6 +111,9 @@ def parse_specs(section: object) -> tuple[ConnectorSpec, ...]:
         trusted = body.get("trusted", False)
         if not isinstance(detail, bool) or not isinstance(trusted, bool):
             raise ConnectorConfigError(f"[connectors.{name}] notify_detail and trusted must be true or false")
+        announce_new = body.get("announce_new", False)
+        if not isinstance(announce_new, bool):
+            raise ConnectorConfigError(f"[connectors.{name}] announce_new must be true or false")
         if trusted and kind in UNTRUSTABLE:
             raise ConnectorConfigError(f"[connectors.{name}] can't be trusted: {kind} carries other people's words")
         notify = body.get("notify", list(DEFAULT_NOTIFY) if kind == "agents" else [])
@@ -126,6 +131,7 @@ def parse_specs(section: object) -> tuple[ConnectorSpec, ...]:
             notify=frozenset(notify),
             notify_detail=detail,
             trusted=trusted,
+            announce_new=announce_new,
         )
         types[kind].build(spec)
         specs.append(spec)

@@ -16,6 +16,7 @@ FAILURES_BEFORE_WARNING = 3
 STALE_FLOOR_SECONDS = 3600.0
 MAX_CONFIRMS_PER_POLL = 20
 PROBLEMS_SHOWN = 5
+NEW_ITEMS_SHOWN = 20
 QUIET_AT_FIRST_SIGHT = frozenset({"gone", "ended"})
 
 
@@ -69,11 +70,14 @@ def poll_one(
     try:
         poll = connector.poll(state.cursor)
         new_items = 0
+        fresh: list[Item] = []
         for source in poll.items:
             before = ledger.peek(item_id(spec.name, source.external_id))
             item = ledger.record(spec.name, source)
             if item.first_seen == item.last_seen:
                 new_items += 1
+            if before is None:
+                fresh.append(item)
             if spec.owned and item.state is ItemState.NEW:
                 try:
                     item = ledger.move(item.id, ItemState.TRIAGED, "rule:owned", "", expected=ItemState.NEW)
@@ -87,6 +91,8 @@ def poll_one(
                     )
                 except LedgerError as error:
                     logger.info("left %s as it is: %s", item.id, error)
+        if notify is not None and spec.announce_new and spec.channel and fresh and state.last_ok is not None:
+            notify(spec.channel, new_items_message(spec.name, fresh))
         if poll.problems:
             extra = len(poll.problems) - PROBLEMS_SHOWN
             raise PollProblem("; ".join(poll.problems[:PROBLEMS_SHOWN]) + (f" (+{extra} more)" if extra > 0 else ""))
@@ -108,6 +114,13 @@ def poll_one(
     )
     if applied:
         confirm_vanished(ledger, spec, connector, deadline)
+
+
+def new_items_message(name: str, items: Sequence[Item]) -> str:
+    lines = [f"- {' '.join(redact(item.title).split())[:200]} ({item.handle})" for item in items[:NEW_ITEMS_SHOWN]]
+    if len(items) > NEW_ITEMS_SHOWN:
+        lines.append(f"- and {len(items) - NEW_ITEMS_SHOWN} more, see superagent ledger list --connector {name}")
+    return "\n".join([f"New in {name} since the last poll:", *lines])
 
 
 def announce(ledger: Ledger, spec: ConnectorSpec, before: Item | None, item: Item, notify: Notify | None) -> None:
