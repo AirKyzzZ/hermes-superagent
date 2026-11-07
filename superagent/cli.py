@@ -115,7 +115,7 @@ def run(
             )
         )
         return 0
-    home = args.home or (default_home() if default_home else None)
+    home = args.home.expanduser() if args.home else (default_home() if default_home else None)
     if home is None:
         print("--home is required outside Hermes", file=sys.stderr)
         return 2
