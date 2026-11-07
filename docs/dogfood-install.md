@@ -83,11 +83,12 @@ chats = ["CONTACT_NUMBER@s.whatsapp.net"]
 every = "5m"
 ```
 
-`gog` runs with `--readonly` on every call, and `wacli` only lists messages. Both connectors were built from each tool's public source with synthetic test data, in `tests/fixtures/*.synthetic.json`. Before turning them on, check one real run of each against them, scrubbed of names and numbers:
+`gog` runs with `--readonly` and `wacli` with `--read-only` on every call. The WhatsApp connector also checks `wacli doctor` each poll, so `wacli sync --follow` has to keep running; with a timer running `wacli sync --once` instead, add `sync = "once"`. Catching up on more than half of a source at once, such as archiving most of the inbox, holds the snapshot until `ledger accept` with that connector's name, as for GitLab. Both connectors were built from each tool's public source with synthetic test data, in `tests/fixtures/*.synthetic.json`. Before turning them on, check one real run of each against them, scrubbed of names and numbers:
 
 ```bash
 gog --readonly --json --account OWNER_ADDRESS gmail search 'in:inbox' --all --count --max 500 | head -c 600
-wacli --json messages list --chat CONTACT_NUMBER@s.whatsapp.net --limit 1
+wacli --read-only --json doctor
+wacli --read-only --json messages list --chat CONTACT_NUMBER@s.whatsapp.net --limit 20
 hermes superagent --home ~/superagent doctor
 ```
 

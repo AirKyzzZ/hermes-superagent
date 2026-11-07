@@ -10,6 +10,7 @@ from .process import run_json
 
 KEYS = frozenset({"account", "query", "gog", "timeout", "env"})
 DEFAULT_QUERY = "in:inbox"
+VOLATILE_LABELS = frozenset({"UNREAD"})
 PAGE_SIZE = 500
 THREAD_URL = "https://mail.google.com/mail/u/?authuser={account}#all/{id}"
 _SAFE_ID = re.compile(r"[A-Za-z0-9]{1,64}")
@@ -84,7 +85,9 @@ class GmailConnector:
         meta = {
             "account": self.account,
             "from": str(entry.get("from") or ""),
-            "labels": ",".join(str(label) for label in labels) if isinstance(labels, list) else "",
+            "labels": ",".join(str(label) for label in labels if label not in VOLATILE_LABELS)
+            if isinstance(labels, list)
+            else "",
             "messages": str(entry.get("messageCount") or ""),
         }
         return SourceItem(
@@ -101,8 +104,10 @@ def build(spec: ConnectorSpec) -> GmailConnector:
     account, query = spec.settings.get("account"), spec.settings.get("query", DEFAULT_QUERY)
     if not isinstance(account, str) or "@" not in account:
         raise ConnectorConfigError(f"{where} account must be the mailbox's address, one block per account")
-    if not isinstance(query, str) or not query.strip():
-        raise ConnectorConfigError(f"{where} query must be a Gmail search, such as in:inbox")
+    if not isinstance(query, str) or "in:inbox" not in query.lower().split():
+        raise ConnectorConfigError(
+            f"{where} query must include in:inbox, since a thread closes when it leaves the inbox"
+        )
     gog = spec.settings.get("gog", "gog")
     if not isinstance(gog, str) or not gog:
         raise ConnectorConfigError(f"{where} gog must be a command name or path")

@@ -8,7 +8,7 @@ from typing import Any
 
 import pytest
 
-from superagent.connectors import ConnectorConfigError, ConnectorSpec, build_connector, parse_specs
+from superagent.connectors import ConnectorConfigError, ConnectorError, ConnectorSpec, build_connector, parse_specs
 from superagent.ledger import ItemState, Ledger, Upstream
 from superagent.polling import poll_sources
 
@@ -76,7 +76,7 @@ def test_every_inbox_thread_becomes_an_item(tmp_path: Path, gog: Path) -> None:
     assert first.meta == {
         "account": ACCOUNT,
         "from": "Registrar Support <support@registrar.example>",
-        "labels": "INBOX,UNREAD,CATEGORY_UPDATES",
+        "labels": "INBOX,CATEGORY_UPDATES",
         "messages": "1",
     }
     assert first.url == f"https://mail.google.com/mail/u/?authuser={ACCOUNT}#all/18c2f0a1b2c3d4e5"
@@ -113,32 +113,52 @@ def test_a_thread_closes_only_once_it_leaves_the_inbox(tmp_path: Path, gog: Path
     assert connector.confirm("ffffff") is Upstream.UNKNOWN
 
 
+def test_reading_a_mail_never_reopens_a_thread(tmp_path: Path, gog: Path) -> None:
+    spec = gmail_spec(tmp_path)
+    write(gog, search=search(thread("cc1", "Weekly newsletter")))
+    ledger, connector = Ledger(tmp_path / "s.db"), build_connector(spec)
+    poll_sources(ledger, [spec], {spec.name: connector}, 300)
+    [item] = ledger.items()
+    ledger.move(item.id, ItemState.IGNORED, "owner", "newsletter")
+    read = {**thread("cc1", "Weekly newsletter"), "labels": ["INBOX", "CATEGORY_UPDATES"]}
+    write(gog, search=search(read))
+    poll_sources(ledger, [spec], {spec.name: connector}, 300)
+    assert ledger.get(item.id).state is ItemState.IGNORED
+
+
 def test_mail_is_never_trusted_wholesale_and_needs_an_account() -> None:
     with pytest.raises(ConnectorConfigError, match="trusted"):
         parse_specs({"gmail": {"type": "gmail", "account": ACCOUNT, "trusted": True}})
     with pytest.raises(ConnectorConfigError, match="account"):
         parse_specs({"gmail": {"type": "gmail"}})
+    with pytest.raises(ConnectorConfigError, match="in:inbox"):
+        parse_specs({"gmail": {"type": "gmail", "account": ACCOUNT, "query": "is:unread"}})
 
 
-def chat(*messages: dict[str, Any], nested: bool = False) -> dict[str, Any]:
-    data: Any = {"messages": list(messages)} if nested else list(messages)
-    return {"success": True, "data": data, "error": None}
+DOCTOR = json.loads((TESTS / "fixtures" / "wacli_doctor.synthetic.json").read_text())
 
 
-def message(text: str, *, from_me: bool, at: str, sender: str = "A Friend") -> dict[str, Any]:
+def chat(*messages: dict[str, Any]) -> dict[str, Any]:
     return {
-        **MESSAGES["data"][0],
-        "Text": text,
-        "DisplayText": text,
-        "FromMe": from_me,
-        "Timestamp": at,
-        "SenderName": sender,
+        "success": True,
+        "data": {"messages": list(messages), "fts": False, "page": {}, "source": {}},
+        "error": None,
     }
 
 
+def message(text: str, *, from_me: bool, at: str, sender: str = "A Friend", **extra: Any) -> dict[str, Any]:
+    base = MESSAGES["data"]["messages"][0]
+    fields = {"Text": text, "DisplayText": text, "FromMe": from_me, "Timestamp": at, "SenderName": sender}
+    return {**base, **fields, **extra}
+
+
+def write_wacli(path: Path, chats: dict[str, Any], **extra: Any) -> None:
+    write(path, chats=chats, doctor=extra.pop("doctor", DOCTOR), **extra)
+
+
 def test_a_chat_waits_while_its_last_message_isnt_yours(tmp_path: Path, wacli: Path) -> None:
-    replied = chat(message("Sounds good", from_me=True, at="2026-11-07T21:00:00+01:00"), nested=True)
-    write(wacli, chats={FRIEND: MESSAGES, COLLEAGUE: replied})
+    replied = chat(message("Sounds good", from_me=True, at="2026-11-07T20:00:00Z"))
+    write_wacli(wacli, {FRIEND: MESSAGES, COLLEAGUE: replied})
     poll = build_connector(whatsapp_spec(tmp_path, [FRIEND, COLLEAGUE])).poll("")
     assert poll.complete
     [item] = poll.items
@@ -147,27 +167,82 @@ def test_a_chat_waits_while_its_last_message_isnt_yours(tmp_path: Path, wacli: P
         "A Friend is waiting for a reply",
         "Are we still on for Sunday?",
     )
-    assert item.meta["last_at"] == "2026-11-07T20:15:00+01:00"
+    assert item.meta["last_at"] == "2026-11-07T19:15:00Z"
+
+
+def test_a_reaction_or_a_call_never_counts_as_a_reply(tmp_path: Path, wacli: Path) -> None:
+    question = message("Send the contract by Friday?", from_me=False, at="2026-11-07T10:00:00Z")
+    thumbs = message("", from_me=True, at="2026-11-07T10:01:00Z", ReactionToID="3EB0", ReactionEmoji="\U0001f44d")
+    call = message("WhatsApp voice call missed", from_me=True, at="2026-11-07T10:02:00Z")
+    empty = message("(message)", from_me=True, at="2026-11-07T10:03:00Z")
+    answered = message("Here it is", from_me=True, at="2026-11-07T09:00:00Z")
+    heart = message("", from_me=False, at="2026-11-07T09:01:00Z", ReactionToID="3EB1", ReactionEmoji="\u2764")
+    write_wacli(wacli, {FRIEND: chat(empty, call, thumbs, question), COLLEAGUE: chat(heart, answered)})
+    poll = build_connector(whatsapp_spec(tmp_path, [FRIEND, COLLEAGUE])).poll("")
+    assert [item.external_id for item in poll.items] == [FRIEND]
 
 
 def test_replying_closes_the_chat_and_a_failing_chat_marks_nothing_gone(tmp_path: Path, wacli: Path) -> None:
     spec = whatsapp_spec(tmp_path, [FRIEND, COLLEAGUE])
-    waiting = chat(message("Can you call me?", from_me=False, at="2026-11-07T19:00:00+01:00", sender="A Colleague"))
-    write(wacli, chats={FRIEND: MESSAGES, COLLEAGUE: waiting})
+    waiting = chat(message("Can you call me?", from_me=False, at="2026-11-07T18:00:00Z", sender="A Colleague"))
+    write_wacli(wacli, {FRIEND: MESSAGES, COLLEAGUE: waiting})
     ledger, connector = Ledger(tmp_path / "s.db"), build_connector(spec)
     poll_sources(ledger, [spec], {spec.name: connector}, 300)
-    write(wacli, chats={FRIEND: MESSAGES, COLLEAGUE: waiting}, fail=[FRIEND])
+    write_wacli(wacli, {FRIEND: MESSAGES, COLLEAGUE: waiting}, fail=[FRIEND])
     poll_sources(ledger, [spec], {spec.name: connector}, 300)
     assert all(item.missing_since is None for item in ledger.items())
-    reply = chat(message("Calling now", from_me=True, at="2026-11-07T19:05:00+01:00"))
-    write(wacli, chats={FRIEND: MESSAGES, COLLEAGUE: reply})
+    reply = chat(
+        message("Calling now", from_me=True, at="2026-11-07T18:05:00Z"),
+        message("Can you call me?", from_me=False, at="2026-11-07T18:00:00Z"),
+    )
+    write_wacli(wacli, {FRIEND: MESSAGES, COLLEAGUE: reply})
     poll_sources(ledger, [spec], {spec.name: connector}, 300)
     states = {item.external_id: item.state for item in ledger.items()}
     assert states == {FRIEND: ItemState.NEW, COLLEAGUE: ItemState.DONE}
 
 
+def test_a_chat_with_no_stored_messages_blocks_nothing(tmp_path: Path, wacli: Path) -> None:
+    write_wacli(wacli, {FRIEND: MESSAGES})
+    poll = build_connector(whatsapp_spec(tmp_path, [FRIEND, COLLEAGUE])).poll("")
+    assert poll.complete and [item.external_id for item in poll.items] == [FRIEND]
+
+
+@pytest.mark.parametrize(
+    ("doctor", "problem"),
+    [
+        ({"lock_held": False}, "sync isn't running"),
+        ({"authenticated": False}, "isn't linked"),
+        ({"session_revoked": True}, "isn't linked"),
+    ],
+)
+def test_a_dead_or_unlinked_sync_fails_the_poll(
+    tmp_path: Path, wacli: Path, doctor: dict[str, Any], problem: str
+) -> None:
+    write_wacli(wacli, {FRIEND: MESSAGES}, doctor={**DOCTOR, "data": {**DOCTOR["data"], **doctor}})
+    with pytest.raises(ConnectorError, match=problem):
+        build_connector(whatsapp_spec(tmp_path, [FRIEND])).poll("")
+
+
+def test_a_timer_driven_sync_must_be_recent(tmp_path: Path, wacli: Path) -> None:
+    stale = {**DOCTOR["data"], "lock_held": False, "store": {"last_sync_at": "2026-10-01T00:00:00Z"}}
+    write_wacli(wacli, {FRIEND: MESSAGES}, doctor={**DOCTOR, "data": stale})
+    spec = parse_specs(
+        {
+            "whatsapp": {
+                "type": "whatsapp",
+                "chats": [FRIEND],
+                "sync": "once",
+                "wacli": wrapper(tmp_path, "wacli", "fake_wacli.py"),
+                "env": ["FAKE_WACLI_FIXTURE"],
+            }
+        }
+    )[0]
+    with pytest.raises(ConnectorError, match="older than sync_max_age"):
+        build_connector(spec).poll("")
+
+
 def test_whatsapp_watches_only_the_chats_listed_by_jid() -> None:
-    for chats in ([], ["A Friend"], "33600000001@s.whatsapp.net"):
+    for chats in ([], ["A Friend"], "33600000001@s.whatsapp.net", ["news@newsletter"]):
         with pytest.raises(ConnectorConfigError, match="chats"):
             parse_specs({"whatsapp": {"type": "whatsapp", "chats": chats}})
     with pytest.raises(ConnectorConfigError, match="trusted"):

@@ -1,19 +1,30 @@
 {
   "success": true,
-  "data": [
-    {
-      "ChatJID": "33600000001@s.whatsapp.net",
-      "ChatName": "A Friend",
-      "MsgID": "3EB0A1B2C3D4E5F6",
-      "SenderJID": "33600000001@s.whatsapp.net",
-      "SenderName": "A Friend",
-      "Timestamp": "2026-11-07T20:15:00+01:00",
-      "FromMe": false,
-      "Text": "Are we still on for Sunday?",
-      "DisplayText": "Are we still on for Sunday?",
-      "IsForwarded": false,
-      "MediaType": ""
-    }
-  ],
+  "data": {
+    "messages": [
+      {
+        "ChatJID": "33600000001@s.whatsapp.net",
+        "ChatName": "A Friend",
+        "MsgID": "3EB0A1B2C3D4E5F6",
+        "SenderJID": "33600000001@s.whatsapp.net",
+        "SenderName": "A Friend",
+        "Timestamp": "2026-11-07T19:15:00Z",
+        "FromMe": false,
+        "Text": "Are we still on for Sunday?",
+        "DisplayText": "Are we still on for Sunday?",
+        "IsForwarded": false,
+        "ForwardingScore": 0,
+        "ReactionToID": "",
+        "ReactionEmoji": "",
+        "MediaType": "",
+        "Edited": false,
+        "Revoked": false,
+        "DeletedForMe": false
+      }
+    ],
+    "fts": false,
+    "page": {"limit": 20},
+    "source": {"store_dir": "/home/owner/.local/state/wacli", "last_sync_at": "2026-11-07T19:16:00Z"}
+  },
   "error": null
 }
