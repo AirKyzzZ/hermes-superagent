@@ -17,11 +17,11 @@ Each connector reads one tool into the ledger, so nothing it shows gets lost. Mo
 | GitLab | `glab` | an assigned issue or merge request, a review request, a pending todo | Done |
 | Claude Code | a hook and an ssh probe | a session, with its state: working, waiting, stuck, rate-limited, gone | Done |
 | Any JSON CLI | `command` | whatever the tool lists | Done |
-| Todoist | `td` | an active task | In progress |
-| Gmail | `gog`, one block per account | an inbox thread, closed once it's archived or trashed | Wanted |
+| Todoist | `td` | an active task | In review, [#35](https://github.com/AirKyzzZ/hermes-superagent/pull/35) |
+| Gmail | `gog`, one block per account | an inbox thread, closed once it's archived or trashed | In review, [#36](https://github.com/AirKyzzZ/hermes-superagent/pull/36) |
 | Google Calendar | `gog` | an event in the next few days, info | Wanted |
 | Any calendar shared as a link | an ICS URL | an event, info | Wanted |
-| WhatsApp | `wacli`, read only | a chat with a listed contact whose last message isn't yours, closed once you reply | Wanted |
+| WhatsApp | `wacli`, read only | a chat with a listed contact whose last message isn't yours, closed once you reply | In review, [#36](https://github.com/AirKyzzZ/hermes-superagent/pull/36) |
 | Zepp | a `command` preset | last night's sleep and other daily readings, info | Wanted |
 | Anki | a `command` preset | today's due cards, info | Wanted |
 | CodexBar | a `command` preset | coding-agent usage and quota, info | Wanted |
