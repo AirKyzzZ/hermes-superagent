@@ -71,6 +71,11 @@ def report_states(runtime: Runtime, ticket_id: str) -> list[str]:
     return [report.state.value for report in runtime.store.ticket_reports(ticket_id)]
 
 
+def current_worker_reports(runtime: Runtime, ticket_id: str) -> int:
+    running = [assignment for assignment in runtime.store.running_assignments() if assignment.ticket_id == ticket_id]
+    return len(runtime.store.reports_for(running[0].id)) if running else 0
+
+
 def scene_dispatch(runtime: Runtime, home: Path) -> None:
     scene("1. A person asks. The router dispatches, one worker executes, status comes back")
     request = Trigger("m1", "chat", "chat:general:t1", "alice", "fix the login redirect loop", CHANNEL, True)
@@ -134,7 +139,7 @@ def scene_escalation(runtime: Runtime, home: Path) -> None:
     external_tick(home)
     time.sleep(0.5)
     external_tick(home)
-    time.sleep(0.8)
+    wait_for(lambda: current_worker_reports(runtime, ticket_id) >= 3, "the restarted worker's repeated reports")
     external_tick(home)
     line("tickets", f"still open: {len(runtime.router.status())}", GREEN)
 
