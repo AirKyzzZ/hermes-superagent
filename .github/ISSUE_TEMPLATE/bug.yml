@@ -1,0 +1,35 @@
+name: Bug report
+description: Something broke or did the wrong thing
+labels: [bug]
+body:
+  - type: textarea
+    id: what
+    attributes:
+      label: What happened
+      description: And what you expected instead.
+    validations:
+      required: true
+  - type: textarea
+    id: steps
+    attributes:
+      label: How to reproduce
+      description: Commands, config and messages that trigger it. The smaller the better.
+      placeholder: |
+        1. python3 -m superagent --home ~/superagent tick
+        2. ...
+    validations:
+      required: true
+  - type: textarea
+    id: doctor
+    attributes:
+      label: Doctor output
+      description: The output of `superagent doctor`, if it runs. Remove tokens, IDs and anything private first.
+      render: text
+  - type: input
+    id: version
+    attributes:
+      label: Versions
+      description: The plugin commit or version, `hermes --version` if you use Hermes, and your OS.
+      placeholder: 0.1.0 at abc1234, Hermes 0.22.7, Ubuntu 24.04
+    validations:
+      required: true

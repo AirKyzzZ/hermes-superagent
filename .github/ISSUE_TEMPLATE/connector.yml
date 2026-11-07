@@ -1,0 +1,38 @@
+name: Connector
+description: Ask for a source in the ledger, or share a command block that reads one
+labels: [connector]
+body:
+  - type: input
+    id: tool
+    attributes:
+      label: Source
+      description: The tool or service, with a link.
+      placeholder: Linear, https://linear.app
+    validations:
+      required: true
+  - type: textarea
+    id: access
+    attributes:
+      label: How it can be read
+      description: A CLI that prints JSON, an API, an export file? Paste a scrubbed sample of its output if you have one.
+    validations:
+      required: true
+  - type: textarea
+    id: item
+    attributes:
+      label: What one item is, and when it's closed
+      placeholder: An issue assigned to me. It's closed when its state is Done or Canceled.
+    validations:
+      required: true
+  - type: textarea
+    id: block
+    attributes:
+      label: A command block that already works
+      description: Optional. If a `[connectors.<name>]` block with `type = "command"` reads it today, paste it so others can use it.
+      render: toml
+  - type: checkboxes
+    id: help
+    attributes:
+      label: Helping
+      options:
+        - label: I can test it against my own account and record a scrubbed fixture
