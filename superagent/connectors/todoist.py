@@ -27,7 +27,7 @@ class TodoistConnector:
 
     def poll(self, cursor: str) -> Poll:
         deadline = time.monotonic() + self.timeout
-        projects = self._projects(max(self.timeout * PROJECTS_SHARE, MIN_PROJECTS_SECONDS))
+        projects = self._projects(min(max(self.timeout * PROJECTS_SHARE, MIN_PROJECTS_SECONDS), self.timeout / 2))
         remaining = deadline - time.monotonic()
         listing = run_json([self.td, "task", "list", "--all", "--json", "--full"], self.env_names, remaining)
         if not isinstance(listing, Mapping) or not isinstance(listing.get("results"), list):

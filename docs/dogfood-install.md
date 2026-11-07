@@ -4,9 +4,11 @@ The steps that put hermes-superagent next to an existing Hermes setup in shadow 
 
 ## 0. Check what's there
 
+Get these from the owner before starting, and stop if any is missing: the Discord channel ids for alerts, the daily brief, worker briefs, new tasks, the agents and a test channel; the ssh alias of each machine to watch; and, if he wants one, the uptime check's ping URL. Below they appear as `ALERTS_CHANNEL_ID`, `BRIEF_CHANNEL_ID`, `BRIEFS_CHANNEL_ID`, `TASKS_CHANNEL_ID`, `AGENTS_CHANNEL_ID`, `TEST_CHANNEL_ID` and `ALIAS`. Run `doctor`, `briefs` and the tick loop with a 600-second terminal timeout: they poll every source or call the model several times.
+
 ```bash
 hermes --version                      # 0.22.7 or newer
-ssh mac python3 --version             # each host probed over ssh needs python3 3.8 or newer
+ssh -o BatchMode=yes ALIAS python3 --version   # once per alias: python3 3.8 or newer
 gh auth status                        # for the github connector
 glab auth status                      # for the gitlab connector, if used
 td auth status                        # for the todoist connector, see below
@@ -18,9 +20,11 @@ The last line proves the default profile can post to the alerts channel. Every m
 ## 1. Install the plugin in the live profile
 
 ```bash
-hermes plugins install AirKyzzZ/hermes-superagent --enable
+hermes plugins install AirKyzzZ/hermes-superagent --enable || hermes plugins update hermes-superagent
 mkdir -p ~/superagent ~/.superagent
 ```
+
+The install takes the repo's `main`, so it has every connector named below. If the plugin was installed earlier, `install` stops and `update` brings it to `main`.
 
 Leave `role` unset. With no role, the plugin's hooks do nothing and its tools stay hidden, which CI checks on real Hermes. Everything below runs through `hermes superagent --home ~/superagent ...`, so Hermes's own config is never touched.
 
@@ -178,15 +182,14 @@ CI runs everything on real Hermes with a fake model. This run swaps in the real 
 ```bash
 H="hermes superagent --home $HOME/superagent"
 $H doctor                                  # every line ok or warn, exit code 0
-$H tick                                    # "errors": []
+$H tick                                    # "errors": []; if it says "skipped", the timer holds the lock, run it again
 $H ledger list | head -20                  # items from github, gitlab, todoist and the agents
-$H brief --send                            # the daily brief, in the brief channel
+$H brief --send                            # queues the daily brief; the next tick posts it
 $H ledger list --connector github | head -5
-$H briefs it-XXXX                          # a handle from the line above; three real model calls
-$H briefs it-XXXX --send                   # the same brief, from the cache, in the briefs channel
+$H briefs it-XXXX --send                   # a handle from the line above; three real model calls, queued for the briefs channel
 ```
 
-The brief's first line reads `READY`, `NEEDS APPROVAL` or `NOT READY`. An issue written by someone else should come out `NEEDS APPROVAL`, and anything the lint found is listed at the end.
+`--send` only queues a message; the timer's next tick, within 2 minutes, posts it. The brief's first line reads `READY`, `NEEDS APPROVAL` or `NOT READY`. An issue written by someone else should come out `NEEDS APPROVAL`, and anything the lint found is listed at the end.
 
 Then the full path, worker and watchdog with the real model, in two throwaway profiles. The live profile and the gateway stay as they are, because `ingest` hands the event straight to the gate:
 
@@ -211,14 +214,31 @@ EOF
 
 The outbound names the default profile because `hermes -p sa-watchdog` hands its own profile to every command it starts, and only the default profile holds the Discord token.
 
-`hermes profile create` copies the model choice but not the keys. Copy the provider key lines from `~/.hermes/.env` into `~/.hermes/profiles/sa-worker/.env` and `~/.hermes/profiles/sa-watchdog/.env`, then `chmod 600` both, and check each profile can reach the model:
+`hermes profile create` copies the model choice but not always the keys. Check each profile can reach the model first:
 
 ```bash
 hermes -p sa-worker chat -Q -q "reply ok"
 hermes -p sa-watchdog chat -Q -q "reply ok"
 ```
 
-Then give each profile its role. `plugins install --enable` already wrote a `plugins:` key in `~/.hermes/profiles/sa-worker/config.yaml` and `~/.hermes/profiles/sa-watchdog/config.yaml`; add `entries:` under that same key, next to `enabled`, rather than a second `plugins:` key, which YAML would let override the first. With `worker` in one and `watchdog` in the other:
+If both answer, copy nothing. Otherwise list the key names in the default profile, without their values, and copy each one the model needs through Hermes, which keeps the value out of the conversation and out of shell redirects that its approval check stops:
+
+```bash
+grep -oE '^[A-Z0-9_]+=' ~/.hermes/.env
+hermes -p sa-worker config set PROVIDER_API_KEY "$(grep -m1 '^PROVIDER_API_KEY=' ~/.hermes/.env | cut -d= -f2-)"
+hermes -p sa-watchdog config set PROVIDER_API_KEY "$(grep -m1 '^PROVIDER_API_KEY=' ~/.hermes/.env | cut -d= -f2-)"
+```
+
+with the real key name in place of `PROVIDER_API_KEY`. Then give each profile its role the same way:
+
+```bash
+hermes -p sa-worker config set plugins.entries.hermes-superagent.settings.role worker
+hermes -p sa-worker config set plugins.entries.hermes-superagent.settings.home "$HOME/superagent-live"
+hermes -p sa-watchdog config set plugins.entries.hermes-superagent.settings.role watchdog
+hermes -p sa-watchdog config set plugins.entries.hermes-superagent.settings.home "$HOME/superagent-live"
+```
+
+If `config set` refuses those paths, edit each profile's `config.yaml` with the file patch tool rather than a shell redirect, adding `entries:` under the `plugins:` key that `plugins install --enable` already wrote, next to `enabled`:
 
 ```yaml
 plugins:
@@ -228,7 +248,7 @@ plugins:
     hermes-superagent:
       settings:
         role: worker
-        home: ~/superagent-live
+        home: /home/OWNER/superagent-live
 ```
 
 Then start one task and let the watchdog relay it:
@@ -247,7 +267,7 @@ done
 
 The watchdog's model judges a worker's reports while that worker is still running, so a very fast worker can finish before the judge is needed. The relay and the worker's own model calls happen either way.
 
-The test channel should get `Done [Reply with the three largest planets … · tk-…]: …`. The worker has only the `superagent` toolset, so it can't touch the machine. Send back the output of `doctor`, both ticks, the brief's first line and the test channel's message. To remove the test, delete the two `sa-` profiles and `~/superagent-live`.
+The test channel should get `Done [Reply with the three largest planets … · tk-…]: …`, and the tick that relayed it lists the same text under `delivered`. The worker has only the `superagent` toolset, so it can't touch the machine. Send back the output of `doctor`, the loop's last tick, the brief's first line and that `delivered` line. To remove the test, run `hermes profile delete sa-worker --yes` and `hermes profile delete sa-watchdog --yes`, then remove `~/superagent-live`, which Hermes may ask the owner to approve.
 
 The router's own model only runs on chat messages through the gateway. That needs a router profile bound to a chat channel, which the README's "Run it with Hermes" covers, and isn't needed for this check.
 
