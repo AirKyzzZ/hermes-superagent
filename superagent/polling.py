@@ -71,6 +71,7 @@ def poll_one(
         poll = connector.poll(state.cursor)
         new_items = 0
         fresh: list[Item] = []
+        seen_before = spec.announce_new and bool(ledger.items(connector=spec.name))
         for source in poll.items:
             before = ledger.peek(item_id(spec.name, source.external_id))
             item = ledger.record(spec.name, source)
@@ -91,7 +92,7 @@ def poll_one(
                     )
                 except LedgerError as error:
                     logger.info("left %s as it is: %s", item.id, error)
-        if notify is not None and spec.announce_new and spec.channel and fresh and state.last_ok is not None:
+        if notify is not None and seen_before and spec.channel and fresh:
             notify(spec.channel, new_items_message(spec.name, fresh))
         if poll.problems:
             extra = len(poll.problems) - PROBLEMS_SHOWN

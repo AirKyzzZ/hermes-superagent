@@ -7,9 +7,11 @@ from typing import Any
 
 import pytest
 
+from superagent.config import parse_config
 from superagent.connectors import ConnectorConfigError, ConnectorSpec, build_connector, parse_specs
 from superagent.ledger import ItemState, Ledger, Upstream
 from superagent.polling import poll_sources
+from superagent.starter import Choices, starter_config
 
 FAKE_TD = Path(__file__).with_name("fake_td.py")
 FIXTURES = Path(__file__).with_name("fixtures")
@@ -76,10 +78,47 @@ def test_one_bad_task_doesnt_hide_the_others(tmp_path: Path, fixture: Path) -> N
     assert not poll.complete and len(poll.problems) == 2 and len(poll.items) == 2
 
 
-def test_tasks_still_arrive_when_projects_cant_be_listed(tmp_path: Path, fixture: Path) -> None:
+def test_a_failed_project_list_records_nothing_and_changes_nothing(tmp_path: Path, fixture: Path) -> None:
+    spec = todoist_spec(tmp_path)
+    write(fixture)
+    ledger, connector = Ledger(tmp_path / "s.db"), build_connector(spec)
+    poll_sources(ledger, [spec], {spec.name: connector}, 300)
+    [first, _] = ledger.items()
+    ledger.move(first.id, ItemState.IGNORED, "owner", "not now")
     write(fixture, projects_fail=True)
-    poll = build_connector(todoist_spec(tmp_path)).poll("")
-    assert poll.complete and poll.items[0].meta["project"] == "6Jf8VQXxpwv56VQ7"
+    poll_sources(ledger, [spec], {spec.name: connector}, 300)
+    assert ledger.get(first.id).state is ItemState.IGNORED
+    assert ledger.source("todoist").failures == 1 and "projects" in ledger.source("todoist").last_error
+
+
+def test_ticking_off_a_recurring_task_never_reopens_or_closes_it(tmp_path: Path, fixture: Path) -> None:
+    spec = todoist_spec(tmp_path)
+    every_day = {"date": "2026-11-08", "string": "every day", "isRecurring": True, "datetime": None}
+    vitamins = task("r1", "Take vitamins", due=every_day, updatedAt="2026-11-07T08:00:00Z")
+    write(fixture, tasks=[vitamins])
+    ledger, connector = Ledger(tmp_path / "s.db"), build_connector(spec)
+    poll_sources(ledger, [spec], {spec.name: connector}, 300)
+    [item] = ledger.items()
+    assert (item.due, item.meta["recurring"]) == ("every day", "true")
+    ledger.move(item.id, ItemState.IGNORED, "owner", "habit, not a task")
+    next_day = {**vitamins, "due": {**every_day, "date": "2026-11-09"}, "updatedAt": "2026-11-08T08:00:00Z"}
+    write(fixture, tasks=[next_day])
+    poll_sources(ledger, [spec], {spec.name: connector}, 300)
+    assert ledger.get(item.id).state is ItemState.IGNORED
+
+
+def test_a_deleted_task_stays_open_until_someone_decides(tmp_path: Path, fixture: Path) -> None:
+    write(fixture, views={"d1": {**TASKS[0], "id": "d1", "checked": False, "isDeleted": True}})
+    connector = build_connector(todoist_spec(tmp_path))
+    assert connector.confirm("d1") is Upstream.UNKNOWN
+    assert connector.confirm("gone1") is Upstream.UNKNOWN
+
+
+def test_a_deadline_is_kept_beside_a_due_date(tmp_path: Path, fixture: Path) -> None:
+    both = task("dd1", "File taxes", due={"date": "2026-11-10", "isRecurring": False}, deadline={"date": "2026-11-15"})
+    write(fixture, tasks=[both])
+    [item] = build_connector(todoist_spec(tmp_path)).poll("").items
+    assert (item.due, item.meta["deadline"]) == ("2026-11-10", "2026-11-15")
 
 
 def test_a_task_closes_only_when_todoist_says_it_was_completed(tmp_path: Path, fixture: Path) -> None:
@@ -125,3 +164,37 @@ def test_todoist_can_be_marked_as_the_owners_own_words() -> None:
     assert spec.trusted
     with pytest.raises(ConnectorConfigError, match="announce_new"):
         parse_specs({"todoist": {"type": "todoist", "announce_new": "yes"}})
+
+
+def test_a_task_first_seen_in_a_failing_poll_is_still_flagged_later(tmp_path: Path, fixture: Path) -> None:
+    spec = todoist_spec(tmp_path, announce_new=True, channel="discord:tasks")
+    write(fixture)
+    ledger, connector = Ledger(tmp_path / "s.db"), build_connector(spec)
+    sent: list[tuple[str, str]] = []
+    poll_sources(ledger, [spec], {spec.name: connector}, 300, lambda channel, text: sent.append((channel, text)))
+    write(fixture, tasks=[*TASKS, task("c1", "Added during a glitch"), {"content": "no id"}])
+    poll_sources(ledger, [spec], {spec.name: connector}, 300, lambda channel, text: sent.append((channel, text)))
+    assert len(sent) == 1 and "Added during a glitch" in sent[0][1]
+
+
+def test_a_burst_of_new_tasks_is_cut_to_twenty_lines(tmp_path: Path, fixture: Path) -> None:
+    spec = todoist_spec(tmp_path, announce_new=True, channel="discord:tasks")
+    write(fixture)
+    ledger, connector = Ledger(tmp_path / "s.db"), build_connector(spec)
+    sent: list[tuple[str, str]] = []
+    poll_sources(ledger, [spec], {spec.name: connector}, 300, lambda channel, text: sent.append((channel, text)))
+    write(fixture, tasks=[*TASKS, *(task(f"n{number}", f"New {number}") for number in range(25))])
+    poll_sources(ledger, [spec], {spec.name: connector}, 300, lambda channel, text: sent.append((channel, text)))
+    [(_, text)] = sent
+    assert text.count("\n- New ") == 20 and "and 5 more, see superagent ledger list --connector todoist" in text
+
+
+def test_announce_new_needs_somewhere_to_post() -> None:
+    with pytest.raises(ConnectorConfigError, match="needs a channel"):
+        parse_specs({"todoist": {"type": "todoist", "announce_new": True}})
+
+
+def test_setup_writes_a_todoist_block_that_parses() -> None:
+    choices = Choices(hermes="/h/hermes", alerts="discord:1", todoist=True)
+    [spec] = parse_config(starter_config(choices)).connectors
+    assert (spec.type, spec.announce_new, spec.channel) == ("todoist", True, "discord:1")

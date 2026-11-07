@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import logging
 import re
 import time
 from collections.abc import Mapping
@@ -10,11 +9,10 @@ from ..ledger import SourceItem, Upstream
 from . import ConnectorConfigError, ConnectorError, ConnectorSpec, Poll
 from .process import run_json
 
-logger = logging.getLogger(__name__)
-
 KEYS = frozenset({"td", "timeout", "env"})
 EXCERPT_CHARS = 500
 PROJECTS_SHARE = 0.25
+MIN_PROJECTS_SECONDS = 30.0
 TASK_URL = "https://app.todoist.com/app/task/{id}"
 _SAFE_ID = re.compile(r"[A-Za-z0-9_-]{1,64}")
 _DEFAULT_ENV = ("TODOIST_API_TOKEN", "DBUS_SESSION_BUS_ADDRESS")
@@ -29,7 +27,7 @@ class TodoistConnector:
 
     def poll(self, cursor: str) -> Poll:
         deadline = time.monotonic() + self.timeout
-        projects = self._projects(self.timeout * PROJECTS_SHARE)
+        projects = self._projects(max(self.timeout * PROJECTS_SHARE, MIN_PROJECTS_SECONDS))
         remaining = deadline - time.monotonic()
         listing = run_json([self.td, "task", "list", "--all", "--json", "--full"], self.env_names, remaining)
         if not isinstance(listing, Mapping) or not isinstance(listing.get("results"), list):
@@ -53,7 +51,8 @@ class TodoistConnector:
                 [self.td, "task", "view", f"id:{external_id}", "--json", "--full"], self.env_names, self.timeout
             )
         except ConnectorError as error:
-            if "not found" in str(error).lower() or "404" in str(error):
+            text = str(error)
+            if "NOT_FOUND" in text or "404" in text or "not found" in text.lower():
                 return Upstream.UNKNOWN
             raise
         if not isinstance(task, Mapping) or not isinstance(task.get("checked"), bool):
@@ -66,11 +65,10 @@ class TodoistConnector:
         try:
             listing = run_json([self.td, "project", "list", "--all", "--json"], self.env_names, timeout)
         except ConnectorError as error:
-            logger.warning("td couldn't list projects, so tasks show project ids: %s", error)
-            return {}
+            raise ConnectorError(f"td couldn't list projects, so no task was recorded this poll: {error}") from error
         results = listing.get("results") if isinstance(listing, Mapping) else None
         if not isinstance(results, list):
-            return {}
+            raise ConnectorError("td project list returned an unexpected shape")
         return {
             str(project["id"]): str(project.get("name", ""))
             for project in results
@@ -87,9 +85,10 @@ def _task(entry: object, projects: Mapping[str, str]) -> SourceItem:
     if not isinstance(content, str) or not content.strip():
         raise ConnectorError(f"td returned task {identifier} without a title")
     due, deadline = entry.get("due"), entry.get("deadline")
+    recurring = isinstance(due, Mapping) and due.get("isRecurring") is True
     when = ""
     if isinstance(due, Mapping):
-        when = str(due.get("datetime") or due.get("date") or "")
+        when = str((due.get("string") if recurring else None) or due.get("datetime") or due.get("date") or "")
     elif isinstance(deadline, Mapping):
         when = str(deadline.get("date") or "")
     project_id, priority = str(entry.get("projectId") or ""), entry.get("priority")
@@ -104,7 +103,8 @@ def _task(entry: object, projects: Mapping[str, str]) -> SourceItem:
         "added_at": str(entry.get("addedAt") or ""),
         "added_by": str(entry.get("addedByUid") or ""),
         "assignee": str(entry.get("responsibleUid") or ""),
-        "recurring": "true" if isinstance(due, Mapping) and due.get("isRecurring") else "",
+        "recurring": "true" if recurring else "",
+        "deadline": str(deadline.get("date") or "") if isinstance(deadline, Mapping) else "",
     }
     description = entry.get("description")
     return SourceItem(
@@ -112,7 +112,7 @@ def _task(entry: object, projects: Mapping[str, str]) -> SourceItem:
         title=" ".join(content.split()),
         url=str(entry.get("url") or TASK_URL.format(id=identifier)),
         due=when,
-        updated=str(entry.get("updatedAt") or ""),
+        updated="" if recurring else str(entry.get("updatedAt") or ""),
         excerpt=description[:EXCERPT_CHARS] if isinstance(description, str) else "",
         meta={key: value for key, value in meta.items() if value},
     )

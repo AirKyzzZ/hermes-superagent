@@ -114,6 +114,8 @@ def parse_specs(section: object) -> tuple[ConnectorSpec, ...]:
         announce_new = body.get("announce_new", False)
         if not isinstance(announce_new, bool):
             raise ConnectorConfigError(f"[connectors.{name}] announce_new must be true or false")
+        if announce_new and not channel:
+            raise ConnectorConfigError(f"[connectors.{name}] announce_new needs a channel to post to")
         if trusted and kind in UNTRUSTABLE:
             raise ConnectorConfigError(f"[connectors.{name}] can't be trusted: {kind} carries other people's words")
         notify = body.get("notify", list(DEFAULT_NOTIFY) if kind == "agents" else [])

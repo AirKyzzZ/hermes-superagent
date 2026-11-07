@@ -18,7 +18,8 @@ elif args[:2] == ["task", "view"]:
     wanted = args[2].removeprefix("id:")
     task = fixture.get("views", {}).get(wanted)
     if task is None:
-        sys.stderr.write(f"Error: Task not found: {wanted}\n")
+        error = {"error": {"code": "NOT_FOUND", "message": f"HTTP 404: task {wanted} not found"}}
+        sys.stderr.write(json.dumps(error) + "\n")
         sys.exit(1)
     print(json.dumps(task))
 else:
