@@ -9,6 +9,12 @@ import time
 from collections.abc import Callable
 from pathlib import Path
 
+if sys.version_info < (3, 11):  # noqa: UP036
+    sys.exit(
+        f"The demo needs Python 3.11 or newer, this is {sys.version.split()[0]}.\n"
+        "With uv installed: uv run --no-project --python 3.12 demo/run_demo.py"
+    )
+
 DEMO_DIR = Path(__file__).resolve().parent
 REPO_ROOT = DEMO_DIR.parent
 sys.path.insert(0, str(REPO_ROOT))
