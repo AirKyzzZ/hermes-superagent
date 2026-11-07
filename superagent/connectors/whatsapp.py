@@ -10,13 +10,13 @@ from ..ledger import SourceItem, Upstream
 from . import ConnectorConfigError, ConnectorError, ConnectorSpec, Poll, duration
 from .process import run_json
 
-KEYS = frozenset({"chats", "wacli", "sync", "sync_max_age", "timeout", "env"})
+KEYS = frozenset({"chats", "wacli", "sync", "sync_max_age", "activity_max_age", "timeout", "env"})
 TEXT_CHARS = 300
 WINDOW = 20
 SYNC_MODES = ("follow", "once")
 _JID = re.compile(r"[0-9A-Za-z._-]{3,64}@(?:s\.whatsapp\.net|g\.us|lid)")
-_NOT_SPOKEN = re.compile(r"(?i)^(\(message\)|whatsapp (voice|video) call\b.*|missed (voice|video) call\b.*)$")
-_NOT_MESSAGES = frozenset({"call", "poll_vote", "poll_update", "reaction"})
+_CALL = re.compile(r"(?i)^whatsapp (audio|video|voice) call\b")
+_NOT_SPOKEN = frozenset({"(message)", "poll vote", "poll option added"})
 _DEFAULT_ENV = ("WACLI_STORE_DIR", "XDG_STATE_HOME")
 
 
@@ -26,6 +26,7 @@ class WhatsappConnector:
     wacli: str
     sync: str
     sync_max_age: float
+    activity_max_age: float
     timeout: float
     env_names: tuple[str, ...]
 
@@ -66,10 +67,18 @@ class WhatsappConnector:
             raise ConnectorError("wacli doctor returned an unexpected shape")
         if report.get("authenticated") is not True or report.get("session_revoked") is True:
             raise ConnectorError("wacli isn't linked to WhatsApp any more, so new messages can't arrive; link it again")
+        store = report.get("store")
         if self.sync == "follow" and report.get("lock_held") is not True:
             raise ConnectorError("wacli sync isn't running, so its store is going stale; start wacli sync --follow")
+        if self.sync == "follow" and self.activity_max_age:
+            active = store.get("last_activity_at") if isinstance(store, Mapping) else None
+            idle = _age(active)
+            if idle is None or idle > self.activity_max_age:
+                raise ConnectorError(
+                    f"wacli sync has heard nothing since {active or 'an unknown time'}, older than activity_max_age, "
+                    "so it may be stuck reconnecting"
+                )
         if self.sync == "once":
-            store = report.get("store")
             synced = store.get("last_sync_at") if isinstance(store, Mapping) else None
             age = _age(synced)
             if age is None or age > self.sync_max_age:
@@ -82,7 +91,13 @@ class WhatsappConnector:
             return None
         if not isinstance(messages, list):
             raise ConnectorError("wacli returned messages in an unexpected shape")
-        return next((message for message in messages if isinstance(message, Mapping) and _spoken(message)), None)
+        spoken = next((message for message in messages if isinstance(message, Mapping) and _spoken(message)), None)
+        page = data.get("page") if isinstance(data, Mapping) else None
+        if spoken is None and isinstance(page, Mapping) and page.get("has_more") is True:
+            raise ConnectorError(
+                f"the last {WINDOW} rows are all reactions, calls or votes, so who spoke last is unknown"
+            )
+        return spoken
 
 
 def _spoken(message: Mapping[str, object]) -> bool:
@@ -90,12 +105,13 @@ def _spoken(message: Mapping[str, object]) -> bool:
         return False
     if message.get("Revoked") is True or message.get("DeletedForMe") is True:
         return False
-    if str(message.get("MediaType") or "").lower() in _NOT_MESSAGES:
+    text = " ".join(str(message.get("Text") or "").split())
+    shown = " ".join(str(message.get("DisplayText") or "").split())
+    if not text and _CALL.match(shown):
+        return message.get("FromMe") is not True
+    if (text or shown).lower() in _NOT_SPOKEN:
         return False
-    text = " ".join(str(message.get("Text") or message.get("DisplayText") or "").split())
-    if _NOT_SPOKEN.match(text):
-        return False
-    return bool(text or message.get("MediaType"))
+    return bool(text or shown or message.get("MediaType"))
 
 
 def _age(stamp: object) -> float | None:
@@ -151,6 +167,7 @@ def build(spec: ConnectorSpec) -> WhatsappConnector:
     if not isinstance(env, list) or not all(isinstance(name, str) for name in env):
         raise ConnectorConfigError(f"{where} env must be a list of variable names")
     max_age = duration(spec.settings.get("sync_max_age", "30m"), f"{where} sync_max_age")
+    activity = duration(spec.settings.get("activity_max_age", "6h"), f"{where} activity_max_age")
     return WhatsappConnector(
-        tuple(dict.fromkeys(chats)), wacli, str(sync), max_age, float(timeout), (*_DEFAULT_ENV, *env)
+        tuple(dict.fromkeys(chats)), wacli, str(sync), max_age, activity, float(timeout), (*_DEFAULT_ENV, *env)
     )

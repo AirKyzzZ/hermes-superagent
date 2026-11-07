@@ -3,6 +3,7 @@ from __future__ import annotations
 import copy
 import json
 import sys
+import time
 from pathlib import Path
 from typing import Any
 
@@ -138,12 +139,10 @@ def test_mail_is_never_trusted_wholesale_and_needs_an_account() -> None:
 DOCTOR = json.loads((TESTS / "fixtures" / "wacli_doctor.synthetic.json").read_text())
 
 
-def chat(*messages: dict[str, Any]) -> dict[str, Any]:
-    return {
-        "success": True,
-        "data": {"messages": list(messages), "fts": False, "page": {}, "source": {}},
-        "error": None,
-    }
+def chat(*messages: dict[str, Any], has_more: bool = False) -> dict[str, Any]:
+    page = {"has_more": has_more, "next_cursor": "c1" if has_more else ""}
+    data = {"messages": list(messages), "fts": False, "page": page, "source": {}}
+    return {"success": True, "data": data, "error": None}
 
 
 def message(text: str, *, from_me: bool, at: str, sender: str = "A Friend", **extra: Any) -> dict[str, Any]:
@@ -152,8 +151,14 @@ def message(text: str, *, from_me: bool, at: str, sender: str = "A Friend", **ex
     return {**base, **fields, **extra}
 
 
+def fresh_doctor(**fields: Any) -> dict[str, Any]:
+    now = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
+    store = {**DOCTOR["data"]["store"], "last_sync_at": now, "last_activity_at": now}
+    return {**DOCTOR, "data": {**DOCTOR["data"], "store": store, **fields}}
+
+
 def write_wacli(path: Path, chats: dict[str, Any], **extra: Any) -> None:
-    write(path, chats=chats, doctor=extra.pop("doctor", DOCTOR), **extra)
+    write(path, chats=chats, doctor=extra.pop("doctor", fresh_doctor()), **extra)
 
 
 def test_a_chat_waits_while_its_last_message_isnt_yours(tmp_path: Path, wacli: Path) -> None:
@@ -170,16 +175,43 @@ def test_a_chat_waits_while_its_last_message_isnt_yours(tmp_path: Path, wacli: P
     assert item.meta["last_at"] == "2026-11-07T19:15:00Z"
 
 
-def test_a_reaction_or_a_call_never_counts_as_a_reply(tmp_path: Path, wacli: Path) -> None:
+def call(outcome: str, *, from_me: bool, at: str, kind: str = "audio") -> dict[str, Any]:
+    return message("", from_me=from_me, at=at, DisplayText=f"WhatsApp {kind} call {outcome}")
+
+
+@pytest.mark.parametrize(
+    "last",
+    [
+        message("", from_me=True, at="2026-11-07T10:05:00Z", ReactionToID="3EB0", ReactionEmoji="+1"),
+        call("missed", from_me=True, at="2026-11-07T10:05:00Z"),
+        call("rejected", from_me=True, at="2026-11-07T10:05:00Z", kind="video"),
+        message("Poll vote", from_me=True, at="2026-11-07T10:05:00Z"),
+        message("Poll option added", from_me=True, at="2026-11-07T10:05:00Z"),
+        message("(message)", from_me=True, at="2026-11-07T10:05:00Z"),
+    ],
+)
+def test_nothing_but_a_real_message_counts_as_your_reply(tmp_path: Path, wacli: Path, last: dict[str, Any]) -> None:
     question = message("Send the contract by Friday?", from_me=False, at="2026-11-07T10:00:00Z")
-    thumbs = message("", from_me=True, at="2026-11-07T10:01:00Z", ReactionToID="3EB0", ReactionEmoji="\U0001f44d")
-    call = message("WhatsApp voice call missed", from_me=True, at="2026-11-07T10:02:00Z")
-    empty = message("(message)", from_me=True, at="2026-11-07T10:03:00Z")
+    write_wacli(wacli, {FRIEND: chat(last, question)})
+    assert [item.external_id for item in build_connector(whatsapp_spec(tmp_path, [FRIEND])).poll("").items] == [FRIEND]
+
+
+def test_their_missed_call_opens_the_chat_and_their_reaction_doesnt(tmp_path: Path, wacli: Path) -> None:
     answered = message("Here it is", from_me=True, at="2026-11-07T09:00:00Z")
-    heart = message("", from_me=False, at="2026-11-07T09:01:00Z", ReactionToID="3EB1", ReactionEmoji="\u2764")
-    write_wacli(wacli, {FRIEND: chat(empty, call, thumbs, question), COLLEAGUE: chat(heart, answered)})
+    heart = message("", from_me=False, at="2026-11-07T09:01:00Z", ReactionToID="3EB1", ReactionEmoji="<3")
+    rang = call("missed", from_me=False, at="2026-11-07T09:02:00Z", kind="video")
+    write_wacli(wacli, {FRIEND: chat(rang, answered), COLLEAGUE: chat(heart, answered)})
     poll = build_connector(whatsapp_spec(tmp_path, [FRIEND, COLLEAGUE])).poll("")
     assert [item.external_id for item in poll.items] == [FRIEND]
+
+
+def test_a_window_of_only_reactions_is_a_problem_when_more_history_exists(tmp_path: Path, wacli: Path) -> None:
+    thumbs = [
+        message("", from_me=False, at="2026-11-07T10:00:00Z", ReactionToID="x", ReactionEmoji="+") for _ in range(20)
+    ]
+    write_wacli(wacli, {FRIEND: chat(*thumbs, has_more=True)})
+    poll = build_connector(whatsapp_spec(tmp_path, [FRIEND])).poll("")
+    assert not poll.complete and "who spoke last is unknown" in poll.problems[0]
 
 
 def test_replying_closes_the_chat_and_a_failing_chat_marks_nothing_gone(tmp_path: Path, wacli: Path) -> None:
@@ -211,6 +243,10 @@ def test_a_chat_with_no_stored_messages_blocks_nothing(tmp_path: Path, wacli: Pa
     ("doctor", "problem"),
     [
         ({"lock_held": False}, "sync isn't running"),
+        (
+            {"store": {"last_sync_at": "2026-11-07T00:00:00Z", "last_activity_at": "2026-10-01T00:00:00Z"}},
+            "stuck reconnecting",
+        ),
         ({"authenticated": False}, "isn't linked"),
         ({"session_revoked": True}, "isn't linked"),
     ],
@@ -218,7 +254,7 @@ def test_a_chat_with_no_stored_messages_blocks_nothing(tmp_path: Path, wacli: Pa
 def test_a_dead_or_unlinked_sync_fails_the_poll(
     tmp_path: Path, wacli: Path, doctor: dict[str, Any], problem: str
 ) -> None:
-    write_wacli(wacli, {FRIEND: MESSAGES}, doctor={**DOCTOR, "data": {**DOCTOR["data"], **doctor}})
+    write_wacli(wacli, {FRIEND: MESSAGES}, doctor=fresh_doctor(**doctor))
     with pytest.raises(ConnectorError, match=problem):
         build_connector(whatsapp_spec(tmp_path, [FRIEND])).poll("")
 

@@ -23,8 +23,14 @@
       }
     ],
     "fts": false,
-    "page": {"limit": 20},
-    "source": {"store_dir": "/home/owner/.local/state/wacli", "last_sync_at": "2026-11-07T19:16:00Z"}
+    "page": {
+      "has_more": false,
+      "next_cursor": ""
+    },
+    "source": {
+      "store_dir": "/home/owner/.local/state/wacli",
+      "last_sync_at": "2026-11-07T19:16:00Z"
+    }
   },
   "error": null
 }
