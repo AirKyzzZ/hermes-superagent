@@ -15,7 +15,7 @@ from superagent.config import LAST_GOOD_FILENAME, ConfigError, parse_config
 from superagent.domain import RepairAction, ReportState, Trigger
 from superagent.gate import SemanticRule
 from superagent.router import ASSESS_ATTEMPTS, MAX_ASSESS_BATCH, Assessment, Router
-from superagent.runtime import open_runtime, tick
+from superagent.runtime import _alert_key, open_runtime, tick
 from superagent.worker import IDENTITY_FILENAME
 
 from .conftest import FakeBackend
@@ -209,3 +209,10 @@ def test_a_failed_drift_judge_is_a_tick_error_that_alerts(tmp_path: Path) -> Non
     assert "watchdog: drift judge unavailable: provider down" in result.errors
     alerts = [message.text for message in runtime.store.pending_outbox() if message.channel == "discord:alerts"]
     assert alerts == ["Alert: watchdog: drift judge unavailable: provider down"]
+
+
+def test_an_error_keeps_its_alert_key_when_only_its_ids_change() -> None:
+    first = "watchdog: drift judge unavailable: Error code: 529 - {'request_id': 'req_011CVa8Nq2'}"
+    second = "watchdog: drift judge unavailable: Error code: 529 - {'request_id': 'req_011CVzR4kd'}"
+    assert _alert_key(first) == _alert_key(second)
+    assert _alert_key(first) != _alert_key("watchdog: drift judge returned nothing usable")

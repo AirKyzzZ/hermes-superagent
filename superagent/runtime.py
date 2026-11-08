@@ -147,7 +147,7 @@ def _unfinished(previous: dict[str, object]) -> list[str]:
 
 
 def _alert_key(error: str) -> str:
-    return re.sub(r"\d+", "#", error)[:200]
+    return re.sub(r"[\w-]*\d[\w-]*", "#", error)[:200]
 
 
 def _alert_at_once(runtime: Runtime, errors: list[str]) -> None:
