@@ -1,0 +1,8 @@
+blank_issues_enabled: true
+contact_links:
+  - name: Security problem
+    url: https://github.com/AirKyzzZ/hermes-superagent/security/advisories/new
+    about: Report a vulnerability privately, not in a public issue.
+  - name: Hermes Agent itself
+    url: https://github.com/NousResearch/hermes-agent/issues
+    about: Problems with Hermes rather than this plugin go to the Hermes repository.
