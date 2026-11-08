@@ -9,7 +9,7 @@ from typing import Any
 import pytest
 
 from superagent.agents import redact
-from superagent.briefwriter import REPORT_CONTRACT, BriefWriter, build_pack
+from superagent.briefwriter import REPORT_CONTRACT, BriefError, BriefWriter, build_pack
 from superagent.cli import run, setup_parser
 from superagent.config import CONFIG_FILENAME, DB_FILENAME, ConfigError, parse_config
 from superagent.connectors import ConnectorConfigError, ContextPiece, build_connector, parse_specs
@@ -81,6 +81,58 @@ def test_a_brief_goes_through_draft_challenge_and_revise_and_cites_its_pieces(tm
     assert 'Acceptance criteria\n- The registrar shows the new expiry date "Renew the domain" [p2]' in written.text
     assert REPORT_CONTRACT in written.text
     assert "- p3 the owner's notes for every brief, trusted" in written.text
+
+
+def schema_mismatch() -> ValueError:
+    return ValueError("Plugin LLM structured output did not match schema: 'lines' is a required property")
+
+
+@dataclass
+class FlakyLlm(ScriptedLlm):
+    failures: list[object] = field(default_factory=list)
+
+    def complete_structured(self, **kwargs: Any) -> Result:
+        if not self.failures:
+            return super().complete_structured(**kwargs)
+        self.calls.append(kwargs)
+        failure = self.failures.pop(0)
+        if isinstance(failure, Exception):
+            raise failure
+        return Result(failure)
+
+
+def flaky(*failures: object) -> FlakyLlm:
+    return FlakyLlm({"draft": GOOD, "challenge": CHALLENGE, "revise": GOOD}, failures=list(failures))
+
+
+@pytest.mark.parametrize("failure", [None, ["not", "a", "mapping"], schema_mismatch()])
+def test_an_unusable_step_is_asked_once_more(tmp_path: Path, failure: object) -> None:
+    ledger = ledger_with(tmp_path)
+    [item] = ledger.items()
+    llm = flaky(failure)
+    written = BriefWriter(llm).write(build_pack(ledger, item, trusted_source=True))
+    assert written.failures == ()
+    assert [call["purpose"].rsplit(".", 1)[1] for call in llm.calls] == ["draft", "draft", "challenge", "revise"]
+
+
+@pytest.mark.parametrize(
+    ("failures", "raised", "calls"),
+    [
+        ((None, None), BriefError, 2),
+        ((schema_mismatch(), schema_mismatch()), ValueError, 2),
+        ((TimeoutError("slow"),), TimeoutError, 1),
+        ((ValueError("unsupported parameter: temperature"),), ValueError, 1),
+    ],
+)
+def test_a_step_gives_up_after_a_second_unusable_answer_and_never_retries_other_errors(
+    tmp_path: Path, failures: tuple[object, ...], raised: type[Exception], calls: int
+) -> None:
+    ledger = ledger_with(tmp_path)
+    [item] = ledger.items()
+    llm = flaky(*failures)
+    with pytest.raises(raised):
+        BriefWriter(llm).write(build_pack(ledger, item, trusted_source=True))
+    assert len(llm.calls) == calls
 
 
 STRAYS = [

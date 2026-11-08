@@ -185,6 +185,25 @@ def test_judge_only_runs_on_new_reports(router: Router, backend: FakeBackend) ->
     assert len(calls) == 1
 
 
+class FailingJudge:
+    def judge(self, goal: str, reports: tuple[Report, ...]) -> Judgement:
+        return Judgement(Verdict.ON_TRACK, "drift judge unavailable: provider down", failed=True)
+
+
+def test_a_failed_judgement_leaves_the_worker_alone_but_is_flagged(router: Router, backend: FakeBackend) -> None:
+    router.ingest(REQUEST)
+    report(router, backend, "working")
+    result = check_once(router, judge=FailingJudge())[0]
+    assert (result.verdict, result.action, result.judge_failed) == (Verdict.ON_TRACK, RepairAction.NONE, True)
+
+
+def test_a_failed_judge_does_not_hide_a_stuck_worker(router: Router, backend: FakeBackend) -> None:
+    router.ingest(REQUEST)
+    report(router, backend, "same", 3)
+    result = check_once(router, judge=FailingJudge())[0]
+    assert (result.verdict, result.action, result.judge_failed) == (Verdict.STUCK, RepairAction.NUDGE, False)
+
+
 def test_repeated_identical_tool_calls_count_as_stuck(router: Router, backend: FakeBackend) -> None:
     router.ingest(REQUEST)
     assignment = router.store.running_assignments()[0]

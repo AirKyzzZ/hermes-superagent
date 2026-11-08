@@ -6,16 +6,20 @@ import os
 import stat
 import sys
 from collections.abc import Sequence
+from dataclasses import replace
 from pathlib import Path
 
 import pytest
 
 from superagent.config import LAST_GOOD_FILENAME, ConfigError, parse_config
-from superagent.domain import ReportState, Trigger
+from superagent.domain import RepairAction, ReportState, Trigger
 from superagent.gate import SemanticRule
-from superagent.router import ASSESS_ATTEMPTS, MAX_ASSESS_BATCH, Assessment
+from superagent.router import ASSESS_ATTEMPTS, MAX_ASSESS_BATCH, Assessment, Router
 from superagent.runtime import open_runtime, tick
 from superagent.worker import IDENTITY_FILENAME
+
+from .conftest import FakeBackend
+from .test_watchdog import FailingJudge
 
 CONFIG = f"""
 [sources.github]
@@ -190,3 +194,18 @@ def test_a_config_without_workers_is_fine_until_a_worker_is_needed(tmp_path: Pat
     assert tick(runtime).errors == ()
     with pytest.raises(OSError, match="no \\[worker\\] argv"):
         runtime.router.ingest(Trigger("w1", "chat", "th", "alice", "do it", "th", True))
+
+
+def test_a_failed_drift_judge_is_a_tick_error_that_alerts(tmp_path: Path) -> None:
+    alerting = CONFIG + '\n[channels]\nalerts = "discord:alerts"\n\n[tick]\nalert_after_seconds = 0\n'
+    runtime = open_runtime(home_with_config(tmp_path, alerting))
+    backend = FakeBackend()
+    runtime = replace(runtime, router=Router(runtime.store, runtime.config.rules, backend))
+    runtime.router.ingest(Trigger("c2", "github", "pr/2", "alice", "fix it", "pr/2", True))
+    [assignment] = runtime.store.running_assignments()
+    runtime.store.add_report(assignment.id, backend.started[0][2], ReportState.PROGRESS, "reading the code")
+    result = tick(runtime, judge=FailingJudge())
+    assert [check.action for check in result.checks] == [RepairAction.NONE]
+    assert "watchdog: drift judge unavailable: provider down" in result.errors
+    alerts = [message.text for message in runtime.store.pending_outbox() if message.channel == "discord:alerts"]
+    assert alerts == ["Alert: watchdog: drift judge unavailable: provider down"]

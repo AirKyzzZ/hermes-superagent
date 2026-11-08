@@ -214,6 +214,7 @@ def _run_phases(runtime: Runtime, judge: DriftJudge | None, assessor: Assessor |
     except Exception as error:
         logger.exception("watchdog check failed")
         errors.append(f"watchdog: {error}")
+    errors.extend(dict.fromkeys(f"watchdog: {check.reason}" for check in checks if check.judge_failed))
     try:
         delivered = runtime.router.relay(argv_sender(runtime.config.send_argv))
     except Exception as error:
