@@ -338,6 +338,26 @@ The orchestrator writes briefs that beat what the owner would type, because they
 - Both briefs are rendered in the same format. The owner picks the better one without knowing which is which.
 - CI tests the pack builder, the lint and the flow with a fake model. Brief quality needs a live model, so it isn't claimed until it has been measured.
 
+The harness is ready for those tasks. Put them in a JSON list, one object per task, scrubbed of names (`tests/fixtures/past_tasks.synthetic.json` shows the shape):
+
+```json
+[
+  {
+    "name": "Fix the login redirect loop",
+    "connector": "github",
+    "title": "acme/app#12 Login redirects forever after password reset",
+    "url": "https://github.com/acme/app/issues/12",
+    "excerpt": "What the item said when the task started",
+    "meta": {"repo": "acme/app"},
+    "context": [{"label": "a comment by the owner", "trusted": true, "text": "..."}],
+    "typed": "the message the owner typed",
+    "ran": "the brief the worker actually got"
+  }
+]
+```
+
+Then `hermes superagent briefs --compare past.json --out sheet.md --key key.md` writes a new brief for each task through the profile's model, three calls each, with the same notes, repo guide and trust settings as a real brief, and puts it beside the one that ran. Both are shown as plain text, in a random order balanced between A and B, and the verdict, the lint's findings and each side's length go to `key.md`. The owner marks A or B in `sheet.md` without seeing `key.md`. A task whose brief can't be written is noted in the key and the others carry on. Existing files are left alone unless `--force`, and more tasks than `[briefs] daily_limit` need `--yes`. A context piece can carry `"weak": true`, like the owner's comments in a GitHub thread.
+
 ## Safety
 
 - **Read only:** built-in connectors call only list, search and get commands. A test checks every preset's argv against an allowlist of read verbs. The `command` connector runs what the owner writes and says so in its docs.
