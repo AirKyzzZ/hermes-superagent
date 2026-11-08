@@ -1,0 +1,93 @@
+[
+  {
+    "provider": "codex",
+    "source": "auto",
+    "error": { "code": 1, "kind": "provider", "message": "Codex login expired, run codex login again." }
+  },
+  {
+    "provider": "claude",
+    "source": "web",
+    "rateWindowLabels": { "secondary": "Weekly" },
+    "pace": {
+      "secondary": {
+        "deltaPercent": -20,
+        "expectedUsedPercent": 41,
+        "stage": "behind",
+        "summary": "20% under pace",
+        "willLastToReset": true
+      }
+    },
+    "usage": {
+      "updatedAt": "2026-11-09T07:00:00Z",
+      "accountEmail": "owner@example.com",
+      "accountOrganization": "Example Org",
+      "loginMethod": "Claude Max 20x",
+      "identity": {
+        "providerID": "claude",
+        "accountEmail": "owner@example.com",
+        "accountOrganization": "Example Org",
+        "loginMethod": "Claude Max 20x"
+      },
+      "primary": null,
+      "secondary": {
+        "usedPercent": 21,
+        "windowMinutes": 10080,
+        "resetsAt": "2026-11-15T19:00:00Z",
+        "resetDescription": "Resets Nov 15"
+      },
+      "tertiary": null,
+      "extraRateWindows": [
+        {
+          "id": "claude-weekly-scoped-fable",
+          "title": "Fable only",
+          "window": { "usedPercent": 4, "windowMinutes": 10080, "resetsAt": "2026-11-15T19:00:00Z" }
+        }
+      ],
+      "providerCost": {
+        "used": 3.5,
+        "limit": 20,
+        "balance": 16.5,
+        "currencyCode": "USD",
+        "period": "Monthly",
+        "updatedAt": "2026-11-09T07:00:00Z"
+      },
+      "subscriptionRenewsAt": "2026-12-01T00:00:00Z"
+    }
+  },
+  {
+    "provider": "antigravity",
+    "source": "cli",
+    "rateWindowLabels": { "primary": "Gemini Models", "secondary": "Claude and GPT" },
+    "usage": {
+      "updatedAt": "2026-11-09T07:00:00Z",
+      "identity": { "providerID": "antigravity" },
+      "primary": { "usedPercent": 12, "windowMinutes": 300, "resetsAt": "2026-11-09T11:00:00Z" },
+      "secondary": { "usedPercent": 3.5, "windowMinutes": 300, "resetsAt": "2026-11-09T11:00:00Z" },
+      "tertiary": null
+    }
+  },
+  {
+    "provider": "openrouter",
+    "source": "api",
+    "account": "personal",
+    "usage": {
+      "updatedAt": "2026-11-09T07:00:00Z",
+      "identity": { "providerID": "openrouter" },
+      "primary": null,
+      "secondary": null,
+      "tertiary": null,
+      "providerCost": { "used": 7.25, "limit": 50, "balance": 42.75, "currencyCode": "USD", "period": "Monthly" }
+    }
+  },
+  {
+    "provider": "deepseek",
+    "source": "web",
+    "usage": {
+      "updatedAt": "2026-11-09T07:00:00Z",
+      "dataConfidence": "low",
+      "primary": null,
+      "secondary": null,
+      "tertiary": null
+    }
+  }
+]
