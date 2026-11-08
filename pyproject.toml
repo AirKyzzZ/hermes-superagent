@@ -4,7 +4,21 @@ version = "0.1.0"
 description = "DeepSeek's Super-agent design as a Hermes Agent plugin"
 requires-python = ">=3.11"
 license = "MIT"
+readme = "README.md"
 dependencies = []
+
+[project.urls]
+Homepage = "https://github.com/AirKyzzZ/hermes-superagent"
+Changelog = "https://github.com/AirKyzzZ/hermes-superagent/blob/main/CHANGELOG.md"
+
+[project.scripts]
+superagent = "superagent.cli:main"
+
+[project.entry-points."hermes_agent.plugins"]
+hermes-superagent = "superagent.plugin"
+
+[tool.setuptools.packages.find]
+include = ["superagent*"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
