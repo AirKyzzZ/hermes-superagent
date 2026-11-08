@@ -322,7 +322,7 @@ The orchestrator writes briefs that beat what the owner would type, because they
    - quoted text is an exact substring of the piece it cites;
    - at least one acceptance criterion;
    - length bounds, and no secret-looking strings;
-   - every command, URL and host in the brief also appears in trusted text. That stops "setup needs `curl … | sh`" from a mail turning into an instruction.
+   - every command, URL and host in the brief also appears in trusted text. That stops a mail saying setup needs a downloaded script piped into a shell from turning into an instruction.
 
    A brief that fails lint is never dispatched. The owner gets it with the failures marked.
 
