@@ -17,7 +17,7 @@ Based on DeepSeek's <a href="https://mp.weixin.qq.com/s/zoS7GlReWPhfCjENGxXCdg">
 <a href="LICENSE"><img alt="MIT licence" src="https://img.shields.io/github/license/AirKyzzZ/hermes-superagent?style=flat-square&label=license&labelColor=14142a&color=1a10b8"></a>
 <a href="pyproject.toml"><img alt="Python 3.11 or newer" src="https://img.shields.io/badge/python-3.11%2B-1a10b8?style=flat-square&labelColor=14142a"></a>
 <a href="plugin.yaml"><img alt="Hermes plugin, requires 0.22.7 or newer" src="https://img.shields.io/badge/Hermes_plugin-%3E%3D0.22.7-1a10b8?style=flat-square&labelColor=14142a"></a>
-<a href="tests"><img alt="655 tests" src="https://img.shields.io/badge/tests-655-1a10b8?style=flat-square&labelColor=14142a"></a>
+<a href="https://github.com/AirKyzzZ/hermes-superagent/actions/workflows/ci.yml"><img alt="Tests on Ubuntu, macOS and real Hermes" src="https://img.shields.io/github/actions/workflow/status/AirKyzzZ/hermes-superagent/ci.yml?branch=main&label=tests&style=flat-square&labelColor=14142a"></a>
 <a href="docs/hackathon.md"><img alt="Built for the Hermes Agent Plugin Hackathon" src="https://img.shields.io/badge/built_for-Hermes_Plugin_Hackathon-1a10b8?style=flat-square&labelColor=14142a"></a>
 </p>
 
