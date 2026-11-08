@@ -18,7 +18,7 @@ Branch: `feat/runnable-examples`, based on `e08bc83`. Unfinished, nothing from t
 
 ## Open PRs
 
-None from this lane. #42 (`docs/ci-badge`, another lane) is open and touches the README badges, so expect to merge it in if it lands first.
+None from this lane. #42 (`docs/ci-badge`, another lane) is open and touches the README badges, so expect to merge it in if it lands first. `main` has already moved past this branch's base with #43 and #44, and #44 changes the README header, so the README may need a small conflict fix when `origin/main` is merged in.
 
 ## Decisions made without asking
 
