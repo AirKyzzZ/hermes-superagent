@@ -1,0 +1,23 @@
+{
+  "success": true,
+  "data": {
+    "store_dir": "/home/owner/.local/state/wacli",
+    "lock_held": true,
+    "lock_owner_pid": 4242,
+    "authenticated": true,
+    "session_revoked": false,
+    "linked_jid": "33600000000@s.whatsapp.net",
+    "connected": false,
+    "connection_state": "synced elsewhere",
+    "fts_enabled": false,
+    "store": {
+      "messages": 1234,
+      "chats": 56,
+      "contacts": 78,
+      "groups": 9,
+      "last_sync_at": "2026-11-07T19:16:00Z",
+      "last_activity_at": "2026-11-07T19:20:00Z"
+    }
+  },
+  "error": null
+}

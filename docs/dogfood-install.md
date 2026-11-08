@@ -102,6 +102,32 @@ td task list --all --json --full | head -c 300
 
 Don't run `td auth login` again on the VPS: other agents add tasks through the same `td`, and a new login, read-only or not, replaces their token. If `td` isn't installed, install it with `npm install -g @doist/todoist-cli` (Node 24 or newer) and give it the owner's token through `TODOIST_API_TOKEN`, which `td` reads first and the connector passes through. Add `trusted = true` to the section only if nobody else, no agent and no integration writes in those projects, since worker briefs would treat that text as the owner's own words.
 
+Mail and WhatsApp use the tools already on the VPS, one `gmail` block per mailbox:
+
+```toml
+[connectors.gmail-personal]
+type = "gmail"
+account = "OWNER_ADDRESS"
+every = "10m"
+
+[connectors.whatsapp]
+type = "whatsapp"
+chats = ["CONTACT_NUMBER@s.whatsapp.net"]
+every = "5m"
+```
+
+`gog` runs with `--readonly` and `wacli` with `--read-only` on every call. The WhatsApp connector also checks `wacli doctor` each poll, so `wacli sync --follow` has to keep running; with a timer running `wacli sync --once` instead, add `sync = "once"`. Catching up on more than half of a source at once, such as archiving most of the inbox, holds the snapshot until `ledger accept` with that connector's name, as for GitLab. Both connectors were built from each tool's public source with synthetic test data, in `tests/fixtures/*.synthetic.json`. Before turning them on, check one real run of each against them, scrubbed of names and numbers:
+
+```bash
+gog --readonly --json --account OWNER_ADDRESS gmail search 'in:inbox' --all --count --max 500 | head -c 600
+wacli --read-only --json doctor
+wacli --read-only --json chats list --limit 500 | grep -c CONTACT_NUMBER   # each listed JID must appear
+wacli --read-only --json messages list --chat CONTACT_NUMBER@s.whatsapp.net --limit 20
+hermes superagent --home ~/superagent doctor
+```
+
+If a field is named differently, `doctor` says which thread or chat it couldn't read. Send the scrubbed output so the fixtures can be replaced with the real shape.
+
 The timer below has no ssh agent. So give each alias a dedicated key with no passphrase through `IdentityFile`, and ssh to each host once by hand so its host key is saved. On a Mac, ssh sessions can't read folders that macOS protects, such as `~/Downloads`, so branches of repos kept there show as blank. Grant `sshd` Full Disk Access if you want them.
 
 The agents channel gets one line when a session has been waiting, stuck, rate-limited or gone for two polls in a row. The line holds the project, the state and a handle, never the session's text. Set `notify_detail = true` on a connector to add the question, with anything token-shaped redacted.
