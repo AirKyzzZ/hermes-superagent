@@ -65,8 +65,8 @@ def starter_config(choices: Choices) -> str:
     ]
     if channels:
         blocks.append("\n".join(["[channels]", *channels]))
-    if choices.brief:
-        blocks.append(f"[brief]\nhour = 8\ntimezone = {json.dumps(choices.timezone, ensure_ascii=False)}")
+    hour = "hour = 8\n" if choices.brief else ""
+    blocks.append(f"[brief]\n{hour}timezone = {json.dumps(choices.timezone, ensure_ascii=False)}")
     if choices.github:
         blocks.append('[connectors.github]\ntype = "github"\nevery = "10m"')
     if choices.gitlab:
