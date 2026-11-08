@@ -23,6 +23,7 @@ Based on DeepSeek's <a href="https://mp.weixin.qq.com/s/zoS7GlReWPhfCjENGxXCdg">
 
 <p>
 <a href="#quickstart">Quickstart</a> ·
+<a href="#examples">Examples</a> ·
 <a href="#why">Why</a> ·
 <a href="#architecture">Architecture</a> ·
 <a href="#features">Features</a> ·
@@ -49,6 +50,14 @@ python3 demo/run_demo.py
 ```
 
 If your `python3` is older, as on a stock Mac, `uv run --no-project --python 3.12 demo/run_demo.py` fetches a newer one. To point the ledger at your own GitHub issues, still without Hermes, go to [Install](#install).
+
+## Examples
+
+Three more one-command runs, also with no credentials, each with a recording:
+
+- [Nothing slips](examples/nothing-slips): four mornings across GitHub, Todoist, Gmail and WhatsApp, where a broken export and a deleted task don't lose anything.
+- [Night shift](examples/night-shift): six coding tasks handed off at night, and the one digest you read in the morning.
+- [Watchdog](examples/watchdog): five ways an agent gets stuck, and what catches each one.
 
 ## Why
 

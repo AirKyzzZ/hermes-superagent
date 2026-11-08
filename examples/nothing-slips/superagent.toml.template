@@ -1,0 +1,36 @@
+[channels]
+alerts = "chat:alerts"
+brief = "chat:brief"
+
+[brief]
+hour = 8
+timezone = "UTC"
+stale_after = "3d"
+
+[connectors.github]
+type = "command"
+every = "0s"
+argv = ["@PYTHON@", "@HERE@/source.py", "@HOME@/tools.json", "github"]
+confirm_argv = ["@PYTHON@", "@HERE@/source.py", "@HOME@/tools.json", "github", "{id}"]
+fields = { id = "id", title = "title", status = "status" }
+
+[connectors.todoist]
+type = "command"
+every = "0s"
+argv = ["@PYTHON@", "@HERE@/source.py", "@HOME@/tools.json", "todoist"]
+confirm_argv = ["@PYTHON@", "@HERE@/source.py", "@HOME@/tools.json", "todoist", "{id}"]
+fields = { id = "id", title = "title", status = "status" }
+
+[connectors.gmail]
+type = "command"
+every = "0s"
+argv = ["@PYTHON@", "@HERE@/source.py", "@HOME@/tools.json", "gmail"]
+confirm_argv = ["@PYTHON@", "@HERE@/source.py", "@HOME@/tools.json", "gmail", "{id}"]
+fields = { id = "id", title = "title", status = "status" }
+
+[connectors.whatsapp]
+type = "command"
+every = "0s"
+argv = ["@PYTHON@", "@HERE@/source.py", "@HOME@/tools.json", "whatsapp"]
+confirm_argv = ["@PYTHON@", "@HERE@/source.py", "@HOME@/tools.json", "whatsapp", "{id}"]
+fields = { id = "id", title = "title", status = "status", state = "state" }
