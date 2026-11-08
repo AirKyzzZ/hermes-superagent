@@ -4,7 +4,7 @@ import re
 import time
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass
-from datetime import date, datetime
+from datetime import date, datetime, timedelta
 from zoneinfo import ZoneInfo
 
 from ..ledger import SourceItem, Upstream
@@ -17,7 +17,7 @@ MAX_DAYS = 30
 PAGE_SIZE = 250
 EXCERPT_CHARS = 500
 PRIMARY = "primary"
-LEFT_OUT_TYPES = frozenset({"workingLocation"})
+LEFT_OUT_TYPES = ("workingLocation",)
 _SAFE_CALENDAR = re.compile(r"[A-Za-z0-9][A-Za-z0-9._%+#@-]{0,255}")
 _DEFAULT_ENV = ("GOG_HOME", "GOG_TIMEZONE", "DBUS_SESSION_BUS_ADDRESS")
 
@@ -34,12 +34,13 @@ class GcalConnector:
 
     def poll(self, cursor: str) -> Poll:
         deadline = time.monotonic() + self.timeout
-        chosen, problems = self._chosen(deadline)
+        chosen, problems, owner_zone = self._chosen(deadline)
         now = self.clock()
         items: dict[str, SourceItem] = {}
+        seen: set[tuple[str, str]] = set()
         for calendar_id, name in chosen.items():
             try:
-                events = self._events(calendar_id, deadline)
+                events = self._events(calendar_id, owner_zone, deadline)
             except ConnectorError as error:
                 problems.append(f"calendar {calendar_id}: {error}")
                 continue
@@ -51,7 +52,10 @@ class GcalConnector:
                 except ConnectorError as error:
                     problems.append(str(error))
                     continue
-                items[item.external_id] = item
+                meeting = _meeting_key(entry, item)
+                if meeting not in seen:
+                    seen.add(meeting)
+                    items[item.external_id] = item
         return Poll(tuple(items.values()), complete=False, problems=tuple(problems))
 
     def confirm(self, external_id: str) -> Upstream:
@@ -60,7 +64,7 @@ class GcalConnector:
     def _base(self) -> list[str]:
         return [self.gog, "--readonly", "--json", "--no-input", "--account", self.account]
 
-    def _chosen(self, deadline: float) -> tuple[dict[str, str], list[str]]:
+    def _chosen(self, deadline: float) -> tuple[dict[str, str], list[str], str]:
         argv = [*self._base(), "calendar", "calendars", "--all"]
         listing = run_json(argv, self.env_names, deadline - time.monotonic())
         entries = listing.get("calendars") if isinstance(listing, Mapping) else None
@@ -70,25 +74,29 @@ class GcalConnector:
         chosen: dict[str, str] = {}
         matched: set[str] = set()
         problems: list[str] = []
+        owner_zone = ""
         for entry in entries:
             if not isinstance(entry, Mapping):
                 problems.append("gog listed a calendar that isn't an object")
                 continue
             identifier, primary = entry.get("id"), entry.get("primary") is True
-            names = {identifier, PRIMARY} if primary else {identifier}
+            if primary and _zone(entry.get("timeZone")) is not None:
+                owner_zone = str(entry["timeZone"])
+            text_id = identifier if isinstance(identifier, str) else ""
+            names = {text_id, PRIMARY} if primary else {text_id}
             if not (names & wanted if wanted else primary or entry.get("selected") is True):
                 continue
-            if not isinstance(identifier, str) or not _SAFE_CALENDAR.fullmatch(identifier):
+            if not _SAFE_CALENDAR.fullmatch(text_id):
                 problems.append(f"calendar with an unusable id {str(identifier)[:40]!r} in gog's list")
                 continue
-            chosen[identifier] = str(entry.get("summaryOverride") or entry.get("summary") or identifier)
-            matched |= {name for name in names if isinstance(name, str)}
+            chosen[text_id] = str(entry.get("summaryOverride") or entry.get("summary") or text_id)
+            matched |= names
         problems += [f"calendar {name} isn't in this account's list" for name in sorted(wanted - matched)]
         if not chosen and not problems:
             raise ConnectorError("gog listed no calendar to read")
-        return chosen, problems
+        return chosen, problems, owner_zone
 
-    def _events(self, calendar_id: str, deadline: float) -> list[object]:
+    def _events(self, calendar_id: str, owner_zone: str, deadline: float) -> list[object]:
         # gog's --all logs a calendar that fails and still exits 0, so each one is read on its own
         argv = [
             *self._base(),
@@ -100,6 +108,7 @@ class GcalConnector:
             "--all-pages",
             "--max",
             str(PAGE_SIZE),
+            *(["--timezone", owner_zone] if owner_zone else []),
         ]
         result = run_json(argv, self.env_names, deadline - time.monotonic())
         events = result.get("events") if isinstance(result, Mapping) else None
@@ -125,11 +134,16 @@ def _left_out(entry: object) -> bool:
     return entry.get("eventType") in LEFT_OUT_TYPES or _self_attendee(entry).get("responseStatus") == "declined"
 
 
+def _meeting_key(entry: object, item: SourceItem) -> tuple[str, str]:
+    uid = entry.get("iCalUID") if isinstance(entry, Mapping) else None
+    return (uid, item.due) if isinstance(uid, str) and uid else (item.external_id, "")
+
+
 def _event(entry: object, calendar_id: str, calendar_name: str, now: float) -> SourceItem:
     identifier = entry.get("id") if isinstance(entry, Mapping) else None
     if not isinstance(entry, Mapping) or not isinstance(identifier, str) or not identifier:
         raise ConnectorError(f"event without an id in calendar {calendar_id}")
-    start, end = entry.get("start"), entry.get("end")
+    start = entry.get("start")
     if not isinstance(start, Mapping):
         raise ConnectorError(f"event {identifier} has no start")
     all_day = not start.get("dateTime")
@@ -138,18 +152,17 @@ def _event(entry: object, calendar_id: str, calendar_name: str, now: float) -> S
         moment = datetime.fromisoformat(str(raw))
     except ValueError as error:
         raise ConnectorError(f"event {identifier} has an unreadable start {str(raw)[:40]!r}") from error
-    zone = _zone(entry.get("timezone")) if all_day else moment.tzinfo
-    today = datetime.fromtimestamp(now, zone).date()
+    today = datetime.fromtimestamp(now, _zone(entry.get("timezone")) or moment.tzinfo).date()
+    days_away = (moment.date() - today).days
     summary = " ".join(str(entry.get("summary") or "(no title)").split())
-    label = _label(moment.date(), today)
-    clock = "" if all_day or label == "ongoing" else f" {moment:%H:%M}"
     organizer = entry.get("organizer")
     description = entry.get("description")
     meta = {
         "calendar": calendar_name,
         "calendar_id": calendar_id,
+        "days_away": str(days_away),
         "all_day": "true" if all_day else "",
-        "end": _end(entry, end),
+        "end": _end(entry),
         "location": str(entry.get("location") or ""),
         "organizer": str(organizer.get("email") or "") if isinstance(organizer, Mapping) else "",
         "response": str(_self_attendee(entry).get("responseStatus") or ""),
@@ -159,7 +172,7 @@ def _event(entry: object, calendar_id: str, calendar_name: str, now: float) -> S
     }
     return SourceItem(
         external_id=f"{calendar_id}/{identifier}",
-        title=f"{label}{clock} {summary}",
+        title=f"{_when(entry, moment, all_day, days_away)} {summary}",
         url=str(entry.get("htmlLink") or ""),
         due=str(raw),
         excerpt=description[:EXCERPT_CHARS] if isinstance(description, str) else "",
@@ -167,10 +180,26 @@ def _event(entry: object, calendar_id: str, calendar_name: str, now: float) -> S
     )
 
 
-def _end(entry: Mapping[str, object], end: object) -> str:
+def _end(entry: Mapping[str, object]) -> str:
+    end = entry.get("end")
     if isinstance(end, Mapping) and end.get("date"):
         return str(end["date"])
     return str(entry.get("endLocal") or (end.get("dateTime") if isinstance(end, Mapping) else "") or "")
+
+
+def _when(entry: Mapping[str, object], moment: datetime, all_day: bool, days_away: int) -> str:
+    if days_away >= 0:
+        return moment.strftime("%a %d %b" if all_day else "%a %d %b %H:%M")
+    last = _last_day(entry, all_day)
+    return f"ongoing until {last:%a %d %b}" if last else "ongoing"
+
+
+def _last_day(entry: Mapping[str, object], all_day: bool) -> date | None:
+    try:
+        last = datetime.fromisoformat(_end(entry)).date()
+    except ValueError:
+        return None
+    return last - timedelta(days=1) if all_day else last
 
 
 def _zone(name: object) -> ZoneInfo | None:
@@ -178,13 +207,6 @@ def _zone(name: object) -> ZoneInfo | None:
         return ZoneInfo(name) if isinstance(name, str) and name else None
     except (ValueError, OSError, KeyError):
         return None
-
-
-def _label(day: date, today: date) -> str:
-    offset = (day - today).days
-    if offset < 0:
-        return "ongoing"
-    return {0: "today", 1: "tomorrow"}.get(offset, day.strftime("%a %d %b"))
 
 
 def build(spec: ConnectorSpec) -> GcalConnector:

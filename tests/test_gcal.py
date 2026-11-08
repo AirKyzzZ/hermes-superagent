@@ -73,29 +73,30 @@ def test_an_event_becomes_an_item_titled_with_when_it_is(tmp_path: Path, fixture
     assert poll.problems == ()
     dentist = poll.items[0]
     assert dentist.external_id == f"{PRIMARY}/a1b2c3d4e5f6g7h8"
-    assert dentist.title == "today 14:00 Dentist"
+    assert dentist.title == "Mon 09 Nov 14:00 Dentist"
     assert dentist.due == "2026-11-09T14:00:00+01:00"
     assert dentist.url == "https://www.google.com/calendar/event?eid=YTFiMmMzZDQ"
     assert dentist.excerpt == "Bring the x-ray"
     assert dentist.meta == {
         "calendar": "Personal",
         "calendar_id": PRIMARY,
+        "days_away": "0",
         "end": "2026-11-09T14:30:00+01:00",
         "location": "1 Example Street, Bordeaux",
         "organizer": PRIMARY,
     }
 
 
-def test_titles_say_tomorrow_a_date_or_ongoing(tmp_path: Path, fixture: Path) -> None:
+def test_titles_carry_the_date_and_multi_day_events_say_until_when(tmp_path: Path, fixture: Path) -> None:
     write(fixture)
     items = {item.title: item for item in connector(calendar_spec(tmp_path)).poll("").items}
     assert set(items) == {
-        "today 14:00 Dentist",
-        "tomorrow 09:00 Team standup",
-        "ongoing Conference",
+        "Mon 09 Nov 14:00 Dentist",
+        "Tue 10 Nov 09:00 Team standup",
+        "ongoing until Thu 12 Nov Conference",
         "Wed 11 Nov Day off",
     }
-    standup = items["tomorrow 09:00 Team standup"]
+    standup = items["Tue 10 Nov 09:00 Team standup"]
     assert standup.meta["response"] == "needsAction"
     assert standup.meta["meeting"] == "https://meet.google.com/abc-defg-hij"
     day_off = items["Wed 11 Nov Day off"]
@@ -111,14 +112,14 @@ def test_a_declined_event_and_a_working_location_are_left_out(tmp_path: Path, fi
 def test_only_the_calendars_shown_in_google_are_read_by_default(tmp_path: Path, fixture: Path) -> None:
     write(fixture, events={TEAM: page(event("t1", "Retro")), HOLIDAYS: page(event("h1", "Armistice"))})
     [item] = connector(calendar_spec(tmp_path)).poll("").items
-    assert (item.title, item.meta["calendar"]) == ("today 18:00 Retro", "Team")
+    assert (item.title, item.meta["calendar"]) == ("Mon 09 Nov 18:00 Retro", "Team")
 
 
 def test_listed_calendars_replace_the_default(tmp_path: Path, fixture: Path) -> None:
     events = {PRIMARY: page(event("p1", "Mine")), TEAM: page(event("t1", "Retro")), HOLIDAYS: page(event("h1", "Fete"))}
     write(fixture, events=events)
     spec = calendar_spec(tmp_path, calendars=["primary", HOLIDAYS])
-    assert {item.title for item in connector(spec).poll("").items} == {"today 18:00 Mine", "today 18:00 Fete"}
+    assert {item.title for item in connector(spec).poll("").items} == {"Mon 09 Nov 18:00 Mine", "Mon 09 Nov 18:00 Fete"}
 
 
 def test_a_listed_calendar_missing_from_the_account_is_reported(tmp_path: Path, fixture: Path) -> None:
@@ -168,7 +169,7 @@ def test_an_event_without_a_title_still_shows(tmp_path: Path, fixture: Path) -> 
     untitled = event("p1", "")
     write(fixture, events={PRIMARY: page(untitled)})
     [item] = connector(calendar_spec(tmp_path)).poll("").items
-    assert item.title == "today 18:00 (no title)"
+    assert item.title == "Mon 09 Nov 18:00 (no title)"
 
 
 def test_an_all_day_event_with_an_unknown_timezone_still_shows(tmp_path: Path, fixture: Path) -> None:
@@ -183,14 +184,110 @@ def test_each_brief_relists_an_event_as_its_day_gets_closer(tmp_path: Path, fixt
     ledger = Ledger(tmp_path / "s.db")
     settings = BriefSettings(stale_after=86400.0, timezone="Europe/Paris")
     poll_sources(ledger, [spec], {spec.name: connector(spec, MONDAY)}, 300)
-    assert "tomorrow 09:00 Team standup" in build_brief(ledger, [spec], 0.0, time.time(), settings).text
+    assert "Tue 10 Nov 09:00 Team standup" in build_brief(ledger, [spec], 0.0, time.time(), settings).text
     since = time.time()
     poll_sources(ledger, [spec], {spec.name: connector(spec, MONDAY)}, 300)
     assert "Team standup" not in build_brief(ledger, [spec], since, time.time(), settings).text
     since = time.time()
     poll_sources(ledger, [spec], {spec.name: connector(spec, TUESDAY)}, 300)
     brief = build_brief(ledger, [spec], since, time.time(), settings).text
-    assert "today 09:00 Team standup" in brief and "Reopened" not in brief and "Ignored" not in brief
+    assert "Tue 10 Nov 09:00 Team standup" in brief and "Reopened" not in brief and "Ignored" not in brief
+
+
+def test_times_are_the_owners_even_for_an_invite_from_another_timezone(tmp_path: Path, fixture: Path) -> None:
+    late = event(
+        "p1",
+        "Late call",
+        start={"dateTime": "2026-11-09T19:00:00-05:00", "timeZone": "America/New_York"},
+        end={"dateTime": "2026-11-09T20:00:00-05:00", "timeZone": "America/New_York"},
+        startLocal="2026-11-10T01:00:00+01:00",
+        endLocal="2026-11-10T02:00:00+01:00",
+        timezone="Europe/Paris",
+    )
+    write(fixture, events={PRIMARY: page(late)})
+    evening = datetime(2026, 11, 9, 20, 0, tzinfo=PARIS).timestamp()
+    [item] = connector(calendar_spec(tmp_path), evening).poll("").items
+    assert item.title == "Tue 10 Nov 01:00 Late call"
+    assert (item.due, item.meta["end"], item.meta["days_away"]) == (
+        "2026-11-10T01:00:00+01:00",
+        "2026-11-10T02:00:00+01:00",
+        "1",
+    )
+
+
+def test_today_follows_the_timezone_across_a_clock_change(tmp_path: Path, fixture: Path) -> None:
+    lunch = event(
+        "p1",
+        "Lunch",
+        start={"dateTime": "2026-10-25T14:00:00+01:00"},
+        startLocal="2026-10-25T14:00:00+01:00",
+        timezone="Europe/Paris",
+    )
+    write(fixture, events={PRIMARY: page(lunch)})
+    just_after_midnight = datetime(2026, 10, 25, 0, 30, tzinfo=PARIS).timestamp()
+    [item] = connector(calendar_spec(tmp_path), just_after_midnight).poll("").items
+    assert item.meta["days_away"] == "0"
+
+
+def test_an_all_day_event_uses_its_calendars_day(tmp_path: Path, fixture: Path) -> None:
+    write(fixture, events={PRIMARY: page(event("p1", "Launch", start={"date": "2026-11-09"}, timezone="Asia/Tokyo"))})
+    late_sunday_in_paris = datetime(2026, 11, 8, 23, 0, tzinfo=PARIS).timestamp()
+    [item] = connector(calendar_spec(tmp_path), late_sunday_in_paris).poll("").items
+    assert item.meta["days_away"] == "0"
+
+
+def test_a_timed_event_that_started_yesterday_is_ongoing(tmp_path: Path, fixture: Path) -> None:
+    night = event(
+        "p1",
+        "Night shift",
+        start={"dateTime": "2026-11-08T22:00:00+01:00"},
+        end={"dateTime": "2026-11-09T02:00:00+01:00"},
+    )
+    write(fixture, events={PRIMARY: page(night)})
+    [item] = connector(calendar_spec(tmp_path)).poll("").items
+    assert (item.title, item.meta["days_away"]) == ("ongoing until Mon 09 Nov Night shift", "-1")
+
+
+def test_an_ongoing_event_is_relisted_each_day(tmp_path: Path, fixture: Path) -> None:
+    write(fixture)
+    spec = calendar_spec(tmp_path)
+    ledger = Ledger(tmp_path / "s.db")
+    settings = BriefSettings(stale_after=86400.0, timezone="Europe/Paris")
+    poll_sources(ledger, [spec], {spec.name: connector(spec, MONDAY)}, 300)
+    since = time.time()
+    poll_sources(ledger, [spec], {spec.name: connector(spec, TUESDAY)}, 300)
+    assert "ongoing until Thu 12 Nov Conference" in build_brief(ledger, [spec], since, time.time(), settings).text
+
+
+def test_the_days_setting_reaches_gog(tmp_path: Path, fixture: Path) -> None:
+    write(fixture, days=5)
+    assert len(connector(calendar_spec(tmp_path, days=5)).poll("").items) == 4
+
+
+def test_without_a_primary_timezone_gog_picks_its_default(tmp_path: Path, fixture: Path) -> None:
+    calendars = {"calendars": [{"id": PRIMARY, "primary": True}], "nextPageToken": ""}
+    write(fixture, calendars=calendars, timezone="")
+    assert len(connector(calendar_spec(tmp_path)).poll("").items) == 4
+
+
+def test_a_long_description_is_cut(tmp_path: Path, fixture: Path) -> None:
+    write(fixture, events={PRIMARY: page(event("p1", "Mine", description="x" * 900))})
+    [item] = connector(calendar_spec(tmp_path)).poll("").items
+    assert len(item.excerpt) == 500
+
+
+def test_one_meeting_on_two_calendars_shows_once(tmp_path: Path, fixture: Path) -> None:
+    shared = event("s1", "All hands", iCalUID="shared@google.com")
+    next_week = event("s2", "All hands", iCalUID="shared@google.com", start={"dateTime": "2026-11-11T10:00:00+01:00"})
+    write(fixture, events={PRIMARY: page(shared, next_week), TEAM: page({**shared, "id": "t9"})})
+    assert len(connector(calendar_spec(tmp_path)).poll("").items) == 2
+
+
+def test_odd_ids_and_types_are_reported_not_raised(tmp_path: Path, fixture: Path) -> None:
+    calendars = {"calendars": [*CALENDARS["calendars"], {"id": ["x"], "selected": True}], "nextPageToken": ""}
+    write(fixture, calendars=calendars, events={PRIMARY: page(event("p1", "Odd", eventType=["default"]))})
+    poll = connector(calendar_spec(tmp_path)).poll("")
+    assert len(poll.items) == 1 and "unusable id" in poll.problems[0]
 
 
 def test_an_event_leaving_the_window_closes_nothing(tmp_path: Path, fixture: Path) -> None:
