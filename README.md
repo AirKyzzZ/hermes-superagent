@@ -1,10 +1,6 @@
 <div align="center">
 
-<img src="assets/cover.png" alt="Briareus the Hundred-Handed: a bearded marble head with many reaching arms, in indigo halftone" width="100%">
-
-<h1>hermes-superagent</h1>
-
-<p><strong>One voice, a hundred hands.</strong></p>
+<img src="assets/readme-header.png" alt="hermes-superagent, one voice, a hundred hands. Briareus the Hundred-Handed: a bearded marble head with many reaching arms, in indigo halftone" width="100%">
 
 <p>A <a href="https://github.com/NousResearch/hermes-agent">Hermes Agent</a> plugin for when you run more agents than you can watch.<br>
 You talk to one router, and every task gets its own worker.<br>
