@@ -22,6 +22,7 @@ _DRIFT_SCHEMA = {
         "reason": {"type": "string"},
     },
     "required": ["verdict", "reason"],
+    "additionalProperties": False,
 }
 _ASSESS_SCHEMA = {
     "type": "object",
@@ -36,10 +37,12 @@ _ASSESS_SCHEMA = {
                     "goal": {"type": "string"},
                 },
                 "required": ["trigger_id", "rule", "goal"],
+                "additionalProperties": False,
             },
         }
     },
     "required": ["decisions"],
+    "additionalProperties": False,
 }
 _DRIFT_INSTRUCTIONS = (
     "You watch one worker for goal drift. Compare the worker's reports to the goal. Answer drifting only when "
