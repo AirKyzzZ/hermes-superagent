@@ -6,12 +6,10 @@ A Hermes Agent plugin that brings DeepSeek's Super-agent design to Hermes: one r
 
 ## Try it
 
-The offline demo takes about ten seconds and needs no Hermes, model, network or credentials:
+The demo is one command and about ten seconds. It needs [uv](https://docs.astral.sh/uv/), but no Hermes, model or credentials:
 
 ```bash
-git clone https://github.com/AirKyzzZ/hermes-superagent
-cd hermes-superagent
-python3 demo/run_demo.py
+uvx --from git+https://github.com/AirKyzzZ/hermes-superagent superagent-demo
 ```
 
 Run the ledger on your own sources, still without Hermes:

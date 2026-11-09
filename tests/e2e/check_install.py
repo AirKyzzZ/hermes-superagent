@@ -61,6 +61,11 @@ def check(tool: str, source: str, work: Path) -> None:
     run([str(bin_dir / "superagent"), "--home", str(home), "status"], work, clean_env)
     print(tool, "console script ran setup and status")
 
+    demo = run([str(bin_dir / "superagent-demo")], work, clean_env)
+    if "late report refused" not in demo or "still open: 0" not in demo:
+        raise SystemExit(f"superagent-demo did not reach its last scenes\n{demo}")
+    print(tool, "superagent-demo ran every scene")
+
 
 def main() -> int:
     parser = argparse.ArgumentParser(description="Install the package into clean venvs and use it away from the source")

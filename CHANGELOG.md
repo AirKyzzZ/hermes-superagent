@@ -34,7 +34,7 @@ The first version, built for the Hermes Plugin Hackathon. It needs Hermes 0.22.7
 
 - `hermes superagent` commands, including `setup`, `doctor`, `tick`, `status`, `ledger`, `agents`, `brief` and `briefs`.
 - A standalone `superagent` command, installable from git with `uv tool install` or `pip install`, for running the ledger without Hermes.
-- An offline demo, `demo/run_demo.py`, and three runnable examples under `examples/`, none of which need Hermes, a model, network or credentials.
+- A demo that runs with one command, `superagent-demo`, or `demo/run_demo.py` in a clone, and runnable examples under `examples/`. The demo and three of the examples need no Hermes, model, network or credentials.
 - CI running tests, lint and types on Linux and macOS, plugin validation, a real install and an end-to-end run with a fake model on real Hermes 0.22.7 and 0.23.0, and clean-venv install checks.
 
 ### Security
