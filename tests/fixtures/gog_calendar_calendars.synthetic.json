@@ -1,0 +1,35 @@
+{
+  "calendars": [
+    {
+      "kind": "calendar#calendarListEntry",
+      "etag": "\"1700000000000000\"",
+      "id": "owner@example.com",
+      "summary": "owner@example.com",
+      "summaryOverride": "Personal",
+      "timeZone": "Europe/Paris",
+      "colorId": "14",
+      "accessRole": "owner",
+      "defaultReminders": [{ "method": "popup", "minutes": 30 }],
+      "selected": true,
+      "primary": true
+    },
+    {
+      "kind": "calendar#calendarListEntry",
+      "etag": "\"1700000000000001\"",
+      "id": "team.example_abc123@group.calendar.google.com",
+      "summary": "Team",
+      "timeZone": "Europe/Paris",
+      "accessRole": "reader",
+      "selected": true
+    },
+    {
+      "kind": "calendar#calendarListEntry",
+      "etag": "\"1700000000000002\"",
+      "id": "en.french#holiday@group.v.calendar.google.com",
+      "summary": "Holidays in France",
+      "timeZone": "Europe/Paris",
+      "accessRole": "reader"
+    }
+  ],
+  "nextPageToken": ""
+}

@@ -10,7 +10,8 @@ from ..ledger import SourceItem, Upstream
 
 DEFAULT_EVERY_SECONDS = 300.0
 DEFAULT_NOTIFY = ("waiting", "stuck", "limited", "gone")
-UNTRUSTABLE = frozenset({"github", "gitlab", "gmail", "whatsapp", "agents"})
+UNTRUSTABLE = frozenset({"github", "gitlab", "gmail", "gcal", "whatsapp", "agents"})
+INFO_ONLY = frozenset({"gcal"})
 _DURATION = re.compile(r"^(\d+(?:\.\d+)?)([smhd])$")
 _UNITS = {"s": 1.0, "m": 60.0, "h": 3600.0, "d": 86400.0}
 COMMON_KEYS = frozenset(
@@ -74,13 +75,14 @@ class ConnectorType:
 
 
 def connector_types() -> dict[str, ConnectorType]:
-    from . import agents, command, github, gitlab, gmail, todoist, whatsapp
+    from . import agents, command, gcal, github, gitlab, gmail, todoist, whatsapp
 
     return {
         "command": ConnectorType(command.KEYS, command.build),
         "github": ConnectorType(github.KEYS, github.build),
         "gitlab": ConnectorType(gitlab.KEYS, gitlab.build),
         "gmail": ConnectorType(gmail.KEYS, gmail.build),
+        "gcal": ConnectorType(gcal.KEYS, gcal.build),
         "whatsapp": ConnectorType(whatsapp.KEYS, whatsapp.build),
         "todoist": ConnectorType(todoist.KEYS, todoist.build),
         "agents": ConnectorType(agents.KEYS, agents.build),
@@ -106,9 +108,11 @@ def parse_specs(section: object) -> tuple[ConnectorSpec, ...]:
             raise ConnectorConfigError(f"[connectors.{name}] type must be one of {sorted(types)}, got {kind!r}")
         if unknown := set(body) - COMMON_KEYS - types[kind].keys:
             raise ConnectorConfigError(f"unknown keys in [connectors.{name}]: {sorted(unknown)}")
-        track, owned = body.get("track", True), body.get("owned", kind == "agents")
+        track, owned = body.get("track", kind not in INFO_ONLY), body.get("owned", kind == "agents")
         if not isinstance(track, bool) or not isinstance(owned, bool):
             raise ConnectorConfigError(f"[connectors.{name}] track and owned must be true or false")
+        if track and kind in INFO_ONLY:
+            raise ConnectorConfigError(f"[connectors.{name}] {kind} is informational, so track can't be true")
         channel, detail = body.get("channel", ""), body.get("notify_detail", False)
         trusted = body.get("trusted", False)
         if not isinstance(detail, bool) or not isinstance(trusted, bool):
