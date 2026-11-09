@@ -41,6 +41,7 @@ class Poll:
     complete: bool
     cursor: str = ""
     problems: tuple[str, ...] = ()
+    notes: tuple[str, ...] = ()
 
 
 class Connector(Protocol):

@@ -48,6 +48,18 @@ def bare_machine(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
     return tmp_path / "sa"
 
 
+def test_setup_with_claude_code_but_no_hook_yet_passes_doctor(bare_machine: Path) -> None:
+    (Path.home() / ".claude").mkdir(parents=True)
+    assert main(["--home", str(bare_machine), "setup"]) == 0
+    check = named(diagnose(bare_machine), "agents")
+    assert check.status is Status.WARN and "hook" in check.detail
+    assert main(["--home", str(bare_machine), "doctor"]) == 0
+    runtime = open_runtime(bare_machine)
+    result = tick(runtime)
+    assert (result.errors, result.warnings) == ((), ())
+    assert runtime.ledger.source("agents").failures == 0
+
+
 def test_doctor_without_a_config_points_to_setup(tmp_path: Path) -> None:
     [check] = diagnose(tmp_path)
     assert check.status is Status.FAIL and "run superagent setup" in check.detail
@@ -137,7 +149,7 @@ def test_doctor_names_each_failure_and_never_records_items(
     assert named(checks, "tasks").status is Status.FAIL and "exited 3" in named(checks, "tasks").detail
     assert named(checks, "notes") == Check("notes", Status.OK, named(checks, "notes").detail)
     assert named(checks, "notes").detail.startswith("1 item in")
-    assert named(checks, "agents") == Check("agents", Status.FAIL, NOT_HOOKED.format(where=tmp_path / "no-sessions"))
+    assert named(checks, "agents") == Check("agents", Status.WARN, NOT_HOOKED.format(where=tmp_path / "no-sessions"))
     assert Ledger(home / DB_FILENAME).items() == []
     assert Ledger(home / DB_FILENAME).sources() == []
     assert main(["--home", str(home), "doctor", "--json"]) == 1
@@ -181,18 +193,19 @@ def test_doctor_reports_a_message_that_keeps_failing_to_send(tmp_path: Path) -> 
     assert outbox.status is Status.FAIL and "failed to send" in outbox.detail
 
 
-def test_an_agents_host_without_the_hook_fails_loudly(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+def test_an_agents_host_warns_until_its_hook_has_run(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     sessions = tmp_path / "sessions"
     monkeypatch.setenv("SUPERAGENT_SESSIONS_DIR", str(sessions))
     [spec] = parse_specs({"agents": {"type": "agents", "every": "0s"}})
     connector = build_connector(spec)
-    assert connector.poll("").problems == (NOT_HOOKED.format(where=sessions),)
+    unhooked = connector.poll("")
+    assert unhooked.notes == (NOT_HOOKED.format(where=sessions),) and not unhooked.problems and not unhooked.complete
     ledger = Ledger(tmp_path / "s.db")
     poll_sources(ledger, [spec], {spec.name: connector}, 60)
-    assert ledger.source("agents").failures == 1 and "hook" in ledger.source("agents").last_error
+    assert ledger.source("agents").failures == 0 and ledger.source("agents").last_error == ""
     sessions.mkdir()
     poll = connector.poll("")
-    assert poll.complete and poll.problems == ()
+    assert poll.complete and poll.notes == () and poll.problems == ()
 
 
 def test_setup_without_a_sender_refuses_channels_that_would_get_nothing(
@@ -265,3 +278,4 @@ def test_a_host_that_loses_its_hook_keeps_its_sessions_open(tmp_path: Path, monk
     [item] = ledger.items()
     assert item.is_open and item.missing_since is None
     assert ledger.source("agents").failures == 1 and str(sessions) in ledger.source("agents").last_error
+    assert connectors[spec.name].poll(ledger.source("agents").cursor).problems
