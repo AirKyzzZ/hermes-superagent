@@ -54,6 +54,8 @@ Three more one-command runs, also with no credentials, each with a recording:
 - [Night shift](examples/night-shift): six coding tasks handed off at night, and the one digest you read in the morning.
 - [Watchdog](examples/watchdog): five ways an agent gets stuck, and what catches each one.
 
+Then on your own data, read-only through your `gh` login: `python3 examples/your-github/run.py` lists what's open on your GitHub and what has waited longest.
+
 ## Why
 
 DeepSeek's article puts the limit at three to five active sessions: past that, a person's attention runs out before the models do. Here you never manage sessions.
