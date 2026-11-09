@@ -477,8 +477,8 @@ def register(ctx: Any) -> None:
         title="Super-agent digest",
         description="Each morning, send what got done, what waits on people and what record-mode rules would do.",
         category="work",
-        schedule_template="0 {hour} * * *",
+        schedule_template="{minute} {hour} * * *",
         prompt_template="Call superagent_digest with send set to true. Reply with nothing.",
-        slots=[{"name": "hour", "type": "text", "label": "Hour of the day", "default": "8"}],
+        slots=[{"name": "time", "type": "time", "label": "What time?", "default": "08:00"}],
         tags=["superagent", "digest"],
     )
