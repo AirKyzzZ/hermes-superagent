@@ -62,7 +62,7 @@ DeepSeek's article puts the limit at three to five active sessions: past that, a
 - **Efficient:** each task gets its own worker, so a new request never waits for an old one.
 - **Proactive:** events pass a gate on who sent them, then rules your team writes in plain language. A daily digest shows what each rule in record mode would have started, so you switch it to `act` only once it's right.
 - **Persistent:** state lives in SQLite, and a scheduled process outside the workers checks that the work is really moving.
-- **Nothing dropped:** connectors read GitHub, GitLab, Todoist, any tool that prints JSON, and every Claude Code session on your machines into a ledger, and triage rules file what comes in by area. An item stays open until its source confirms it closed or you close it with a reason, and a daily brief shows each open one at least every few days.
+- **Nothing dropped:** connectors read GitHub, GitLab, Todoist, Gmail, Google Calendar, WhatsApp, CodexBar, Anki, any tool that prints JSON, and every Claude Code session on your machines into a ledger, and triage rules file what comes in by area. An item stays open until its source confirms it closed or you close it with a reason, and a daily brief shows each open one at least every few days.
 
 A prompt or skill can only ask a model to stay in its lane, or to remember a task. Here the gate, the tool allowlist, fencing, the watchdog process and the ledger's completeness checks are code the model can't talk its way past or forget, which is why this has to be a plugin.
 
@@ -192,7 +192,7 @@ A live worker gets a nudge first, and it waits for that worker's next report, so
 
 ```mermaid
 flowchart TB
-    sources(["GitHub, GitLab, Todoist, any tool that prints JSON,<br/>Claude Code sessions over ssh"])
+    sources(["GitHub, GitLab, Todoist, Gmail, Calendar, WhatsApp,<br/>CodexBar, Anki, any tool that prints JSON,<br/>Claude Code sessions over ssh"])
     check{"Whole and plausible?<br/>no cut list, no shifting total,<br/>not shrunk by half"}
     ledger[("Item ledger<br/>new, triaged, assigned, waiting,<br/>done or ignored, always with a reason")]
     held["Nothing marked gone<br/>a shrunk snapshot waits for accept"]
@@ -499,7 +499,7 @@ If the gate itself fails, the message is dropped and logged, so a person gets si
 - [x] `setup`, `doctor`, and an offline demo of the ledger
 - [x] Todoist through the `td` CLI, with new tasks flagged every poll
 - [x] Gmail through `gog` and WhatsApp through `wacli`, built on synthetic data until real samples arrive
-- [ ] Calendar connectors
+- [x] Google Calendar through `gog`
 - [x] Worker briefs written from the ledger's context, challenged and linted
 - [x] Nudging sessions stopped by API errors or rate limits, off by default
 - [ ] Claude Code workers on tmux and cmux over ssh
