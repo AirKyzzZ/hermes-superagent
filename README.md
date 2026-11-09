@@ -2,18 +2,18 @@
 
 <img src="assets/readme-header.png" alt="hermes-superagent, one voice, a hundred hands. Briareus the Hundred-Handed: a bearded marble head with many reaching arms, in indigo halftone" width="100%">
 
-<p>A <a href="https://github.com/NousResearch/hermes-agent">Hermes Agent</a> plugin for when you run more agents than you can watch.<br>
-You talk to one router, and every task gets its own worker.<br>
-A watchdog outside them restarts or escalates the stuck ones,<br>
-and a ledger keeps every issue, task and Claude Code session until it's really closed.<br>
-Based on DeepSeek's <a href="https://mp.weixin.qq.com/s/zoS7GlReWPhfCjENGxXCdg">Super-agent design</a>.</p>
+**A plugin for [Hermes Agent](https://github.com/NousResearch/hermes-agent), Nous Research's AI agent, for when you run more agents than you can watch.**
+
+You message one coordinator (the router) in chat, and every task goes to its own isolated agent. A separate process restarts the ones that hang and tells you when it can't fix them. A ledger keeps every issue, task and Claude Code session listed until its source confirms it closed, and [that part runs without Hermes](#install).
+
+Based on DeepSeek's [Super-agent design](https://github.com/deepseek-ai/dsh-superagent-prototype).
 
 <p>
 <a href="https://github.com/AirKyzzZ/hermes-superagent/actions/workflows/ci.yml"><img alt="CI status" src="https://img.shields.io/github/actions/workflow/status/AirKyzzZ/hermes-superagent/ci.yml?branch=main&style=flat-square&label=CI&labelColor=14142a"></a>
 <a href="LICENSE"><img alt="MIT licence" src="https://img.shields.io/github/license/AirKyzzZ/hermes-superagent?style=flat-square&label=license&labelColor=14142a&color=1a10b8"></a>
 <a href="pyproject.toml"><img alt="Python 3.11 or newer" src="https://img.shields.io/badge/python-3.11%2B-1a10b8?style=flat-square&labelColor=14142a"></a>
 <a href="plugin.yaml"><img alt="Hermes plugin, requires 0.22.7 or newer" src="https://img.shields.io/badge/Hermes_plugin-%3E%3D0.22.7-1a10b8?style=flat-square&labelColor=14142a"></a>
-<a href="docs/hackathon.md"><img alt="Built for the Hermes Agent Plugin Hackathon" src="https://img.shields.io/badge/built_for-Hermes_Plugin_Hackathon-1a10b8?style=flat-square&labelColor=14142a"></a>
+<a href="https://x.com/NousResearch/status/2118094256438936062"><img alt="Built for the Hermes Agent Plugin Hackathon" src="https://img.shields.io/badge/built_for-Hermes_Plugin_Hackathon-1a10b8?style=flat-square&labelColor=14142a"></a>
 </p>
 
 <p>
@@ -36,7 +36,7 @@ Based on DeepSeek's <a href="https://mp.weixin.qq.com/s/zoS7GlReWPhfCjENGxXCdg">
 
 ## Quickstart
 
-One command and about ten seconds. No Hermes, model or credentials: the workers are scripted. You need [uv](https://docs.astral.sh/uv/) on macOS or Linux, and it fetches a newer Python if yours is too old.
+One command and about ten seconds. No Hermes, model or credentials: only the agents and the source data are scripted. The gate, router, watchdog, ledger and SQLite store are the real code, and each worker is a real process. You need [uv](https://docs.astral.sh/uv/) on macOS or Linux, and it fetches a newer Python if yours is too old.
 
 ```bash
 uvx --from git+https://github.com/AirKyzzZ/hermes-superagent superagent-demo
