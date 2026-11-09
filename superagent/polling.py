@@ -24,6 +24,7 @@ QUIET_AT_FIRST_SIGHT = frozenset({"gone", "ended"})
 class SourceWarning:
     key: str
     text: str
+    immediate: bool = True
 
 
 class PollProblem(RuntimeError):

@@ -30,6 +30,8 @@ LINE_CHARS = 500
 ISSUES_KEPT = 8
 QUOTE_MIN = 12
 QUOTE_MAX = 200
+STEP_ATTEMPTS = 2
+SCHEMA_MISMATCH = "structured output did not match schema"
 REPORT_CONTRACT = (
     "Report through superagent_report: progress as you go, blocked with one clear question, "
     "and ready with what changed and how you checked it."
@@ -42,7 +44,7 @@ _TLDS = (
 )
 _HOST = r"(?<![\w.@/-])(?:[a-z0-9-]+\.)+(?:[a-z]{2,63}/[^\s<>`'\"]*|(?:" + _TLDS + r")(?![\w.-]))"
 _COMMAND_START = re.compile(
-    r"(?i)\b(?:curl|wget|sudo|ssh|scp|rsync|ncat|nc|telnet|eval|exec|chmod|chown|mkfs|powershell|iex|npx|uvx|pipx|"
+    r"(?i)\b(?:curl|wget|sudo|ssh|scp|rsync|ncat|nc|telnet|eval|exec|chmod|chown|mk(?:e2)?fs|powershell|iex|npx|uvx|pipx|"
     r"bunx|base64\s+-d|rm\s+-\w+|dd\s+if=|(?:ba|z|da|k)?sh\s+(?:-c\b|\S+\.sh\b)|python\d*\s+-c|perl\s+-e|"
     r"node\s+-e|pip\d*\s+install|npm\s+(?:i|install|exec)|pnpm\s+(?:add|dlx)|yarn\s+(?:add|dlx)|cargo\s+install|"
     r"go\s+install|gem\s+install|uv\s+(?:add|pip\s+install|tool\s+install)|poetry\s+add|brew\s+install|"
@@ -274,19 +276,25 @@ class BriefWriter:
         return WrittenBrief(render(pack, revised, failures), failures, issues, pack.untrusted, revised)
 
     def _call(self, instructions: str, text: str, schema: Mapping[str, object], step: str) -> Mapping[str, object]:
-        result = self.llm.complete_structured(
-            instructions=instructions,
-            input=[{"type": "text", "text": text}],
-            json_schema=schema,
-            purpose=f"superagent.briefs.{step}",
-            temperature=0.2,
-            max_tokens=4000,
-            timeout=MODEL_TIMEOUT_SECONDS,
-        )
-        parsed = getattr(result, "parsed", None)
-        if not isinstance(parsed, Mapping):
-            raise BriefError(f"the {step} step returned nothing usable")
-        return parsed
+        for attempt in range(1, STEP_ATTEMPTS + 1):
+            try:
+                result = self.llm.complete_structured(
+                    instructions=instructions,
+                    input=[{"type": "text", "text": text}],
+                    json_schema=schema,
+                    purpose=f"superagent.briefs.{step}",
+                    temperature=0.2,
+                    max_tokens=8000,
+                    timeout=MODEL_TIMEOUT_SECONDS,
+                )
+            except ValueError as error:
+                if SCHEMA_MISMATCH in str(error) and attempt < STEP_ATTEMPTS:
+                    continue
+                raise
+            parsed = getattr(result, "parsed", None)
+            if isinstance(parsed, Mapping):
+                return parsed
+        raise BriefError(f"the {step} step returned nothing usable")
 
 
 def _as_data(label: str, text: str) -> str:

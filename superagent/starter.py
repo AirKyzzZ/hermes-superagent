@@ -24,6 +24,7 @@ class Choices:
     agents: bool = False
     gitlab: bool = False
     todoist: bool = False
+    codexbar: bool = False
 
 
 def detect(hermes: str, *, alerts: str = "", brief: str = "", agents_channel: str = "", timezone: str = "") -> Choices:
@@ -36,6 +37,7 @@ def detect(hermes: str, *, alerts: str = "", brief: str = "", agents_channel: st
         github=which("gh") is not None,
         gitlab=which("glab") is not None,
         todoist=which("td") is not None,
+        codexbar=which("codexbar") is not None,
         agents=bool(agents_channel) or which("claude") is not None or (Path.home() / ".claude").is_dir(),
     )
 
@@ -76,6 +78,8 @@ def starter_config(choices: Choices) -> str:
         if choices.alerts:
             todoist += ["announce_new = true", f"channel = {json.dumps(choices.alerts, ensure_ascii=False)}"]
         blocks.append("\n".join(todoist))
+    if choices.codexbar:
+        blocks.append('[connectors.codexbar]\ntype = "codexbar"\nevery = "1h"')
     if choices.agents:
         agents = ["[connectors.agents]", 'type = "agents"', 'every = "90s"']
         if choices.agents_channel:
@@ -120,6 +124,7 @@ def next_steps(home: Path, choices: Choices, cli: str) -> str:
         ("github", choices.github),
         ("gitlab", choices.gitlab),
         ("todoist", choices.todoist),
+        ("codexbar", choices.codexbar),
         ("agents", choices.agents),
     )
     found = [name for name, on in detected if on]
