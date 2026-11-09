@@ -479,7 +479,8 @@ def test_padding_cannot_push_recent_reports_out_of_the_judges_view() -> None:
     ],
 )
 def test_broken_judge_never_triggers_a_repair(llm: FakeLlm) -> None:
-    assert LlmDriftJudge(llm).judge("g", (report_of("s"),)).verdict is Verdict.ON_TRACK
+    judgement = LlmDriftJudge(llm).judge("g", (report_of("s"),))
+    assert (judgement.verdict, judgement.failed) == (Verdict.ON_TRACK, True)
 
 
 def test_assessor_requires_rules_and_a_usable_answer() -> None:

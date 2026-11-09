@@ -90,11 +90,14 @@ _MIGRATIONS = (
     "ALTER TABLE outbox ADD COLUMN next_attempt_at REAL",
     "ALTER TABLE outbox ADD COLUMN drop_reason TEXT",
     "UPDATE outbox SET failed_at = NULL WHERE sent_at IS NULL AND failed_at IS NOT NULL AND drop_reason IS NULL",
+    "ALTER TABLE watchdog_events ADD COLUMN judged TEXT NOT NULL DEFAULT ''",
 )
 SEND_RETRY_BASE_SECONDS = 60.0
 SEND_RETRY_CAP_SECONDS = 1800.0
 MESSAGE_LIMIT = 1900
 ALERT_TICKET = "alert"
+JUDGE_OK = "ok"
+JUDGE_FAILED = "failed"
 SEND_FIRST_RETRY_SECONDS = 30.0
 
 
@@ -728,14 +731,21 @@ class Store:
         return float(row["at"]) if row["at"] is not None else None
 
     def add_watchdog_event(
-        self, assignment_id: str, ticket_id: str, verdict: str, action: RepairAction, reason: str
+        self, assignment_id: str, ticket_id: str, verdict: str, action: RepairAction, reason: str, judged: str = ""
     ) -> None:
         with self._connect() as connection:
             connection.execute(
-                "INSERT INTO watchdog_events (assignment_id, ticket_id, verdict, action, reason, at) "
-                "VALUES (?,?,?,?,?,?)",
-                (assignment_id, ticket_id, verdict, action.value, reason, time.time()),
+                "INSERT INTO watchdog_events (assignment_id, ticket_id, verdict, action, reason, at, judged) "
+                "VALUES (?,?,?,?,?,?,?)",
+                (assignment_id, ticket_id, verdict, action.value, reason, time.time(), judged),
             )
+
+    def last_judge_failure(self) -> str | None:
+        with self._connect() as connection:
+            row = connection.execute(
+                "SELECT judged, reason FROM watchdog_events WHERE judged != '' ORDER BY seq DESC LIMIT 1"
+            ).fetchone()
+        return str(row["reason"]) if row is not None and row["judged"] == JUDGE_FAILED else None
 
     def repair_count(self, ticket_id: str, action: RepairAction) -> int:
         with self._connect() as connection:
