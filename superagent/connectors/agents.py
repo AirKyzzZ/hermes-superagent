@@ -18,6 +18,7 @@ GONE_CLOSES_AFTER_SECONDS = 3600.0
 NUDGE_TEXT = re.compile(r"[A-Za-z0-9][A-Za-z0-9 .,!?-]{0,199}")
 ACT_MARGIN_SECONDS = 10.0
 NOT_HOOKED = "no Claude Code hook has written to {where} on this host, install it with superagent agents --hook-script"
+HOOK_SEEN = "hook seen"
 _BASE_ENV = ("PATH", "HOME", "LANG", "LC_ALL", "TMPDIR", "USER", "SSH_AUTH_SOCK")
 
 
@@ -77,10 +78,13 @@ class AgentsConnector:
                     meta=meta,
                 )
             )
-        if report.get("hooked") is not True:
-            where = str(report.get("sessions_dir") or "the sessions folder")
-            return Poll(tuple(items), complete=False, problems=(NOT_HOOKED.format(where=where),))
-        return Poll(tuple(items), complete=True)
+        if report.get("hooked") is True:
+            return Poll(tuple(items), complete=True, cursor=HOOK_SEEN)
+        where = str(report.get("sessions_dir") or "the sessions folder")
+        missing = (NOT_HOOKED.format(where=where),)
+        if cursor == HOOK_SEEN:
+            return Poll(tuple(items), complete=False, cursor=HOOK_SEEN, problems=missing)
+        return Poll(tuple(items), complete=False, notes=missing)
 
     def confirm(self, external_id: str) -> Upstream:
         return Upstream.CLOSED

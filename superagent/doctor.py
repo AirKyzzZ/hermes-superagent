@@ -152,6 +152,8 @@ def _poll(runtime: Runtime, spec: ConnectorSpec) -> Check:
         return Check(spec.name, Status.FAIL, str(error) or type(error).__name__)
     if result.problems:
         return Check(spec.name, Status.FAIL, "; ".join(result.problems[:PROBLEMS_SHOWN]))
+    if result.notes:
+        return Check(spec.name, Status.WARN, "; ".join(result.notes[:PROBLEMS_SHOWN]))
     took = time.monotonic() - started
     count = len(result.items)
     return Check(spec.name, Status.OK, f"{count} item{'' if count == 1 else 's'} in {took:.1f}s")
