@@ -13,9 +13,12 @@ Changelog = "https://github.com/AirKyzzZ/hermes-superagent/blob/main/CHANGELOG.m
 
 [project.scripts]
 superagent = "superagent.cli:main"
+superagent-demo = "superagent.demo.run_demo:main"
 
-[tool.setuptools.packages.find]
-include = ["superagent*"]
+[tool.setuptools]
+packages = ["superagent", "superagent.agents", "superagent.connectors", "superagent.demo"]
+package-dir = { "superagent.demo" = "demo" }
+package-data = { "superagent.demo" = ["*.template"] }
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

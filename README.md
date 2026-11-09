@@ -36,15 +36,13 @@ Based on DeepSeek's <a href="https://mp.weixin.qq.com/s/zoS7GlReWPhfCjENGxXCdg">
 
 ## Quickstart
 
-Three commands and about ten seconds. No Hermes, model, network or credentials: the workers are scripted. You need Python 3.11+ on macOS or Linux.
+One command and about ten seconds. No Hermes, model or credentials: the workers are scripted. You need [uv](https://docs.astral.sh/uv/) on macOS or Linux, and it fetches a newer Python if yours is too old.
 
 ```bash
-git clone https://github.com/AirKyzzZ/hermes-superagent
-cd hermes-superagent
-python3 demo/run_demo.py
+uvx --from git+https://github.com/AirKyzzZ/hermes-superagent superagent-demo
 ```
 
-If your `python3` is older, as on a stock Mac, `uv run --no-project --python 3.12 demo/run_demo.py` fetches a newer one. To point the ledger at your own GitHub issues, still without Hermes, go to [Install](#install).
+No uv? With Python 3.11+, clone the repo and run `python3 demo/run_demo.py`. To point the ledger at your own GitHub issues, still without Hermes, go to [Install](#install).
 
 ## Examples
 
