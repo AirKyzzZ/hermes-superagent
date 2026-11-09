@@ -4,7 +4,7 @@ Where this is going and where help is most useful. What's already done is ticked
 
 ## Now
 
-- **A first live run.** CI proves the router and worker path on real Hermes with a fake model. A real model and chat platform haven't driven it yet.
+- **A real chat message through the router.** CI proves the router and worker path on real Hermes with a fake model, and [one recorded run](docs/live-run.md) took a worker, the watchdog and a Discord relay through a real model. That task skipped the router's model turn, so a message on a real chat platform is next.
 - **The Hermes Plugin Hackathon entry,** due 2026-11-11.
 
 ## Connectors

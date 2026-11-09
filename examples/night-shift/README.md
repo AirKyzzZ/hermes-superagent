@@ -17,4 +17,4 @@ python3 examples/night-shift/run.py
 
 The gate, the router, the watchdog, the worker processes, the digest, the sessions connector and its probe are the production code, and `tick` runs as the same `python -m superagent tick` you'd put on a timer. The agents are [scripted](../scripted_agent.py), the session logs are written by [`run.py`](run.py), and the ticks run back to back instead of every 2 minutes.
 
-On a real install each worker is a Hermes session. That path has run on real Hermes with a fake model in CI, and not yet with a live model, see the warning in the [main README](../../README.md#why).
+On a real install each worker is a Hermes session. That path runs on real Hermes with a fake model in CI, and [one recorded run](../../docs/live-run.md) took a worker through it with a real model, see the warning in the [main README](../../README.md#why).

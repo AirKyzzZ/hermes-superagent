@@ -47,7 +47,7 @@ The first version, built for the Hermes Plugin Hackathon. It needs Hermes 0.22.7
 
 ### Known limits
 
-- No live model or real chat platform has driven it end to end yet. CI runs the whole path on real Hermes with a fake model.
+- CI runs the whole path on real Hermes with a fake model. [One recorded run](docs/live-run.md) on a real model covers the brief writer, a worker, the watchdog and a relay to Discord. The router's own model turn, an incoming chat message, the drift judge and the watchdog's repairs haven't run live.
 - Gmail and WhatsApp were built on synthetic data until real samples arrive.
 - Workers that are Claude Code sessions in tmux or cmux over ssh aren't implemented.
 

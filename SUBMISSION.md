@@ -9,13 +9,11 @@ Hermes Agent Plugin Hackathon. Due Wednesday 2026-11-11 at 23:00 Paris (22:00 UT
 | Plugin on `main`, CI green on Ubuntu, macOS and real Hermes | Done | |
 | `hermes plugins install` passes Hermes's scan without `--force` | Done | |
 | Catalog entry and PR text | Ready | Pin the commit at submission |
-| Run on a live model | Missing | Hermes runs [section 6 of the install guide](docs/dogfood-install.md#6-the-live-model-run) on the VPS, then its public transcript goes in [docs/live-run.md](docs/live-run.md) |
+| Run on a live model | Done | Part A is [recorded](docs/live-run.md). It found one bug, fixed in #69 |
 | Demo video under 90 seconds | Missing | The video work is separate from this repo |
 | Catalog PR | Owner | Step 1 |
 | Post on X | Owner | Step 2 |
 | Form | Owner | Step 3 |
-
-Do the live run before filming and before pinning the commit: if it turns up a bug, the fix has to be in the pinned commit.
 
 ## 1. Catalog PR
 
@@ -43,6 +41,7 @@ That replaces both the `sha` and the commit in the `image` URL. The PR changes t
 ## 2. Demo video on X
 
 - Under 90 seconds, showing the plugin working.
+- It can say that CI runs the whole path on real Hermes with a fake model and that one recorded run used real Hermes and a real model. It can't say a chat message has gone through the router on a live model.
 - Posted on X, with @NousResearch tagged in the post.
 - Keep the post's URL for the form.
 

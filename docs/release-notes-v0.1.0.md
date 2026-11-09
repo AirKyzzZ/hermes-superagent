@@ -46,7 +46,7 @@ It runs the worker, delivery and connector commands you configure, spends tokens
 
 ## Not proven yet
 
-No live model or real chat platform has driven it end to end. CI runs the whole router and worker path on real Hermes with a fake model. Gmail and WhatsApp were built on synthetic data.
+CI runs the whole router and worker path on real Hermes with a fake model. [One recorded run](live-run.md) on a real model covers the brief writer, a worker, the watchdog and a relay to Discord. The router's own model turn, an incoming chat message, the drift judge and the watchdog's repairs haven't run live. Gmail and WhatsApp were built on synthetic data.
 
 ## Thanks
 
