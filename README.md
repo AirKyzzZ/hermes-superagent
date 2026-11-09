@@ -18,6 +18,7 @@ Based on DeepSeek's <a href="https://mp.weixin.qq.com/s/zoS7GlReWPhfCjENGxXCdg">
 
 <p>
 <a href="#quickstart">Quickstart</a> ·
+<a href="#examples">Examples</a> ·
 <a href="#why">Why</a> ·
 <a href="#architecture">Architecture</a> ·
 <a href="#features">Features</a> ·
@@ -45,6 +46,16 @@ python3 demo/run_demo.py
 
 If your `python3` is older, as on a stock Mac, `uv run --no-project --python 3.12 demo/run_demo.py` fetches a newer one. To point the ledger at your own GitHub issues, still without Hermes, go to [Install](#install).
 
+## Examples
+
+Three more one-command runs, also with no credentials, each with a recording:
+
+- [Nothing slips](examples/nothing-slips): four mornings across GitHub, Todoist, Gmail and WhatsApp, where a broken export and a deleted task don't lose anything.
+- [Night shift](examples/night-shift): six coding tasks handed off at night, and the one digest you read in the morning.
+- [Watchdog](examples/watchdog): five ways an agent gets stuck, and what catches each one.
+
+Then on your own data, read-only through your `gh` login: `python3 examples/your-github/run.py` lists what's open on your GitHub and what has waited longest.
+
 ## Why
 
 DeepSeek's article puts the limit at three to five active sessions: past that, a person's attention runs out before the models do. Here you never manage sessions.
@@ -69,6 +80,8 @@ A prompt or skill can only ask a model to stay in its lane, or to remember a tas
 - **...use another orchestration plugin?** nerve, agora and diaktoros are further along and each solves a different problem, see the [comparison](#comparison).
 
 ## Architecture
+
+The [architecture page](docs/architecture.md) has the whole system on one map, who decides what, each phase of a tick and what happens when a part breaks. Here's the short version:
 
 ```mermaid
 flowchart TB
@@ -227,12 +240,13 @@ hermes superagent --home ~/superagent setup --alerts discord:ALERTS_CHANNEL_ID
 hermes superagent --home ~/superagent doctor
 ```
 
-No Hermes yet? The ledger runs from the clone with the same commands, and `brief` prints what's open instead of sending it. With `gh` logged in, this lists your open issues, pull requests and review requests:
+No Hermes yet? Install the CLI on its own and run the same commands, and `brief` prints what's open instead of sending it. `pip install git+https://github.com/AirKyzzZ/hermes-superagent` works as well, and in a clone `python3 -m superagent` needs no install. With `gh` logged in, this lists your open issues, pull requests and review requests:
 
 ```bash
-python3 -m superagent --home ~/superagent setup
-python3 -m superagent --home ~/superagent doctor
-python3 -m superagent --home ~/superagent tick && python3 -m superagent --home ~/superagent brief
+uv tool install git+https://github.com/AirKyzzZ/hermes-superagent
+superagent --home ~/superagent setup
+superagent --home ~/superagent doctor
+superagent --home ~/superagent tick && superagent --home ~/superagent brief
 ```
 
 `setup` writes a starter `superagent.toml` from what the machine has: a GitHub sweep when `gh` is installed and the agents board when Claude Code is, sending through the same `hermes`. It never overwrites a config. `doctor` checks the config, delivery, the timer and alerts, runs each connector's poll once without recording anything, and exits non-zero when something fails. Then run `hermes superagent --home ~/superagent tick` every 2 minutes. [The shadow install guide](docs/dogfood-install.md) has a systemd timer, other machines and the Claude Code hook.
@@ -360,7 +374,7 @@ The rendered prompt becomes the goal, the comment's author is checked against `a
 | `[[triage]] match`, `area`, `ignore`, `name` | none | Rules for new items, the first match wins. `match` maps item fields (`connector`, `title`, `url`, `id`, `due`, `excerpt`) or meta keys such as `repo`, `labels` or `from` to a glob or a list of globs, ignoring case, where only `*` and `?` are wildcards. `labels`, `matched` and `tags` match on any one of their comma-separated parts, and an empty field never matches. `area` files the item there as triaged, and `ignore` sets it aside with that reason, which the next brief lists. An item no rule matches stays new and shows in every brief until someone decides. Rules also file new items already in the ledger, and never touch one someone moved |
 | `[areas.<name>] channel` | none | Where one "New in <area>" message per tick lists what rules filed there, up to 20 items. Once any area is listed, rules can only name listed areas |
 | `[channels] briefs`, `[briefs] notes`, `repos`, `daily_limit` | none, none, none, `20` | `superagent briefs <item>` writes the brief a worker would start from. Code builds a pack of numbered pieces, each marked trusted or not: the item, its issue text and comments (only the owner's own are trusted), related ledger items, its history, `notes`, and where `repos` says the code lives (keys are `owner/repo` for GitHub and `gitlab:group/project` for GitLab). The model drafts, a second call challenges it as a skeptical senior engineer, and a third revises. Code then checks that every line cites a real piece, quotes match their piece, there's an acceptance criterion, nothing looks like a secret, and every address, host, IP, account, shell command and multi-word code span appears in trusted text, after undoing lookalike characters. The first line says READY, NEEDS APPROVAL when any piece is untrusted, or NOT READY with the lint's findings at the end. A quote in the owner's own comment stays untrusted, and so does anything posted through an app. Briefs are cached until the pack or the writer changes, `daily_limit` caps new ones with failed attempts included, and `--send` posts it to `briefs` |
-| `[connectors.<name>] type` | required | `command`, `github`, `gitlab`, `todoist`, `gmail`, `gcal`, `whatsapp`, `codexbar`, `anki` or `agents`. A connector polls one tool into the item ledger |
+| `[connectors.<name>] type` | required | `command`, `github`, `gitlab`, `todoist`, `gmail`, `gcal`, `whatsapp`, `codexbar`, `anki` or `agents`. A connector polls one tool into the item ledger. [docs/connectors.md](docs/connectors.md) has a copy-paste block for each |
 | `[connectors.<name>] every` | `5m` | How often it polls |
 | `[connectors.<name>] track` | `true` | `false` keeps its items, such as readings or events, without anyone owning them |
 | `[connectors.<name>] quiet_after` | off, required for delta sources | Warns when the source has had nothing new for this long |

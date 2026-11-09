@@ -9,7 +9,7 @@ Where this is going and where help is most useful. What's already done is ticked
 
 ## Connectors
 
-Each connector reads one tool into the ledger, so nothing it shows gets lost. Most can start as a `command` block with no code, see [CONTRIBUTING.md](CONTRIBUTING.md#add-a-connector). "Info" sources show in the brief without anyone owning their items.
+Each connector reads one tool into the ledger, so nothing it shows gets lost. [docs/connectors.md](docs/connectors.md) has a copy-paste block for each one that's done. Most new ones can start as a `command` block with no code, see [CONTRIBUTING.md](CONTRIBUTING.md#add-a-connector). "Info" sources show in the brief without anyone owning their items.
 
 | Source | Likely tool | An item is | State |
 | --- | --- | --- | --- |
