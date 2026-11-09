@@ -111,7 +111,12 @@ def write_session_logs(directory: Path) -> None:
     now = time.time()
     sessions: dict[str, dict[str, object]] = {
         "checkout": {"t": now - 3 * MINUTE, "event": "PreToolUse", "tool": "Edit"},
-        "docs-site": {"t": now - 41 * MINUTE, "event": "PermissionRequest", "text": "permission for Bash: npm publish"},
+        "docs-site": {
+            "t": now - 41 * MINUTE,
+            "event": "Notification",
+            "notification": "permission_prompt",
+            "text": "permission for Bash: npm publish",
+        },
         "api-gateway": {"t": now - 35 * MINUTE, "event": "PreToolUse", "tool": "Bash"},
         "billing": {
             "t": now - 26 * MINUTE,
