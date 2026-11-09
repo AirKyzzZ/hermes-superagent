@@ -11,7 +11,7 @@ from pathlib import Path
 import pytest
 
 from superagent.cli import main
-from superagent.config import CONFIG_FILENAME, DB_FILENAME, LAST_GOOD_FILENAME, parse_config
+from superagent.config import CONFIG_FILENAME, DB_FILENAME, LAST_GOOD_FILENAME, ConfigError, parse_config
 from superagent.connectors import build_connector, parse_specs
 from superagent.connectors.agents import NOT_HOOKED
 from superagent.doctor import Check, Status, diagnose
@@ -87,6 +87,17 @@ def test_the_starter_config_carries_the_channels_and_the_tools_found() -> None:
         ("github", "github", ""),
         ("agents", "agents", "discord:3"),
     ]
+
+
+def test_setup_without_a_brief_channel_keeps_the_timezone(bare_machine: Path) -> None:
+    assert main(["--home", str(bare_machine), "setup", "--timezone", "Europe/Paris"]) == 0
+    config = parse_config((bare_machine / CONFIG_FILENAME).read_text(encoding="utf-8"))
+    assert (config.brief_channel, config.brief_timezone) == ("", "Europe/Paris")
+
+
+def test_a_brief_hour_with_no_channel_is_still_refused() -> None:
+    with pytest.raises(ConfigError, match="no brief would ever be sent"):
+        parse_config("[brief]\nhour = 8\n")
 
 
 def test_setup_through_hermes_sends_through_that_hermes(
