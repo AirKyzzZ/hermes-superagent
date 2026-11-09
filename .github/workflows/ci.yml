@@ -91,13 +91,3 @@ jobs:
           python-version: "3.14"
       - name: pip and uv install it into clean venvs
         run: uv run --no-project python tests/e2e/check_install.py --work "$RUNNER_TEMP/install"
-      - name: Install Hermes at the latest release
-        uses: ./.github/actions/install-hermes
-        with:
-          pin: 2bd378ed1b8d6bf2192cb26e0a55ff3091e6bd19
-      - name: Hermes finds the pip-installed plugin through its entry point
-        run: |
-          uv pip install --python "$RUNNER_TEMP/hermes-src/.venv/bin/python" .
-          hermes plugins enable hermes-superagent
-          hermes plugins list | grep hermes-superagent
-          hermes superagent --help

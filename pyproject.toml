@@ -14,9 +14,6 @@ Changelog = "https://github.com/AirKyzzZ/hermes-superagent/blob/main/CHANGELOG.m
 [project.scripts]
 superagent = "superagent.cli:main"
 
-[project.entry-points."hermes_agent.plugins"]
-hermes-superagent = "superagent.plugin"
-
 [tool.setuptools.packages.find]
 include = ["superagent*"]
 

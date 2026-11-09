@@ -23,8 +23,6 @@ assert site in Path(superagent.__file__).resolve().parents, superagent.__file__
 assert callable(superagent.plugin.register)
 for script in (superagent.agents.HOOK_SCRIPT, superagent.agents.PROBE_SCRIPT, superagent.agents.RELAUNCH_SCRIPT):
     assert script.is_file(), script
-entries = {entry.name: entry for entry in metadata.entry_points(group="hermes_agent.plugins")}
-assert entries["hermes-superagent"].load() is superagent.plugin
 print("installed", metadata.version("hermes-superagent"), "from", Path(superagent.__file__).parent)
 """
 
