@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import argparse
 import os
+import shutil
 import subprocess
 import sys
 import tempfile
@@ -35,6 +36,13 @@ def run(command: list[str], cwd: Path, env: dict[str, str] | None = None) -> str
     return done.stdout
 
 
+def buildable_source(source: str, work: Path) -> str:
+    if not Path(source).is_dir():
+        return source
+    skip = shutil.ignore_patterns(".git", ".claude", ".venv", "build", "dist", "*.egg-info", "__pycache__")
+    return str(shutil.copytree(source, work / "source", ignore=skip))
+
+
 def check(tool: str, source: str, work: Path) -> None:
     venv = work / tool
     bin_dir = venv / "bin"
@@ -64,8 +72,9 @@ def main() -> int:
 
     work = (args.work or Path(tempfile.mkdtemp(prefix="superagent-install-"))).resolve()
     work.mkdir(parents=True, exist_ok=True)
+    source = buildable_source(args.source, work)
     for tool in ("pip", "uv"):
-        check(tool, args.source, work)
+        check(tool, source, work)
     return 0
 
 

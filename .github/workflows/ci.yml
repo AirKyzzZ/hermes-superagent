@@ -55,6 +55,10 @@ jobs:
           mkdir -p "$entry_dir"
           sed "s/0000000000000000000000000000000000000000/$GITHUB_SHA/g" docs/catalog-entry.yaml > "$entry_dir/hermes-superagent.yaml"
           uv run --no-project --with ruamel.yaml==0.18.17 python "$RUNNER_TEMP/hermes-src/scripts/validate_plugin_catalog.py" "$entry_dir/hermes-superagent.yaml"
+      - name: A non-interactive install from the checkout goes through, install scan included
+        run: |
+          hermes plugins install "file://$GITHUB_WORKSPACE" --enable </dev/null
+          hermes superagent --help
 
   e2e:
     name: e2e (${{ matrix.hermes.version }})
