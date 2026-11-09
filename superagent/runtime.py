@@ -212,10 +212,14 @@ def _run_phases(runtime: Runtime, judge: DriftJudge | None, assessor: Assessor |
             errors.append(f"assess: {error}")
     try:
         checks = check_once(runtime.router, judge, runtime.config.watchdog)
+    except Exception as error:
+        logger.exception("watchdog check failed")
+        errors.append(f"watchdog: {error}")
+    try:
         if failure := runtime.store.last_judge_failure():
             warnings.append(SourceWarning(JUDGE_ALERT_KEY, f"watchdog: {failure}", immediate=False))
     except Exception as error:
-        logger.exception("watchdog check failed")
+        logger.exception("reading the drift judge's last result failed")
         errors.append(f"watchdog: {error}")
     try:
         delivered = runtime.router.relay(argv_sender(runtime.config.send_argv))

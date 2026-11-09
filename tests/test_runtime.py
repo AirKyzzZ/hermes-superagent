@@ -3,6 +3,7 @@ from __future__ import annotations
 import fcntl
 import json
 import os
+import sqlite3
 import stat
 import sys
 from collections.abc import Sequence
@@ -16,6 +17,7 @@ from superagent.domain import RepairAction, ReportState, Trigger
 from superagent.gate import SemanticRule
 from superagent.router import ASSESS_ATTEMPTS, MAX_ASSESS_BATCH, Assessment, Router
 from superagent.runtime import Runtime, _alert_key, open_runtime, tick
+from superagent.store import Store
 from superagent.worker import IDENTITY_FILENAME
 
 from .conftest import FakeBackend
@@ -227,6 +229,42 @@ def test_one_failed_judgement_waits_out_the_alert_delay(tmp_path: Path) -> None:
     runtime, _ = failing_judge_runtime(tmp_path, 300)
     assert "watchdog: drift judge unavailable: provider down" in tick(runtime, judge=FailingJudge()).warnings
     assert judge_alerts(runtime) == []
+
+
+def test_a_crashing_watchdog_check_keeps_the_judge_warning_up(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    runtime, _ = failing_judge_runtime(tmp_path, 0)
+    failure = "watchdog: drift judge unavailable: provider down"
+    tick(runtime, judge=FailingJudge())
+
+    def crash(*args: object, **kwargs: object) -> None:
+        raise OSError("could not start a worker")
+
+    monkeypatch.setattr("superagent.runtime.check_once", crash)
+    result = tick(runtime, judge=FailingJudge())
+    assert failure in result.warnings
+    assert judge_alerts(runtime) == [f"Alert: {failure}"]
+
+
+def stamped_version(path: Path, version: int | None = None) -> int:
+    connection = sqlite3.connect(path)
+    try:
+        if version is not None:
+            connection.execute(f"PRAGMA user_version = {version}")
+        return int(connection.execute("PRAGMA user_version").fetchone()[0])
+    finally:
+        connection.close()
+
+
+def test_a_database_an_older_process_stamped_back_still_opens(tmp_path: Path) -> None:
+    path = tmp_path / "s.db"
+    Store(path)
+    newest = stamped_version(path)
+    stamped_version(path, newest - 1)
+    Store(path)
+    assert stamped_version(path) == newest
+    stamped_version(path, newest + 5)
+    Store(path)
+    assert stamped_version(path) == newest + 5
 
 
 def test_an_error_keeps_its_alert_key_when_only_its_ids_change() -> None:
