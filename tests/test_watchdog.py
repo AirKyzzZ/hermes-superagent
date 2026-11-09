@@ -5,7 +5,7 @@ import pytest
 from superagent.domain import Assignment, RepairAction, Report, ReportState, TicketStatus, Trigger, Verdict
 from superagent.router import Router
 from superagent.store import StaleAssignmentError
-from superagent.watchdog import Judgement, WatchdogPolicy, check_once
+from superagent.watchdog import Judgement, NoDriftJudge, WatchdogPolicy, check_once
 from superagent.worker import WorkerStopError
 
 from .conftest import FakeBackend, unlabelled
@@ -190,18 +190,27 @@ class FailingJudge:
         return Judgement(Verdict.ON_TRACK, "drift judge unavailable: provider down", failed=True)
 
 
-def test_a_failed_judgement_leaves_the_worker_alone_but_is_flagged(router: Router, backend: FakeBackend) -> None:
+def test_a_failed_judgement_leaves_the_worker_alone_and_stays_failed_until_one_succeeds(
+    router: Router, backend: FakeBackend
+) -> None:
     router.ingest(REQUEST)
     report(router, backend, "working")
     result = check_once(router, judge=FailingJudge())[0]
-    assert (result.verdict, result.action, result.judge_failed) == (Verdict.ON_TRACK, RepairAction.NONE, True)
+    assert (result.verdict, result.action) == (Verdict.ON_TRACK, RepairAction.NONE)
+    assert router.store.last_judge_failure() == "drift judge unavailable: provider down"
+    check_once(router, judge=FailingJudge())
+    assert router.store.last_judge_failure() == "drift judge unavailable: provider down"
+    report(router, backend, "still working")
+    check_once(router, judge=NoDriftJudge())
+    assert router.store.last_judge_failure() is None
 
 
 def test_a_failed_judge_does_not_hide_a_stuck_worker(router: Router, backend: FakeBackend) -> None:
     router.ingest(REQUEST)
     report(router, backend, "same", 3)
     result = check_once(router, judge=FailingJudge())[0]
-    assert (result.verdict, result.action, result.judge_failed) == (Verdict.STUCK, RepairAction.NUDGE, False)
+    assert (result.verdict, result.action) == (Verdict.STUCK, RepairAction.NUDGE)
+    assert router.store.last_judge_failure() is None
 
 
 def test_repeated_identical_tool_calls_count_as_stuck(router: Router, backend: FakeBackend) -> None:

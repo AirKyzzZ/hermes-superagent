@@ -209,6 +209,10 @@ def test_a_failed_drift_judge_is_a_tick_error_that_alerts(tmp_path: Path) -> Non
     assert "watchdog: drift judge unavailable: provider down" in result.errors
     alerts = [message.text for message in runtime.store.pending_outbox() if message.channel == "discord:alerts"]
     assert alerts == ["Alert: watchdog: drift judge unavailable: provider down"]
+    quiet = tick(runtime, judge=FailingJudge())
+    assert "watchdog: drift judge unavailable: provider down" in quiet.errors
+    judge_alerts = [m.text for m in runtime.store.pending_outbox() if "drift judge" in m.text]
+    assert judge_alerts == ["Alert: watchdog: drift judge unavailable: provider down"]
 
 
 def test_an_error_keeps_its_alert_key_when_only_its_ids_change() -> None:
