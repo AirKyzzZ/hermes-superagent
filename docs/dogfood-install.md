@@ -25,7 +25,7 @@ hermes plugins enable hermes-superagent
 mkdir -p ~/superagent ~/.superagent
 ```
 
-The install takes the repo's `main`, so it has every connector named below. If the plugin was installed earlier, `install` stops and `update` brings it to `main`.
+The install takes the repo's `main`, so it has every connector named below. If the plugin was installed earlier, `install` stops and `update` brings it to `main`. Don't restart the gateway, whatever the install suggests: nothing below needs it, and a restart stops every running agent.
 
 Hermes scans a plugin before installing it, and a non-interactive install stops at a `CAUTION` verdict and asks for `--force`. The plugin passes that scan on the Hermes release CI pins. If a newer Hermes stops on it, read the `HIGH` lines: when each one is in `tests/` or `docs/`, or is a pattern in `superagent/briefwriter.py` or `superagent/framing.py` that the plugin uses to catch risky text, run the same install again with `--force`. A `HIGH` line anywhere else, or a `DANGEROUS` verdict, means stop and send the scan back.
 
@@ -247,18 +247,18 @@ Fill the `PATH` with `dirname "$(command -v hermes)"`, `dirname "$(command -v td
 
 CI runs everything on real Hermes with a fake model. This run swaps in the real one. Part A needs none of sections 1 to 5: it uses two throwaway profiles and a made-up task, so its transcript holds nothing private and can be published. Part B installs the plugin in the live profile and writes a brief for one of the owner's real items, and its output stays private.
 
-Run each block as one terminal call with a 600-second timeout, in order. Every block after the first loads the same values file, so it also works in a fresh shell. A block that prints an error stops the run: send its output back rather than working around it.
+Run each block as one terminal call with a 600-second timeout, in order. Every block after the first loads the same values file, so it also works in a fresh shell. Unless the text after a block says how to handle it, an error stops the run: send its output back rather than working around it.
 
 ### Part A: the public run
 
-Check that the default profile answers, and that it can post to the test channel:
+Check that the default profile answers, and that it can post to the Discord channel made for this run. Put that channel's id in place of `TEST_CHANNEL_ID`, here and in the next block. It's the only value this part needs:
 
 ```bash
 hermes chat -Q -q "reply ok"
 hermes send -q --to discord:TEST_CHANNEL_ID -- "superagent live-run test"
 ```
 
-Write the run's folder, its values and the recorder. Put the test channel's id in place of `TEST_CHANNEL_ID`; it's the only value this part needs:
+Write the run's folder, its values and the recorder:
 
 ```bash
 mkdir -p ~/superagent-live/bin
@@ -298,7 +298,7 @@ rec git -C ~/.hermes/profiles/sa-worker/plugins/hermes-superagent rev-parse HEAD
 
 `plugins.load_timeout_seconds` gives the plugin longer than the default 10 seconds to load on a busy machine. A profile whose first load timed out keeps running without the plugin until its gateway stops.
 
-If an install stops at the security scan, section 1 says what to do.
+`plugins install` prints an error when the plugin is already there, and the `update` after it covers that. If an install stops at the security scan, section 1 says what to do.
 
 Write the plugin's config and one made-up issue for the brief writer. The issue reads like one from another person, with a request to skip review buried in it:
 
@@ -419,7 +419,7 @@ ITEM=$(hermes superagent --home ~/superagent ledger list | awk 'NR==1 {print $1}
 hermes superagent --home ~/superagent briefs "$ITEM"
 ```
 
-If the install stops at the security scan, section 1 says what to do. The file is left alone when it already exists, and `setup` or section 2 can add to it later. If a tick says `"skipped": true`, the timer holds the lock; run it again. `doctor` names any source that fails and the others still load, so a connector whose tool isn't set up can come out of the file.
+Don't restart the gateway, whatever the install suggests: these commands don't need it, and a restart stops every running agent. If the install stops at the security scan, section 1 says what to do. The file is left alone when it already exists, and `setup` or section 2 can add to it later. If a tick says `"skipped": true`, the timer holds the lock; run it again. `doctor` names any source that fails and the others still load, so a connector whose tool isn't set up can come out of the file.
 
 The brief's first line reads `READY`, `NEEDS APPROVAL` or `NOT READY`. An issue written by someone else should come out `NEEDS APPROVAL`, with anything the lint found listed at the end. Send back only: `doctor`'s output, the tick's `errors` and `warnings`, the number of items, and the brief's first line. The brief itself holds private text, so it stays on the machine.
 
