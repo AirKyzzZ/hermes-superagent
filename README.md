@@ -69,7 +69,7 @@ DeepSeek's article puts the limit at three to five active sessions: past that, a
 A prompt or skill can only ask a model to stay in its lane, or to remember a task. Here the gate, the tool allowlist, fencing, the watchdog process and the ledger's completeness checks are code the model can't talk its way past or forget, which is why this has to be a plugin.
 
 > [!WARNING]
-> Early build. The router and worker path has never run with a live model. CI runs it on real Hermes v0.22.7 with a fake model: a gateway message passes the gate, the router dispatches, workers overlap, report, get guarded, fenced and stopped for real, and the watchdog relays the result. The ledger, its connectors and the agents board don't need a model, only `superagent briefs` does.
+> Early build. The router and worker path has never run with a live model. CI runs it on real Hermes 0.22.7 and 0.23.0 with a fake model: a gateway message passes the gate, the router dispatches, workers overlap, report, get guarded, fenced and stopped for real, and the watchdog relays the result. The ledger, its connectors and the agents board don't need a model, only `superagent briefs` does.
 
 ## Why not just...
 
@@ -260,7 +260,7 @@ Needs Hermes 0.22.7 or newer on macOS or Linux. These steps haven't been run end
 
 <br>
 
-Install and enable it in each profile. The install scanner reports one caution, the sanitizer regex in `framing.py`, and asks you to confirm:
+Install and enable it in each profile:
 
 ```bash
 for p in router worker watchdog; do
