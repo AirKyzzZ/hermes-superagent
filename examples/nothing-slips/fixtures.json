@@ -1,0 +1,51 @@
+{
+  "sources": {
+    "github": [
+      { "id": "acme/shop#412", "title": "Checkout returns 500 when the cart is empty", "status": "open" },
+      { "id": "acme/shop#418", "title": "Refund webhook retries forever", "status": "open" },
+      { "id": "acme/shop#421", "title": "Review requested: move sessions to Redis", "status": "open" }
+    ],
+    "todoist": [
+      { "id": "t-1", "title": "Renew the acme.dev domain", "status": "open" },
+      { "id": "t-2", "title": "Pay the accountant", "status": "open" },
+      { "id": "t-3", "title": "Book the dentist", "status": "open" },
+      { "id": "t-4", "title": "Send the October invoice", "status": "open" },
+      { "id": "t-5", "title": "Fix the backup job", "status": "open" },
+      { "id": "t-6", "title": "Order new office keys", "status": "open" }
+    ],
+    "gmail": [
+      { "id": "mail-1", "title": "Landlord: can you confirm the December rent date?", "status": "open" },
+      { "id": "mail-2", "title": "Accountant: Q3 receipts are still missing", "status": "open" }
+    ],
+    "whatsapp": [
+      { "id": "chat-1", "title": "Priya: are we still on for the supplier call?", "status": "open", "state": "waiting" },
+      { "id": "chat-2", "title": "Sam: contract sent, can you sign by Friday?", "status": "open", "state": "waiting" }
+    ]
+  },
+  "mornings": [
+    {
+      "day": "Monday",
+      "story": "First sweep of four tools."
+    },
+    {
+      "day": "Tuesday",
+      "story": "#418 was closed. Overnight the Todoist export broke and returned 2 of 6 tasks.",
+      "broken": ["todoist"],
+      "done": { "github": ["acme/shop#418"] },
+      "new": {
+        "gmail": [{ "id": "mail-3", "title": "Supplier: quote expires on Thursday", "status": "open" }]
+      }
+    },
+    {
+      "day": "Wednesday",
+      "story": "The export is back. You finished one task and deleted another by mistake. The #418 fix was reverted.",
+      "done": { "todoist": ["t-2"] },
+      "deleted": { "todoist": ["t-5"] },
+      "reopened": { "github": ["acme/shop#418"] }
+    },
+    {
+      "day": "Thursday",
+      "story": "Nothing changed. This is the day a list quietly goes stale."
+    }
+  ]
+}

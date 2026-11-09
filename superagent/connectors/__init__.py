@@ -11,7 +11,7 @@ from ..ledger import SourceItem, Upstream
 DEFAULT_EVERY_SECONDS = 300.0
 DEFAULT_NOTIFY = ("waiting", "stuck", "limited", "gone")
 UNTRUSTABLE = frozenset({"github", "gitlab", "gmail", "gcal", "whatsapp", "agents"})
-INFO_ONLY = frozenset({"gcal", "codexbar"})
+INFO_ONLY = frozenset({"gcal", "codexbar", "anki"})
 _DURATION = re.compile(r"^(\d+(?:\.\d+)?)([smhd])$")
 _UNITS = {"s": 1.0, "m": 60.0, "h": 3600.0, "d": 86400.0}
 COMMON_KEYS = frozenset(
@@ -75,7 +75,7 @@ class ConnectorType:
 
 
 def connector_types() -> dict[str, ConnectorType]:
-    from . import agents, codexbar, command, gcal, github, gitlab, gmail, todoist, whatsapp
+    from . import agents, anki, codexbar, command, gcal, github, gitlab, gmail, todoist, whatsapp
 
     return {
         "command": ConnectorType(command.KEYS, command.build),
@@ -84,6 +84,7 @@ def connector_types() -> dict[str, ConnectorType]:
         "gmail": ConnectorType(gmail.KEYS, gmail.build),
         "gcal": ConnectorType(gcal.KEYS, gcal.build),
         "codexbar": ConnectorType(codexbar.KEYS, codexbar.build),
+        "anki": ConnectorType(anki.KEYS, anki.build),
         "whatsapp": ConnectorType(whatsapp.KEYS, whatsapp.build),
         "todoist": ConnectorType(todoist.KEYS, todoist.build),
         "agents": ConnectorType(agents.KEYS, agents.build),

@@ -17,3 +17,7 @@ elif provider:
     print(json.dumps(fixture["providers"].get(provider, [])))
 else:
     print(json.dumps(fixture["enabled"]))
+    if isinstance(fixture["enabled"], list) and any(
+        "error" in entry for entry in fixture["enabled"] if isinstance(entry, dict)
+    ):
+        sys.exit(1)

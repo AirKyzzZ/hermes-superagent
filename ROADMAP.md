@@ -9,7 +9,7 @@ Where this is going and where help is most useful. What's already done is ticked
 
 ## Connectors
 
-Each connector reads one tool into the ledger, so nothing it shows gets lost. Most can start as a `command` block with no code, see [CONTRIBUTING.md](CONTRIBUTING.md#add-a-connector). "Info" sources show in the brief without anyone owning their items.
+Each connector reads one tool into the ledger, so nothing it shows gets lost. [docs/connectors.md](docs/connectors.md) has a copy-paste block for each one that's done. Most new ones can start as a `command` block with no code, see [CONTRIBUTING.md](CONTRIBUTING.md#add-a-connector). "Info" sources show in the brief without anyone owning their items.
 
 | Source | Likely tool | An item is | State |
 | --- | --- | --- | --- |
@@ -23,7 +23,7 @@ Each connector reads one tool into the ledger, so nothing it shows gets lost. Mo
 | Any calendar shared as a link | an ICS URL | an event, info | Wanted |
 | WhatsApp | `wacli`, read only | a chat with a listed contact whose last message isn't yours, closed once you reply | In review, [#36](https://github.com/AirKyzzZ/hermes-superagent/pull/36) |
 | Zepp | a `command` preset | last night's sleep and other daily readings, info | Wanted |
-| Anki | a `command` preset | today's due cards, info | Wanted |
+| Anki | AnkiConnect through `curl` | today's due cards, info | Done |
 | CodexBar | `codexbar` | coding-agent usage and quota, info | Done |
 
 Mail and chat never start work on their own, because anyone can write to you. The owner can still assign an item from them. Something else you'd want in the ledger, such as Linear, Jira or a Markdown task file? [Open a connector issue](https://github.com/AirKyzzZ/hermes-superagent/issues/new?template=connector.yml).
