@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import re
 import time
 from collections.abc import Mapping
@@ -7,7 +8,7 @@ from dataclasses import dataclass
 
 from ..ledger import SourceItem, Upstream
 from . import ConnectorConfigError, ConnectorError, ConnectorSpec, Poll
-from .process import run_json
+from .process import CommandFailed, run_json
 
 KEYS = frozenset({"providers", "codexbar", "timeout", "env"})
 WINDOWS = ("primary", "secondary", "tertiary")
@@ -48,12 +49,23 @@ class CodexbarConnector:
     def _usage(self, provider: str, deadline: float) -> list[object]:
         selector = ["--provider", provider] if provider else []
         argv = [*self.command, "usage", "--format", "json", "--no-color", *selector]
-        result = run_json(argv, self.env_names, deadline - time.monotonic())
+        try:
+            result = run_json(argv, self.env_names, deadline - time.monotonic())
+        except CommandFailed as failure:
+            result = _printed_despite(failure)
         if not isinstance(result, list):
             raise ConnectorError("codexbar returned an unexpected shape")
         if not result:
             raise ConnectorError("codexbar reported no provider")
         return result
+
+
+def _printed_despite(failure: CommandFailed) -> object:
+    # codexbar exits 1 when any one provider errors, and still prints every reading
+    try:
+        return json.loads(failure.stdout)
+    except ValueError:
+        raise failure from None
 
 
 def _reading(entry: object) -> SourceItem | None:
