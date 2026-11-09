@@ -31,7 +31,7 @@ The form can go in as soon as the PR is open. Catalog checks run once a maintain
 
 ## Before submitting
 
-**Still open before the demo:** one run with a live model and a real chat platform, [section 6 of the install guide](dogfood-install.md#6-the-live-model-run). CI already runs the whole path on real Hermes with a fake model. [SUBMISSION.md](../SUBMISSION.md) tracks what's left.
+**Tested so far:** CI runs the whole path on real Hermes with a fake model. [One recorded run](live-run.md) on Hermes 0.23.0 and a real model wrote a brief, took a task through a worker and the watchdog, and relayed the result to Discord. The router's own model turn and an incoming chat message haven't run live. [SUBMISSION.md](../SUBMISSION.md) tracks what's left.
 
 | Catalog rule | State | Evidence |
 | --- | --- | --- |

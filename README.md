@@ -75,7 +75,7 @@ DeepSeek's article puts the limit at three to five active sessions: past that, a
 A prompt or skill can only ask a model to stay in its lane, or to remember a task. Here the gate, the tool allowlist, fencing, the watchdog process and the ledger's completeness checks are code the model can't talk its way past or forget, which is why this has to be a plugin.
 
 > [!WARNING]
-> Early build. The router and worker path has never run with a live model. CI runs it on real Hermes 0.22.7 and 0.23.0 with a fake model: a webhook event goes through the real gateway and the gate to the router, the router dispatches, workers overlap, report, get guarded, fenced and stopped for real, and the watchdog relays the result to a stub. Chat platforms, `hermes send` and the watchdog's nudge, restart and escalate haven't run on real Hermes, and unit tests and the demo cover those three repairs. The Gmail, Google Calendar and WhatsApp connectors have only run on synthetic data. The ledger, its connectors and the agents board don't need a model, only `hermes superagent briefs` does.
+> Early build. CI runs the router and worker path on real Hermes 0.22.7 and 0.23.0 with a fake model: a webhook event goes through the real gateway and the gate to the router, the router dispatches, workers overlap, report, get guarded, fenced and stopped for real, and the watchdog relays the result to a stub. [One recorded run](docs/live-run.md) on Hermes 0.23.0 and a real model wrote a worker brief, took one task through a real worker and the watchdog, and relayed the result to Discord with `hermes send`. That task came in through `superagent ingest`, so no chat message has reached the router's model yet, and the watchdog's drift judge didn't fire. The watchdog's nudge, restart and escalate haven't run on real Hermes, and unit tests and the demo cover those three repairs. The Gmail, Google Calendar and WhatsApp connectors have only run on synthetic data. The ledger, its connectors and the agents board don't need a model, only `hermes superagent briefs` does.
 
 ## Why not just...
 
@@ -493,7 +493,8 @@ If the gate itself fails, the message is dropped and logged, so a person gets si
 - [x] Cancel on request, and a task label on every message
 - [x] A daily digest, including what record-mode rules would have done
 - [x] The router's path from a webhook through the gateway to relay, proven the same way
-- [ ] First live run with a model and gateway
+- [x] First recorded run on a real model, see [the transcript](docs/live-run.md)
+- [ ] A real chat message through the router on a live model
 - [x] GitHub and other webhook sources
 - [x] Item ledger with GitHub and command connectors, source health and a daily brief, see [the dogfood design](docs/dogfood-design.md)
 - [x] Agents board for Claude Code sessions on several machines
