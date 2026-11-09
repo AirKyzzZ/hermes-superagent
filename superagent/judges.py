@@ -74,15 +74,15 @@ class LlmDriftJudge:
                 json_schema=_DRIFT_SCHEMA,
                 purpose="superagent.watchdog.drift",
                 temperature=0.0,
-                max_tokens=200,
+                max_tokens=1000,
                 timeout=MODEL_TIMEOUT_SECONDS,
             )
         except Exception as error:
             logger.warning("drift judge unavailable: %s", error)
-            return Judgement(Verdict.ON_TRACK, f"drift judge unavailable: {error}")
+            return Judgement(Verdict.ON_TRACK, f"drift judge unavailable: {error}", failed=True)
         parsed = result.parsed
         if not isinstance(parsed, dict) or parsed.get("verdict") not in (Verdict.ON_TRACK, Verdict.DRIFTING):
-            return Judgement(Verdict.ON_TRACK, "drift judge returned nothing usable")
+            return Judgement(Verdict.ON_TRACK, "drift judge returned nothing usable", failed=True)
         return Judgement(Verdict(parsed["verdict"]), str(parsed.get("reason", ""))[:300])
 
 
@@ -104,7 +104,7 @@ class LlmAssessor:
             json_schema=_ASSESS_SCHEMA,
             purpose="superagent.triggers.assess",
             temperature=0.0,
-            max_tokens=2000,
+            max_tokens=4000,
             timeout=MODEL_TIMEOUT_SECONDS,
         )
         parsed = result.parsed
