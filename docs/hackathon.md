@@ -80,6 +80,6 @@ Disclosure, also in the README:
 - Spends tokens on the profile's model during ticks, and three calls per worker brief, capped per day.
 - Writes its database and worker directories under the configured home.
 - Inert until a profile sets a role. No telemetry, no network calls of its own, no stored credentials.
-- The install scan's verdict is `safe`. Its medium and low findings are `subprocess` calls in the worker backend and tests, and the sanitizer regex in `framing.py`.
+- The install scan's verdict is `safe`, with no high or critical findings. Its medium and low findings are pattern hits in the code that runs commands the operator configures, in docs, tests, examples and CI, and in the lint and sanitizer patterns themselves.
 - `assets/art` holds the scripts that built the cover from a public-domain Met image. The plugin never runs them.
 ```
