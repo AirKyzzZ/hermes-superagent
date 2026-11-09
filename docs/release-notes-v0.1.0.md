@@ -36,7 +36,7 @@ With no role set, the plugin's hooks do nothing and it offers no tools.
 - **A router that can't execute.** A tool allowlist in code, and a sender gate that never reads message text.
 - **One worker per task.** Isolated sessions that report only to the router, with follow-ups passed through and blocked tasks parked until someone answers.
 - **A watchdog outside the workers.** It checks real progress and goal drift, then nudges, restarts or escalates within a budget. Old workers are fenced before they're stopped.
-- **A ledger that keeps everything.** GitHub, GitLab, Todoist, Gmail, Google Calendar, WhatsApp, coding-agent quota, any tool that prints JSON, and every Claude Code session on your machines. A poll that can't prove it's complete marks nothing gone.
+- **A ledger that keeps everything.** GitHub, GitLab, Todoist, Gmail, Google Calendar, WhatsApp, coding-agent quota, Anki, any tool that prints JSON, and every Claude Code session on your machines. A poll that can't prove it's complete marks nothing gone.
 - **A daily brief** that lists every open item at least every few days.
 - **Worker briefs** written from the ledger's context, challenged by a second model call and linted in code against untrusted text.
 

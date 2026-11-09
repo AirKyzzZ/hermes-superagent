@@ -22,7 +22,7 @@ The first version, built for the Hermes Plugin Hackathon. It needs Hermes 0.22.7
 #### Ledger and connectors
 
 - An item ledger that never deletes an item. Closing or ignoring one takes a reason, and every change is kept with the content it saw.
-- Connectors for GitHub (`gh`), GitLab (`glab`), Todoist (`td`), Gmail and Google Calendar (`gog`), WhatsApp (`wacli`), coding-agent quota (`codexbar`) and any tool that prints JSON.
+- Connectors for GitHub (`gh`), GitLab (`glab`), Todoist (`td`), Gmail and Google Calendar (`gog`), WhatsApp (`wacli`), coding-agent quota (`codexbar`), Anki (AnkiConnect) and any tool that prints JSON.
 - Polls that can't prove they're complete mark nothing gone, and vanished items are checked one by one.
 - An agents board of every Claude Code session on your machines, from a small hook and a read-only probe over ssh.
 - Triage rules that file new items into areas.
@@ -34,8 +34,8 @@ The first version, built for the Hermes Plugin Hackathon. It needs Hermes 0.22.7
 
 - `hermes superagent` commands, including `setup`, `doctor`, `tick`, `status`, `ledger`, `agents`, `brief` and `briefs`.
 - A standalone `superagent` command, installable from git with `uv tool install` or `pip install`, for running the ledger without Hermes.
-- An offline demo, `demo/run_demo.py`, that needs no Hermes, model, network or credentials.
-- CI running tests, lint and types on Linux and macOS, plugin validation and an end-to-end run with a fake model on real Hermes 0.22.7 and 0.23.0, and clean-venv install checks.
+- An offline demo, `demo/run_demo.py`, and three runnable examples under `examples/`, none of which need Hermes, a model, network or credentials.
+- CI running tests, lint and types on Linux and macOS, plugin validation, a real install and an end-to-end run with a fake model on real Hermes 0.22.7 and 0.23.0, and clean-venv install checks.
 
 ### Security
 
