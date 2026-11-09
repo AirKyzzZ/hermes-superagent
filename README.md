@@ -236,12 +236,13 @@ hermes superagent --home ~/superagent setup --alerts discord:ALERTS_CHANNEL_ID
 hermes superagent --home ~/superagent doctor
 ```
 
-No Hermes yet? The ledger runs from the clone with the same commands, and `brief` prints what's open instead of sending it. With `gh` logged in, this lists your open issues, pull requests and review requests:
+No Hermes yet? Install the CLI on its own and run the same commands, and `brief` prints what's open instead of sending it. `pip install git+https://github.com/AirKyzzZ/hermes-superagent` works as well, and in a clone `python3 -m superagent` needs no install. With `gh` logged in, this lists your open issues, pull requests and review requests:
 
 ```bash
-python3 -m superagent --home ~/superagent setup
-python3 -m superagent --home ~/superagent doctor
-python3 -m superagent --home ~/superagent tick && python3 -m superagent --home ~/superagent brief
+uv tool install git+https://github.com/AirKyzzZ/hermes-superagent
+superagent --home ~/superagent setup
+superagent --home ~/superagent doctor
+superagent --home ~/superagent tick && superagent --home ~/superagent brief
 ```
 
 `setup` writes a starter `superagent.toml` from what the machine has: a GitHub sweep when `gh` is installed and the agents board when Claude Code is, sending through the same `hermes`. It never overwrites a config. `doctor` checks the config, delivery, the timer and alerts, runs each connector's poll once without recording anything, and exits non-zero when something fails. Then run `hermes superagent --home ~/superagent tick` every 2 minutes. [The shadow install guide](docs/dogfood-install.md) has a systemd timer, other machines and the Claude Code hook.

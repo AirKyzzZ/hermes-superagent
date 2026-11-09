@@ -11,3 +11,6 @@ __pycache__/
 .DS_Store
 assets/art/sources/
 assets/avatar.png
+build/
+dist/
+*.egg-info/
