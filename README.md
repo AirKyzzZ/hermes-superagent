@@ -79,6 +79,8 @@ A prompt or skill can only ask a model to stay in its lane, or to remember a tas
 
 ## Architecture
 
+The [architecture page](docs/architecture.md) has the whole system on one map, who decides what, each phase of a tick and what happens when a part breaks. Here's the short version:
+
 ```mermaid
 flowchart TB
     people(["People on chat"])
