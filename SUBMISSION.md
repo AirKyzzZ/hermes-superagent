@@ -25,7 +25,11 @@ Pick the final commit once nothing else is about to merge, and check CI passed o
 git -C /path/to/hermes-superagent fetch origin
 sha=$(git -C /path/to/hermes-superagent rev-parse origin/main)
 gh run list --repo AirKyzzZ/hermes-superagent --commit "$sha"
+git -C /path/to/hermes-superagent checkout "$sha"
+hermes plugins validate /path/to/hermes-superagent --install-deps
 ```
+
+The last line is the check the catalog's CI runs, and it must pass.
 
 In a fork of `NousResearch/hermes-agent`, on a new branch:
 
