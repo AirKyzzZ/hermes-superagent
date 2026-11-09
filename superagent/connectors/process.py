@@ -11,6 +11,12 @@ from . import ConnectorError
 BASE_ENV = ("PATH", "HOME", "LANG", "LC_ALL", "TMPDIR", "USER", "XDG_CONFIG_HOME", "XDG_DATA_HOME")
 
 
+class CommandFailed(ConnectorError):
+    def __init__(self, message: str, stdout: str) -> None:
+        super().__init__(message)
+        self.stdout = stdout
+
+
 def run_json(argv: Sequence[str], env_names: Sequence[str], timeout: float, stdin: str | None = None) -> object:
     stdout = run_text(argv, env_names, timeout, stdin)
     try:
@@ -48,5 +54,5 @@ def run_text(
         process.communicate()
         raise ConnectorError(f"{argv[0]} took longer than {timeout:g}s") from error
     if process.returncode != 0:
-        raise ConnectorError(f"{argv[0]} exited {process.returncode}: {stderr.strip()[-200:]}")
+        raise CommandFailed(f"{argv[0]} exited {process.returncode}: {stderr.strip()[-200:]}", stdout)
     return stdout

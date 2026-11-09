@@ -1,0 +1,13 @@
+[sources.chat]
+policy = "explicit_only"
+allow = ["you"]
+
+[worker]
+argv = ["@PYTHON@", "@HERE@/../scripted_agent.py", "{brief}"]
+
+[watchdog]
+stall_after_seconds = 4
+repeat_limit = 3
+repeated_call_limit = 5
+nudge_budget = 1
+restart_budget = 1
