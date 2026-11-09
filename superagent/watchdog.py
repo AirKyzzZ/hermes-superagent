@@ -7,7 +7,7 @@ from typing import Protocol
 from .domain import Assignment, AssignmentStatus, RepairAction, Report, Ticket, Verdict
 from .framing import frame_untrusted
 from .router import Router
-from .store import Store
+from .store import JUDGE_FAILED, JUDGE_OK, Store
 from .worker import WorkerBackend, WorkerStopError
 
 _NO_ASSIGNMENT = "none"
@@ -38,6 +38,7 @@ class Evidence:
 class Judgement:
     verdict: Verdict
     reason: str
+    failed: bool = False
 
 
 @dataclass(frozen=True)
@@ -138,15 +139,19 @@ def check_once(
             if parked is not None:
                 results.append(parked)
             continue
-        judgement = judge_deterministically(evidence, active_policy) or _judge_semantically(
-            active_judge, ticket, evidence
-        )
+        deterministic = judge_deterministically(evidence, active_policy)
+        judgement = deterministic or _judge_semantically(active_judge, ticket, evidence)
+        judged = ""
+        if judge is not None and deterministic is None and evidence.has_news:
+            judged = JUDGE_FAILED if judgement.failed else JUDGE_OK
         action = (
             RepairAction.NONE
             if judgement.verdict is Verdict.ON_TRACK
             else choose_repair(router.store, ticket, evidence, active_policy)
         )
-        router.store.add_watchdog_event(assignment.id, ticket.id, judgement.verdict.value, action, judgement.reason)
+        router.store.add_watchdog_event(
+            assignment.id, ticket.id, judgement.verdict.value, action, judgement.reason, judged
+        )
         if action is not RepairAction.NONE:
             try:
                 apply_repair(action, router, ticket, assignment, judgement)

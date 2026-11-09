@@ -13,12 +13,12 @@ Based on DeepSeek's <a href="https://mp.weixin.qq.com/s/zoS7GlReWPhfCjENGxXCdg">
 <a href="LICENSE"><img alt="MIT licence" src="https://img.shields.io/github/license/AirKyzzZ/hermes-superagent?style=flat-square&label=license&labelColor=14142a&color=1a10b8"></a>
 <a href="pyproject.toml"><img alt="Python 3.11 or newer" src="https://img.shields.io/badge/python-3.11%2B-1a10b8?style=flat-square&labelColor=14142a"></a>
 <a href="plugin.yaml"><img alt="Hermes plugin, requires 0.22.7 or newer" src="https://img.shields.io/badge/Hermes_plugin-%3E%3D0.22.7-1a10b8?style=flat-square&labelColor=14142a"></a>
-<a href="tests"><img alt="655 tests" src="https://img.shields.io/badge/tests-655-1a10b8?style=flat-square&labelColor=14142a"></a>
 <a href="docs/hackathon.md"><img alt="Built for the Hermes Agent Plugin Hackathon" src="https://img.shields.io/badge/built_for-Hermes_Plugin_Hackathon-1a10b8?style=flat-square&labelColor=14142a"></a>
 </p>
 
 <p>
 <a href="#quickstart">Quickstart</a> ·
+<a href="#examples">Examples</a> ·
 <a href="#why">Why</a> ·
 <a href="#architecture">Architecture</a> ·
 <a href="#features">Features</a> ·
@@ -36,15 +36,23 @@ Based on DeepSeek's <a href="https://mp.weixin.qq.com/s/zoS7GlReWPhfCjENGxXCdg">
 
 ## Quickstart
 
-Three commands and about ten seconds. No Hermes, model, network or credentials: the workers are scripted. You need Python 3.11+ on macOS or Linux.
+One command and about ten seconds. No Hermes, model or credentials: the workers are scripted. You need [uv](https://docs.astral.sh/uv/) on macOS or Linux, and it fetches a newer Python if yours is too old.
 
 ```bash
-git clone https://github.com/AirKyzzZ/hermes-superagent
-cd hermes-superagent
-python3 demo/run_demo.py
+uvx --from git+https://github.com/AirKyzzZ/hermes-superagent superagent-demo
 ```
 
-If your `python3` is older, as on a stock Mac, `uv run --no-project --python 3.12 demo/run_demo.py` fetches a newer one. To point the ledger at your own GitHub issues, still without Hermes, go to [Install](#install).
+No uv? With Python 3.11+, clone the repo and run `python3 demo/run_demo.py`. To point the ledger at your own GitHub issues, still without Hermes, go to [Install](#install).
+
+## Examples
+
+Three more one-command runs, also with no credentials, each with a recording:
+
+- [Nothing slips](examples/nothing-slips): four mornings across GitHub, Todoist, Gmail and WhatsApp, where a broken export and a deleted task don't lose anything.
+- [Night shift](examples/night-shift): six coding tasks handed off at night, and the one digest you read in the morning.
+- [Watchdog](examples/watchdog): five ways an agent gets stuck, and what catches each one.
+
+Then on your own data, read-only through your `gh` login: `python3 examples/your-github/run.py` lists what's open on your GitHub and what has waited longest.
 
 ## Why
 
@@ -59,7 +67,7 @@ DeepSeek's article puts the limit at three to five active sessions: past that, a
 A prompt or skill can only ask a model to stay in its lane, or to remember a task. Here the gate, the tool allowlist, fencing, the watchdog process and the ledger's completeness checks are code the model can't talk its way past or forget, which is why this has to be a plugin.
 
 > [!WARNING]
-> Early build. The router and worker path has never run with a live model. CI runs it on real Hermes v0.22.7 with a fake model: a gateway message passes the gate, the router dispatches, workers overlap, report, get guarded, fenced and stopped for real, and the watchdog relays the result. The ledger, its connectors and the agents board don't need a model, only `superagent briefs` does.
+> Early build. The router and worker path has never run with a live model. CI runs it on real Hermes 0.22.7 and 0.23.0 with a fake model: a gateway message passes the gate, the router dispatches, workers overlap, report, get guarded, fenced and stopped for real, and the watchdog relays the result. The ledger, its connectors and the agents board don't need a model, only `superagent briefs` does.
 
 ## Why not just...
 
@@ -70,6 +78,8 @@ A prompt or skill can only ask a model to stay in its lane, or to remember a tas
 - **...use another orchestration plugin?** nerve, agora and diaktoros are further along and each solves a different problem, see the [comparison](#comparison).
 
 ## Architecture
+
+The [architecture page](docs/architecture.md) has the whole system on one map, who decides what, each phase of a tick and what happens when a part breaks. Here's the short version:
 
 ```mermaid
 flowchart TB
@@ -228,12 +238,13 @@ hermes superagent --home ~/superagent setup --alerts discord:ALERTS_CHANNEL_ID
 hermes superagent --home ~/superagent doctor
 ```
 
-No Hermes yet? The ledger runs from the clone with the same commands, and `brief` prints what's open instead of sending it. With `gh` logged in, this lists your open issues, pull requests and review requests:
+No Hermes yet? Install the CLI on its own and run the same commands, and `brief` prints what's open instead of sending it. `pip install git+https://github.com/AirKyzzZ/hermes-superagent` works as well, and in a clone `python3 -m superagent` needs no install. With `gh` logged in, this lists your open issues, pull requests and review requests:
 
 ```bash
-python3 -m superagent --home ~/superagent setup
-python3 -m superagent --home ~/superagent doctor
-python3 -m superagent --home ~/superagent tick && python3 -m superagent --home ~/superagent brief
+uv tool install git+https://github.com/AirKyzzZ/hermes-superagent
+superagent --home ~/superagent setup
+superagent --home ~/superagent doctor
+superagent --home ~/superagent tick && superagent --home ~/superagent brief
 ```
 
 `setup` writes a starter `superagent.toml` from what the machine has: a GitHub sweep when `gh` is installed and the agents board when Claude Code is, sending through the same `hermes`. It never overwrites a config. `doctor` checks the config, delivery, the timer and alerts, runs each connector's poll once without recording anything, and exits non-zero when something fails. Then run `hermes superagent --home ~/superagent tick` every 2 minutes. [The shadow install guide](docs/dogfood-install.md) has a systemd timer, other machines and the Claude Code hook.
@@ -247,7 +258,7 @@ Needs Hermes 0.22.7 or newer on macOS or Linux. These steps haven't been run end
 
 <br>
 
-Install and enable it in each profile. The install scanner reports one caution, the sanitizer regex in `framing.py`, and asks you to confirm:
+Install and enable it in each profile:
 
 ```bash
 for p in router worker watchdog; do
@@ -312,7 +323,7 @@ platforms:
     extra:
       routes:
         github:
-          secret: "the-secret-you-gave-github"
+          secret: "YOUR_GITHUB_WEBHOOK_SECRET"
           events: ["issue_comment"]
           filters:
             - field: "action"
@@ -361,7 +372,7 @@ The rendered prompt becomes the goal, the comment's author is checked against `a
 | `[[triage]] match`, `area`, `ignore`, `name` | none | Rules for new items, the first match wins. `match` maps item fields (`connector`, `title`, `url`, `id`, `due`, `excerpt`) or meta keys such as `repo`, `labels` or `from` to a glob or a list of globs, ignoring case, where only `*` and `?` are wildcards. `labels`, `matched` and `tags` match on any one of their comma-separated parts, and an empty field never matches. `area` files the item there as triaged, and `ignore` sets it aside with that reason, which the next brief lists. An item no rule matches stays new and shows in every brief until someone decides. Rules also file new items already in the ledger, and never touch one someone moved |
 | `[areas.<name>] channel` | none | Where one "New in <area>" message per tick lists what rules filed there, up to 20 items. Once any area is listed, rules can only name listed areas |
 | `[channels] briefs`, `[briefs] notes`, `repos`, `daily_limit` | none, none, none, `20` | `superagent briefs <item>` writes the brief a worker would start from. Code builds a pack of numbered pieces, each marked trusted or not: the item, its issue text and comments (only the owner's own are trusted), related ledger items, its history, `notes`, and where `repos` says the code lives (keys are `owner/repo` for GitHub and `gitlab:group/project` for GitLab). The model drafts, a second call challenges it as a skeptical senior engineer, and a third revises. Code then checks that every line cites a real piece, quotes match their piece, there's an acceptance criterion, nothing looks like a secret, and every address, host, IP, account, shell command and multi-word code span appears in trusted text, after undoing lookalike characters. The first line says READY, NEEDS APPROVAL when any piece is untrusted, or NOT READY with the lint's findings at the end. A quote in the owner's own comment stays untrusted, and so does anything posted through an app. Briefs are cached until the pack or the writer changes, `daily_limit` caps new ones with failed attempts included, and `--send` posts it to `briefs` |
-| `[connectors.<name>] type` | required | `command`, `github`, `gitlab`, `todoist`, `gmail`, `gcal`, `whatsapp`, `codexbar` or `agents`. A connector polls one tool into the item ledger |
+| `[connectors.<name>] type` | required | `command`, `github`, `gitlab`, `todoist`, `gmail`, `gcal`, `whatsapp`, `codexbar`, `anki` or `agents`. A connector polls one tool into the item ledger. [docs/connectors.md](docs/connectors.md) has a copy-paste block for each |
 | `[connectors.<name>] every` | `5m` | How often it polls |
 | `[connectors.<name>] track` | `true` | `false` keeps its items, such as readings or events, without anyone owning them |
 | `[connectors.<name>] quiet_after` | off, required for delta sources | Warns when the source has had nothing new for this long |
@@ -381,6 +392,7 @@ The rendered prompt becomes the goal, the comment's author is checked against `a
 | `gmail`: `account`, `query`, `gog`, `timeout`, `env` | required, `in:inbox`, `gog`, `180`, none | One block per mailbox. Reads every thread `query` matches through [`gog`](https://github.com/openclaw/gogcli), always with `--readonly` and `--all` pages, so a page that fails fails the poll, and the count must match the distinct threads. `query` must include `in:inbox`. Each thread keeps its sender, labels and message count, and reading a mail changes nothing. A thread that leaves the inbox is looked up, and only one with no `INBOX` label left, archived or trashed, is closed. Category filters belong in triage rules, so what they set aside is listed with a reason. `gog` fetches every thread's details each poll, so an inbox of a few thousand threads can outrun `timeout`; a narrower query such as `in:inbox newer_than:90d` keeps it in time, but a thread that leaves the query while still in the inbox then stays open under "gone without a close" until you close it |
 | `gcal`: `account`, `calendars`, `days`, `gog`, `timeout`, `env` | required, the ones shown in Google Calendar, `3`, `gog`, `120`, none | One block per account. Informational, so `track` is off, and it can't be `trusted` because anyone can send an invite. Reads `days` days from today through [`gog`](https://github.com/openclaw/gogcli), always with `--readonly` and every page, one calendar per call so one that fails fails the poll. `calendars` takes ids or `primary`. Times are in the primary calendar's timezone. Titles carry the date, such as `Mon 09 Nov 14:00 Dentist` or `ongoing until Thu 12 Nov Conference`, and a `days_away` in the meta that changes daily lists an event in each brief until it's over. Events you declined and working locations are left out, a meeting on two calendars shows once, and an event leaving the window closes nothing |
 | `codexbar`: `providers`, `codexbar`, `timeout`, `env` | the ones enabled in CodexBar, `codexbar`, `120`, none | One reading per provider from [`codexbar`](https://github.com/steipete/CodexBar) `usage --format json`, titled with its quota, such as `claude: Weekly 21%`, and keeping each window's reset time and any cost in its meta. Informational, so `track` is off. A provider that reports an error fails the poll and the others still record, so name only the working ones in `providers` if one stays broken. `all` and `both` are refused because most providers aren't set up. `codexbar` can be a list, such as `["ssh", "mac", "/opt/homebrew/bin/codexbar"]`, when it lives on another machine. Use `every = "1h"`, since every change is a ledger entry |
+| `anki`: `url`, `curl`, `timeout`, `env` | `http://127.0.0.1:8765`, `curl`, `60`, none | One reading per day of the cards Anki says are due (`is:due`), through the [AnkiConnect](https://foosoft.net/projects/anki-connect/) add-on, using only `findCards`, `getDecks` and `getNumCardsReviewedToday`, such as `Anki Mon 09 Nov: 54 due, 15 reviewed`, with the count per top-level deck in its meta. New cards aren't counted, and neither are daily limits, so the number can differ from Anki's own. Informational, so `track` is off. Anki being closed or busy records nothing and isn't a failure, so add `quiet_after = "3d"` to hear about it. `curl` can be a list, such as `["ssh", "mac", "curl"]`, when Anki runs on another machine |
 | `whatsapp`: `chats`, `sync`, `sync_max_age`, `activity_max_age`, `wacli`, `timeout`, `env` | required, `follow`, `30m`, `6h`, `wacli`, `120`, none | Watches the chats listed by JID through [`wacli`](https://github.com/openclaw/wacli), always `--read-only`. A chat is an item while the last thing said in it isn't yours, and it closes once you reply. Your reactions, calls, poll votes and empty rows never count as a reply, their missed call counts as reaching out, and reading changes nothing. Every poll first asks `wacli doctor`: a store that isn't linked, or whose sync isn't running or has heard nothing for `activity_max_age` (`sync = "follow"`), or hasn't run within `sync_max_age` (`sync = "once"`), fails the poll. In a group chat anyone's message counts, so list groups only when that's wanted |
 | `[watchdog] stall_after_seconds` | `900` | Silence that counts as stuck |
 | `[watchdog] repeat_limit` | `3` | Identical reports in a row that count as stuck |

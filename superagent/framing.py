@@ -6,7 +6,7 @@ import secrets
 from .domain import Trigger
 
 MAX_FRAMED_CHARS = 4000
-_CONTROL_CHARS = re.compile(r"[\x00-\x08\x0b\x0c\x0e-\x1f\x7f​-‏‪-‮⁦-⁩]")
+_CONTROL_CHARS = re.compile(r"[\x00-\x08\x0b\x0c\x0e-\x1f\x7f\u200b-\u200f\u202a-\u202e\u2066-\u2069]")
 
 
 def sanitize(text: str, *, keep_tail: bool = False, limit: int = MAX_FRAMED_CHARS) -> str:

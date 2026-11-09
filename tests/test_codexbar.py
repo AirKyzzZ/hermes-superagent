@@ -76,7 +76,7 @@ def test_listed_providers_are_asked_one_by_one(tmp_path: Path, fixture: Path) ->
     write(fixture, enabled=[], providers={"claude": [CLAUDE], "openrouter": [OPENROUTER]}, fail=["grok"])
     poll = build_connector(spec_for(tmp_path, providers=["claude", "grok", "openrouter"])).poll("")
     assert [item.external_id for item in poll.items] == ["claude", "openrouter"]
-    assert len(poll.problems) == 1 and poll.problems[0].startswith("grok: ")
+    assert len(poll.problems) == 1 and poll.problems[0].startswith("grok: ") and "exited 1" in poll.problems[0]
 
 
 def test_malformed_output_fails_and_records_nothing(tmp_path: Path, fixture: Path) -> None:

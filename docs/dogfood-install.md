@@ -158,6 +158,18 @@ codexbar = ["ssh", "mac", "/opt/homebrew/bin/codexbar"]
 
 It reads the providers enabled in CodexBar. A provider that reports an error, such as an expired login, fails the poll and shows under Sources while the others still record. Fix it, or list the working ones with `providers = ["claude", "grok"]`.
 
+Anki needs the AnkiConnect add-on and Anki open. From another machine, send the request through ssh, since AnkiConnect only listens locally:
+
+```toml
+[connectors.anki]
+type = "anki"
+every = "1h"
+curl = ["ssh", "mac", "curl"]
+quiet_after = "3d"
+```
+
+A closed or busy Anki records nothing and isn't a failure, and `quiet_after` says so when it has stayed that way. Only `findCards`, `getDecks` and `getNumCardsReviewedToday` are called, since AnkiConnect's `getDeckStats` creates the decks it's asked about.
+
 The timer below has no ssh agent. So give each alias a dedicated key with no passphrase through `IdentityFile`, and ssh to each host once by hand so its host key is saved. On a Mac, ssh sessions can't read folders that macOS protects, such as `~/Downloads`, so branches of repos kept there show as blank. Grant `sshd` Full Disk Access if you want them.
 
 The agents channel gets one line when a session has been waiting, stuck, rate-limited or gone for two polls in a row. The line holds the project, the state and a handle, never the session's text. Set `notify_detail = true` on a connector to add the question, with anything token-shaped redacted.
