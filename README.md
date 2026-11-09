@@ -312,7 +312,7 @@ platforms:
     extra:
       routes:
         github:
-          secret: "the-secret-you-gave-github"
+          secret: "YOUR_GITHUB_WEBHOOK_SECRET"
           events: ["issue_comment"]
           filters:
             - field: "action"

@@ -42,7 +42,7 @@ _TLDS = (
 )
 _HOST = r"(?<![\w.@/-])(?:[a-z0-9-]+\.)+(?:[a-z]{2,63}/[^\s<>`'\"]*|(?:" + _TLDS + r")(?![\w.-]))"
 _COMMAND_START = re.compile(
-    r"(?i)\b(?:curl|wget|sudo|ssh|scp|rsync|ncat|nc|telnet|eval|exec|chmod|chown|mkfs|powershell|iex|npx|uvx|pipx|"
+    r"(?i)\b(?:curl|wget|sudo|ssh|scp|rsync|ncat|nc|telnet|eval|exec|chmod|chown|mk(?:e2)?fs|powershell|iex|npx|uvx|pipx|"
     r"bunx|base64\s+-d|rm\s+-\w+|dd\s+if=|(?:ba|z|da|k)?sh\s+(?:-c\b|\S+\.sh\b)|python\d*\s+-c|perl\s+-e|"
     r"node\s+-e|pip\d*\s+install|npm\s+(?:i|install|exec)|pnpm\s+(?:add|dlx)|yarn\s+(?:add|dlx)|cargo\s+install|"
     r"go\s+install|gem\s+install|uv\s+(?:add|pip\s+install|tool\s+install)|poetry\s+add|brew\s+install|"
