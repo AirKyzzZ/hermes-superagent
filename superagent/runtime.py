@@ -34,6 +34,7 @@ LOCK_RECORD_BYTES = 300
 IGNORED_TRIGGER_RETENTION_SECONDS = 7 * 24 * 3600.0
 POLL_BUDGET_SHARE = 0.5
 SOURCE_TICKET = "sources"
+JUDGE_ALERT_KEY = "watchdog: drift judge"
 
 
 @dataclass(frozen=True)
@@ -212,7 +213,7 @@ def _run_phases(runtime: Runtime, judge: DriftJudge | None, assessor: Assessor |
     try:
         checks = check_once(runtime.router, judge, runtime.config.watchdog)
         if failure := runtime.store.last_judge_failure():
-            errors.append(f"watchdog: {failure}")
+            warnings.append(SourceWarning(JUDGE_ALERT_KEY, f"watchdog: {failure}", immediate=False))
     except Exception as error:
         logger.exception("watchdog check failed")
         errors.append(f"watchdog: {error}")
@@ -271,7 +272,7 @@ def _raise_alerts(runtime: Runtime, errors: list[str], warnings: list[SourceWarn
     active = {_alert_key(error): chat_safe(error) for error in errors}
     active.update({warning.key: chat_safe(warning.text) for warning in warnings})
     channel = runtime.config.alerts_channel
-    immediate = frozenset(warning.key for warning in warnings)
+    immediate = frozenset(warning.key for warning in warnings if warning.immediate)
     raised, resolved = runtime.store.sync_alerts(active, runtime.config.alert_after_seconds, channel, immediate)
     if not (raised or resolved):
         return []

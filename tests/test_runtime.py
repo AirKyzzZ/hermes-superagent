@@ -15,7 +15,7 @@ from superagent.config import LAST_GOOD_FILENAME, ConfigError, parse_config
 from superagent.domain import RepairAction, ReportState, Trigger
 from superagent.gate import SemanticRule
 from superagent.router import ASSESS_ATTEMPTS, MAX_ASSESS_BATCH, Assessment, Router
-from superagent.runtime import _alert_key, open_runtime, tick
+from superagent.runtime import Runtime, _alert_key, open_runtime, tick
 from superagent.worker import IDENTITY_FILENAME
 
 from .conftest import FakeBackend
@@ -196,23 +196,37 @@ def test_a_config_without_workers_is_fine_until_a_worker_is_needed(tmp_path: Pat
         runtime.router.ingest(Trigger("w1", "chat", "th", "alice", "do it", "th", True))
 
 
-def test_a_failed_drift_judge_is_a_tick_error_that_alerts(tmp_path: Path) -> None:
-    alerting = CONFIG + '\n[channels]\nalerts = "discord:alerts"\n\n[tick]\nalert_after_seconds = 0\n'
+def failing_judge_runtime(tmp_path: Path, alert_after: int) -> tuple[Runtime, FakeBackend]:
+    alerting = CONFIG + f'\n[channels]\nalerts = "discord:alerts"\n\n[tick]\nalert_after_seconds = {alert_after}\n'
     runtime = open_runtime(home_with_config(tmp_path, alerting))
     backend = FakeBackend()
     runtime = replace(runtime, router=Router(runtime.store, runtime.config.rules, backend))
     runtime.router.ingest(Trigger("c2", "github", "pr/2", "alice", "fix it", "pr/2", True))
     [assignment] = runtime.store.running_assignments()
     runtime.store.add_report(assignment.id, backend.started[0][2], ReportState.PROGRESS, "reading the code")
+    return runtime, backend
+
+
+def judge_alerts(runtime: Runtime) -> list[str]:
+    return [message.text for message in runtime.store.pending_outbox() if "drift judge" in message.text]
+
+
+def test_a_failed_drift_judge_alerts_and_stays_reported_between_reports(tmp_path: Path) -> None:
+    runtime, _ = failing_judge_runtime(tmp_path, 0)
+    failure = "watchdog: drift judge unavailable: provider down"
     result = tick(runtime, judge=FailingJudge())
     assert [check.action for check in result.checks] == [RepairAction.NONE]
-    assert "watchdog: drift judge unavailable: provider down" in result.errors
-    alerts = [message.text for message in runtime.store.pending_outbox() if message.channel == "discord:alerts"]
-    assert alerts == ["Alert: watchdog: drift judge unavailable: provider down"]
+    assert failure in result.warnings and failure not in result.errors
+    assert judge_alerts(runtime) == [f"Alert: {failure}"]
     quiet = tick(runtime, judge=FailingJudge())
-    assert "watchdog: drift judge unavailable: provider down" in quiet.errors
-    judge_alerts = [m.text for m in runtime.store.pending_outbox() if "drift judge" in m.text]
-    assert judge_alerts == ["Alert: watchdog: drift judge unavailable: provider down"]
+    assert failure in quiet.warnings
+    assert judge_alerts(runtime) == [f"Alert: {failure}"]
+
+
+def test_one_failed_judgement_waits_out_the_alert_delay(tmp_path: Path) -> None:
+    runtime, _ = failing_judge_runtime(tmp_path, 300)
+    assert "watchdog: drift judge unavailable: provider down" in tick(runtime, judge=FailingJudge()).warnings
+    assert judge_alerts(runtime) == []
 
 
 def test_an_error_keeps_its_alert_key_when_only_its_ids_change() -> None:
