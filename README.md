@@ -246,7 +246,7 @@ Needs Hermes 0.22.7 or newer on macOS or Linux. These steps haven't been run end
 
 <br>
 
-Install and enable it in each profile. The install scanner reports one caution, the sanitizer regex in `framing.py`, and asks you to confirm:
+Install and enable it in each profile:
 
 ```bash
 for p in router worker watchdog; do

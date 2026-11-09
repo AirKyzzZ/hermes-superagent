@@ -31,11 +31,11 @@ The form can go in as soon as the PR is open. Catalog checks run once a maintain
 
 ## Before submitting
 
-**Still open before the demo:** one run with a live model and a real chat platform. CI already runs the whole path on real Hermes with a fake model.
+**Still open before the demo:** one run with a live model and a real chat platform, [section 6 of the install guide](dogfood-install.md#6-the-live-model-run). CI already runs the whole path on real Hermes with a fake model. [SUBMISSION.md](../SUBMISSION.md) tracks what's left.
 
 | Catalog rule | State | Evidence |
 | --- | --- | --- |
-| Loadable plugin, validation passes | Ready | CI runs `hermes plugins validate --install-deps .` on Hermes v0.22.7, with one caution: the sanitizer regex in `framing.py` |
+| Loadable plugin, validation passes | Ready | CI runs `hermes plugins validate --install-deps .` on Hermes v0.22.7, and its security scan comes back safe |
 | 2. Exact SHA pin | At submission | See the steps below |
 | 3. No self-updating code | Ready | The plugin fetches nothing |
 | 5. Submitted by the owner | At submission | The owner opens the PR |
@@ -67,7 +67,7 @@ The plugin page renders the README through an allowlist that drops raw HTML, so 
 ```markdown
 Adds hermes-superagent, a plugin that brings DeepSeek's Super-agent design to Hermes: one resident router that talks to people and never executes, isolated workers that report only to it, a sender gate plus team-written trigger rules, and an external watchdog that checks real progress and goal drift, then nudges, restarts or escalates.
 
-It also keeps an item ledger fed by connectors (GitHub through `gh`, GitLab through `glab`, any tool that prints JSON, and Claude Code sessions on several machines), so nothing a source shows is silently lost: polls that can't prove they're complete mark nothing gone, vanished items are checked one by one, triage rules file items by area, and a daily brief lists every open item at least every few days. On top of it, it writes worker briefs from that context (drafted, challenged and revised by the model, then linted in code against untrusted text), and can nudge a stopped Claude Code session when asked to.
+It also keeps an item ledger fed by connectors (GitHub, GitLab, Todoist, Gmail, WhatsApp, Google Calendar, Anki, coding-agent quotas, any tool that prints JSON, and Claude Code sessions on several machines), so nothing a source shows is silently lost: polls that can't prove they're complete mark nothing gone, vanished items are checked one by one, triage rules file items by area, and a daily brief lists every open item at least every few days. On top of it, it writes worker briefs from that context (drafted, challenged and revised by the model, then linted in code against untrusted text), and can nudge a stopped Claude Code session when asked to.
 
 Hermes surfaces: `ctx.register_tool` (7 tools), the hooks `pre_gateway_dispatch`, `pre_llm_call`, `pre_tool_call` and `post_tool_call`, `ctx.llm`, `ctx.register_cli_command` (`hermes superagent setup`, `doctor`, `tick`, `ledger`, `agents`, `brief`, `briefs` and more) and `ctx.register_automation_blueprint`. No core patches.
 
@@ -79,6 +79,5 @@ Disclosure, also in the README:
 - Spends tokens on the profile's model during ticks, and three calls per worker brief, capped per day.
 - Writes its database and worker directories under the configured home.
 - Inert until a profile sets a role. No telemetry, no network calls of its own, no stored credentials.
-- `hermes plugins validate` reports one caution: the invisible-character regex in `framing.py`, which is the sanitizer itself.
 - `assets/art` holds the scripts that built the cover from a public-domain Met image. The plugin never runs them.
 ```
