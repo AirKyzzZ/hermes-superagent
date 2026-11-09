@@ -155,8 +155,12 @@ class Store:
             connection.execute("BEGIN IMMEDIATE")
             version = connection.execute("PRAGMA user_version").fetchone()[0]
             for statement in _MIGRATIONS[version:]:
-                connection.execute(statement)
-            connection.execute(f"PRAGMA user_version = {len(_MIGRATIONS)}")
+                try:
+                    connection.execute(statement)
+                except sqlite3.OperationalError as error:
+                    if "duplicate column name" not in str(error):
+                        raise
+            connection.execute(f"PRAGMA user_version = {max(version, len(_MIGRATIONS))}")
             connection.execute("COMMIT")
         finally:
             connection.close()
