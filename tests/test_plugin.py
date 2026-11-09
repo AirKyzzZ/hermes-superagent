@@ -3,6 +3,7 @@ from __future__ import annotations
 import importlib.util
 import json
 import secrets
+import string
 import sys
 from collections.abc import Callable
 from dataclasses import dataclass, field
@@ -64,6 +65,7 @@ class FakeContext:
     hooks: dict[str, Callable[..., Any]] = field(default_factory=dict)
     commands: dict[str, dict[str, Any]] = field(default_factory=dict)
     blueprints: list[str] = field(default_factory=list)
+    blueprint_args: dict[str, dict[str, Any]] = field(default_factory=dict)
     sections: dict[str, Callable[..., str]] = field(default_factory=dict)
     llm: FakeLlm = field(default_factory=FakeLlm)
     cwd: str = ""
@@ -85,6 +87,7 @@ class FakeContext:
 
     def register_automation_blueprint(self, key: str, **kwargs: Any) -> None:
         self.blueprints.append(key)
+        self.blueprint_args[key] = kwargs
 
     def register_system_prompt_section(self, section_id: str, content: Callable[..., str]) -> None:
         self.sections[section_id] = content
@@ -131,6 +134,16 @@ def offered(ctx: FakeContext, text: str = "please fix the bug") -> Any:
         platform="discord",
         sender_id="u-alice",
     )
+
+
+def test_automation_blueprints_only_use_placeholders_hermes_accepts(tmp_path: Path) -> None:
+    ctx = registered("router", tmp_path)
+    assert ctx.blueprints
+    for args in ctx.blueprint_args.values():
+        slots = {slot["name"] for slot in args["slots"]}
+        for _, name, _, _ in string.Formatter().parse(args["schedule_template"]):
+            if name:
+                assert ("time" if name in ("minute", "hour") else name) in slots, args["schedule_template"]
 
 
 def test_manifest_declares_what_register_registers(tmp_path: Path) -> None:
