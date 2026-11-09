@@ -1,13 +1,13 @@
 # Live-model run
 
-The plugin on a real model: part A of [the live-model run](dogfood-install.md#6-the-live-model-run), in two throwaway Hermes profiles on a VPS. The model writes the brief a worker would start from for a made-up issue that asks to skip review. Then one task goes through a real worker and the watchdog, and the result is relayed to a Discord test channel. The home folder and the channel id are placeholders. Creating the profiles and installing or updating the plugin aren't in the recording.
+The plugin on a real model: part A of [the live-model run](dogfood-install.md#6-the-live-model-run), in two throwaway Hermes profiles on a VPS. The model writes the brief a worker would start from for a made-up issue that asks to skip review. Then one task goes through a real worker and the watchdog, and the result is relayed to a Discord test channel. The home folder and the channel id are placeholders. Creating the profiles and installing or updating the plugin aren't in the recording. The recorder drops quotes, so copy commands from the guide rather than from here.
 
 | | |
 |---|---|
 | Date | 2026-11-09 |
 | Hermes | v0.23.0 |
-| Provider and model | `claude-subscription-directsdk-experimental`, `claude-opus-5-5[1m]` |
-| Plugin commit | `3d8be99` for the failed attempt, `6dc2efa` for the pass |
+| Provider and model | `claude-subscription-directsdk-experimental`, `claude-opus-5-5[1m]`, read from `sa-worker`, which like `sa-watchdog` was cloned from the default profile |
+| Plugin commit | `3d8be99` for the failed attempt, `6dc2efa` for the pass, read from the `sa-worker` checkout |
 | Result | Failed once, then passed |
 
 The first `briefs` call failed: Anthropic rejected the plugin's JSON schema with a 400, which a fake model can't catch. [#69](https://github.com/AirKyzzZ/hermes-superagent/pull/69) made every schema strict and added a test that walks each one. The failure stays in the transcript.
