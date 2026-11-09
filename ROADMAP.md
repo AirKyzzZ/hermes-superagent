@@ -19,12 +19,12 @@ Each connector reads one tool into the ledger, so nothing it shows gets lost. Mo
 | Any JSON CLI | `command` | whatever the tool lists | Done |
 | Todoist | `td` | an active task | In review, [#35](https://github.com/AirKyzzZ/hermes-superagent/pull/35) |
 | Gmail | `gog`, one block per account | an inbox thread, closed once it's archived or trashed | In review, [#36](https://github.com/AirKyzzZ/hermes-superagent/pull/36) |
-| Google Calendar | `gog` | an event in the next few days, info | Wanted |
+| Google Calendar | `gog`, one block per account | an event in the next few days, info | Done |
 | Any calendar shared as a link | an ICS URL | an event, info | Wanted |
 | WhatsApp | `wacli`, read only | a chat with a listed contact whose last message isn't yours, closed once you reply | In review, [#36](https://github.com/AirKyzzZ/hermes-superagent/pull/36) |
 | Zepp | a `command` preset | last night's sleep and other daily readings, info | Wanted |
 | Anki | a `command` preset | today's due cards, info | Wanted |
-| CodexBar | a `command` preset | coding-agent usage and quota, info | Wanted |
+| CodexBar | `codexbar` | coding-agent usage and quota, info | Done |
 
 Mail and chat never start work on their own, because anyone can write to you. The owner can still assign an item from them. Something else you'd want in the ledger, such as Linear, Jira or a Markdown task file? [Open a connector issue](https://github.com/AirKyzzZ/hermes-superagent/issues/new?template=connector.yml).
 
