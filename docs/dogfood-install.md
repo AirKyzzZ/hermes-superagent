@@ -369,7 +369,7 @@ rec hermes -p sa-watchdog superagent status
 
 The test channel gets `Done [Name the three largest planets … · tk-…]: …`, and the tick that relayed it lists the same text under `delivered`. The watchdog's model judges the worker's reports while it's still running, so a very fast worker can finish before the judge is needed; the worker's own model calls and the relay happen either way. The worker has only the `superagent` toolset, so it can't touch the machine.
 
-If the last `status` still shows the ticket as `open`, run the loop block once more. If it's still `open`, or it's `waiting` because the worker stopped without reporting, add the worker's log to the transcript and stop:
+If the last `status` still shows the ticket as `open`, run the loop block once more. If it's still `open`, or it's `waiting` because the worker stopped without reporting, add the worker's log to the transcript and stop. The one exception is a log showing the model never found `superagent_report`, which it reaches through `tool_search` and `tool_call` by default. Then give it the tool directly with `hermes -p sa-worker config set tools.tool_search.enabled off` and repeat the last two blocks once, with `live-2` as the thread:
 
 ```bash
 . ~/superagent-live/vars
