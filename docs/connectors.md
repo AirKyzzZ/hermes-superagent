@@ -25,7 +25,7 @@ A tracked item stays open until its source confirms it closed or you close it wi
 
 Connectors only read. The one exception is `relaunch = true` on `agents`, off by default, which types `continue` into a stopped session.
 
-Gmail, WhatsApp, Google Calendar and Anki were built from each tool's source with synthetic test data and haven't run against a real account yet. Read what `doctor` says the first time you turn one on.
+Gmail, WhatsApp and Google Calendar were built from each tool's source with synthetic test data and haven't run against a real account yet. Read what `doctor` says the first time you turn one on.
 
 Every setting is in the [configuration table](../README.md#configuration).
 
