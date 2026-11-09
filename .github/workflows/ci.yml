@@ -8,9 +8,6 @@ on:
 permissions:
   contents: read
 
-env:
-  HERMES_PIN: b200f5bc60e31588ba2cb60e288029c4a54ba5fa
-
 jobs:
   checks:
     runs-on: ${{ matrix.os }}
@@ -30,7 +27,14 @@ jobs:
       - run: uv run --no-project --with-requirements requirements-dev.txt pytest -q
 
   hermes-compat:
+    name: hermes-compat (${{ matrix.hermes.version }})
     runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        hermes:
+          - { version: "0.22.7", pin: b200f5bc60e31588ba2cb60e288029c4a54ba5fa }
+          - { version: "0.23.0", pin: 2bd378ed1b8d6bf2192cb26e0a55ff3091e6bd19 }
     steps:
       - uses: actions/checkout@v4
       - uses: astral-sh/setup-uv@v6
@@ -39,7 +43,7 @@ jobs:
       - name: Install Hermes at the pinned release
         uses: ./.github/actions/install-hermes
         with:
-          pin: ${{ env.HERMES_PIN }}
+          pin: ${{ matrix.hermes.pin }}
       - run: hermes --version
       - name: Plugin doctor loads the plugin through real discovery
         run: hermes plugins doctor . --ci
@@ -51,10 +55,21 @@ jobs:
           mkdir -p "$entry_dir"
           sed "s/0000000000000000000000000000000000000000/$GITHUB_SHA/g" docs/catalog-entry.yaml > "$entry_dir/hermes-superagent.yaml"
           uv run --no-project --with ruamel.yaml==0.18.17 python "$RUNNER_TEMP/hermes-src/scripts/validate_plugin_catalog.py" "$entry_dir/hermes-superagent.yaml"
+      - name: A non-interactive install from the checkout goes through, install scan included
+        run: |
+          hermes plugins install "file://$GITHUB_WORKSPACE" --enable </dev/null
+          hermes superagent --help
 
   e2e:
+    name: e2e (${{ matrix.hermes.version }})
     runs-on: ubuntu-latest
     timeout-minutes: 25
+    strategy:
+      fail-fast: false
+      matrix:
+        hermes:
+          - { version: "0.22.7", pin: b200f5bc60e31588ba2cb60e288029c4a54ba5fa }
+          - { version: "0.23.0", pin: 2bd378ed1b8d6bf2192cb26e0a55ff3091e6bd19 }
     steps:
       - uses: actions/checkout@v4
       - uses: astral-sh/setup-uv@v6
@@ -63,6 +78,16 @@ jobs:
       - name: Install Hermes at the pinned release
         uses: ./.github/actions/install-hermes
         with:
-          pin: ${{ env.HERMES_PIN }}
+          pin: ${{ matrix.hermes.pin }}
       - name: Real Hermes, fake model
         run: uv run --no-project --with pyyaml python tests/e2e/run_e2e.py --work "$RUNNER_TEMP/e2e"
+
+  packaging:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v6
+        with:
+          python-version: "3.14"
+      - name: pip and uv install it into clean venvs
+        run: uv run --no-project python tests/e2e/check_install.py --work "$RUNNER_TEMP/install"

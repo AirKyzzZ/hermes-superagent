@@ -1,0 +1,3 @@
+[connectors.github]
+type = "github"
+every = "0s"
