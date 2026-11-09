@@ -130,6 +130,33 @@ hermes superagent --home ~/superagent doctor
 
 If a field is named differently, `doctor` says which thread or chat it couldn't read. Send the scrubbed output so the fixtures can be replaced with the real shape.
 
+Google Calendar uses the same `gog`, whose login needs Calendar access. One block per account:
+
+```toml
+[connectors.calendar]
+type = "gcal"
+account = "OWNER_ADDRESS"
+every = "30m"
+```
+
+The brief's Today section then lists today and the next two days, and nothing gets an owner or closes. Set `days` for a longer window. It reads the calendars ticked in Google Calendar, one call each, and `calendars = ["primary"]` narrows that. This one was also built from `gog`'s public source with synthetic data, so check a real run first:
+
+```bash
+gog --readonly --json --account OWNER_ADDRESS calendar calendars --all | head -c 600
+gog --readonly --json --account OWNER_ADDRESS calendar events primary --days 3 --all-pages --max 250 | head -c 600
+```
+
+CodexBar shows coding-agent quota in the brief. `setup` adds it when `codexbar` is on the `PATH`. On a machine where it isn't, reach the one that has it:
+
+```toml
+[connectors.codexbar]
+type = "codexbar"
+every = "1h"
+codexbar = ["ssh", "mac", "/opt/homebrew/bin/codexbar"]
+```
+
+It reads the providers enabled in CodexBar. A provider that reports an error, such as an expired login, fails the poll and shows under Sources while the others still record. Fix it, or list the working ones with `providers = ["claude", "grok"]`.
+
 The timer below has no ssh agent. So give each alias a dedicated key with no passphrase through `IdentityFile`, and ssh to each host once by hand so its host key is saved. On a Mac, ssh sessions can't read folders that macOS protects, such as `~/Downloads`, so branches of repos kept there show as blank. Grant `sshd` Full Disk Access if you want them.
 
 The agents channel gets one line when a session has been waiting, stuck, rate-limited or gone for two polls in a row. The line holds the project, the state and a handle, never the session's text. Set `notify_detail = true` on a connector to add the question, with anything token-shaped redacted.
