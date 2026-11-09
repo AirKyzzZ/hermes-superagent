@@ -35,7 +35,7 @@ The form can go in as soon as the PR is open. Catalog checks run once a maintain
 
 | Catalog rule | State | Evidence |
 | --- | --- | --- |
-| Loadable plugin, validation passes | Ready | CI runs `hermes plugins validate --install-deps .` on Hermes v0.22.7, with one caution: the sanitizer regex in `framing.py` |
+| Loadable plugin, validation passes | Ready | CI runs `hermes plugins validate --install-deps .` and a real non-interactive install from the checkout on Hermes 0.22.7 and 0.23.0. The install scan's verdict is `safe` |
 | 2. Exact SHA pin | At submission | See the steps below |
 | 3. No self-updating code | Ready | The plugin fetches nothing |
 | 5. Submitted by the owner | At submission | The owner opens the PR |
@@ -53,11 +53,11 @@ The plugin page renders the README through an allowlist that drops raw HTML, so 
 ## Submission steps
 
 1. Confirm CI is green on `main` and nothing above is still open.
-2. Copy [catalog-entry.yaml](catalog-entry.yaml) to `plugin-catalog/hermes-superagent.yaml` in a fork of `NousResearch/hermes-agent`, and pin it. Both the `sha` and the `image` URL take the same commit:
+2. From a fork of `NousResearch/hermes-agent`, write [catalog-entry.yaml](catalog-entry.yaml) to `plugin-catalog/hermes-superagent.yaml`, pinned. Both the `sha` and the `image` URL take the same commit:
 
    ```bash
    sha=$(git -C /path/to/hermes-superagent rev-parse origin/main)
-   sed -i '' "s/0000000000000000000000000000000000000000/$sha/g" plugin-catalog/hermes-superagent.yaml
+   sed "s/0000000000000000000000000000000000000000/$sha/g" /path/to/hermes-superagent/docs/catalog-entry.yaml > plugin-catalog/hermes-superagent.yaml
    ```
 
 3. Open the PR with one file changed, using the text below.
@@ -67,18 +67,19 @@ The plugin page renders the README through an allowlist that drops raw HTML, so 
 ```markdown
 Adds hermes-superagent, a plugin that brings DeepSeek's Super-agent design to Hermes: one resident router that talks to people and never executes, isolated workers that report only to it, a sender gate plus team-written trigger rules, and an external watchdog that checks real progress and goal drift, then nudges, restarts or escalates.
 
-It also keeps an item ledger fed by connectors (GitHub through `gh`, GitLab through `glab`, any tool that prints JSON, and Claude Code sessions on several machines), so nothing a source shows is silently lost: polls that can't prove they're complete mark nothing gone, vanished items are checked one by one, triage rules file items by area, and a daily brief lists every open item at least every few days. On top of it, it writes worker briefs from that context (drafted, challenged and revised by the model, then linted in code against untrusted text), and can nudge a stopped Claude Code session when asked to.
+It also keeps an item ledger fed by connectors (GitHub through `gh`, GitLab through `glab`, Todoist through `td`, Gmail and Google Calendar through `gog`, WhatsApp through `wacli`, CodexBar, Anki, any tool that prints JSON, and Claude Code sessions on several machines), so nothing a source shows is silently lost: polls that can't prove they're complete mark nothing gone, vanished items are checked one by one, triage rules file items by area, and a daily brief lists every open item at least every few days. On top of it, it writes worker briefs from that context (drafted, challenged and revised by the model, then linted in code against untrusted text), and can nudge a stopped Claude Code session when asked to.
 
 Hermes surfaces: `ctx.register_tool` (7 tools), the hooks `pre_gateway_dispatch`, `pre_llm_call`, `pre_tool_call` and `post_tool_call`, `ctx.llm`, `ctx.register_cli_command` (`hermes superagent setup`, `doctor`, `tick`, `ledger`, `agents`, `brief`, `briefs` and more) and `ctx.register_automation_blueprint`. No core patches.
 
 Disclosure, also in the README:
 - Spawns long-running worker processes from the argv the operator configures, and runs the outbound send command and the connector commands the operator configures.
 - The `agents` connector sends a read-only probe script through the host command the operator configures, usually `ssh`. The Claude Code hook it reads is printed by the plugin and installed by the operator.
+- The `gmail` and `whatsapp` connectors read mail and chats into the ledger, only when configured and through the operator's own `gog` and `wacli` logins. Mail and chat never start work on their own. The `anki` connector calls AnkiConnect with `curl`, on localhost by default.
 - Only when the operator sets `relaunch = true`, it types one short nudge into a Claude Code session stopped by an API error or a rate limit, after checking the pane and screen.
 - Stops or restarts its own workers by process group.
 - Spends tokens on the profile's model during ticks, and three calls per worker brief, capped per day.
 - Writes its database and worker directories under the configured home.
 - Inert until a profile sets a role. No telemetry, no network calls of its own, no stored credentials.
-- `hermes plugins validate` reports one caution: the invisible-character regex in `framing.py`, which is the sanitizer itself.
+- The install scan's verdict is `safe`. Its medium and low findings are `subprocess` calls in the worker backend and tests, and the sanitizer regex in `framing.py`.
 - `assets/art` holds the scripts that built the cover from a public-domain Met image. The plugin never runs them.
 ```
