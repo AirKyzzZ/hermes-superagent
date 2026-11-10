@@ -3,6 +3,7 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import shutil
 import sys
 import threading
 import time
@@ -113,6 +114,7 @@ def run(
     judge: DriftJudge | None = None,
     assessor: Assessor | None = None,
     writer: BriefWriter | None = None,
+    inside_hermes: bool = False,
 ) -> int:
     if args.superagent_command == "report":
         print(
@@ -132,7 +134,7 @@ def run(
             print(json.dumps(settings_block(), indent=2))
         return 0
     if args.superagent_command == "setup":
-        return run_setup(args, home)
+        return run_setup(args, home, inside_hermes=inside_hermes)
     if args.superagent_command == "doctor":
         checks = diagnose(home, poll=not args.no_poll)
         if args.json:
@@ -398,9 +400,11 @@ def compare_pack(runtime: Runtime, task: PastTask) -> Pack:
     )
 
 
-def run_setup(args: argparse.Namespace, home: Path) -> int:
+def run_setup(args: argparse.Namespace, home: Path, *, inside_hermes: bool = False) -> int:
     launcher = Path(sys.argv[0])
     hermes = args.hermes or (str(launcher.absolute()) if launcher.name == "hermes" else "")
+    if not hermes and inside_hermes and shutil.which("hermes"):
+        hermes = "hermes"
     cli = f"{hermes} superagent" if hermes else f"{sys.executable} -m superagent"
     choices = detect(
         hermes, alerts=args.alerts, brief=args.brief, agents_channel=args.agents_channel, timezone=args.timezone

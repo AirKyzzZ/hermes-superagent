@@ -104,21 +104,24 @@ def _command(name: str, argv: tuple[str, ...], unset: str) -> Check:
     return Check(name, Status.OK, found)
 
 
+def _minutes(seconds: float) -> str:
+    count = round(seconds / 60)
+    return "1 minute" if count == 1 else f"{count} minutes"
+
+
 def _tick(runtime: Runtime, now: float) -> Check:
     record = last_tick(runtime.home)
     finished, started = record.get("finished"), record.get("started")
     if isinstance(finished, (int, float)):
-        minutes = (now - finished) / 60
+        ago = _minutes(now - finished)
         if now - finished > TICK_QUIET_SECONDS:
-            return Check(
-                "tick", Status.FAIL, f"the last tick finished {minutes:.0f} minutes ago, is the timer running?"
-            )
-        return Check("tick", Status.OK, f"the last tick finished {minutes:.0f} minutes ago")
+            return Check("tick", Status.FAIL, f"the last tick finished {ago} ago, is the timer running?")
+        return Check("tick", Status.OK, f"the last tick finished {ago} ago")
     if isinstance(started, (int, float)):
-        minutes = (now - started) / 60
+        ago = _minutes(now - started)
         if now - started > runtime.config.tick_deadline_seconds:
-            return Check("tick", Status.FAIL, f"the tick started {minutes:.0f} minutes ago never finished")
-        return Check("tick", Status.OK, f"a tick has been running for {minutes:.0f} minutes")
+            return Check("tick", Status.FAIL, f"the tick started {ago} ago never finished")
+        return Check("tick", Status.OK, f"a tick has been running for {ago}")
     try:
         configured = (runtime.home / CONFIG_FILENAME).stat().st_mtime
     except OSError:
