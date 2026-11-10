@@ -2,7 +2,7 @@
 
 Notable changes to hermes-superagent. The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and versions follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [0.1.0] - Unreleased
+## [0.1.0] - 2026-11-10
 
 The first version, built for the Hermes Plugin Hackathon. It needs Hermes 0.22.7 or newer on macOS or Linux and has no Python dependencies of its own.
 
@@ -48,7 +48,7 @@ The first version, built for the Hermes Plugin Hackathon. It needs Hermes 0.22.7
 ### Known limits
 
 - CI runs the whole path on real Hermes with a fake model. [One recorded run](docs/live-run.md) on a real model covers the brief writer, a worker, the watchdog and a relay to Discord. The router's own model turn, an incoming chat message, the drift judge and the watchdog's repairs haven't run live.
-- Gmail and WhatsApp were built on synthetic data until real samples arrive.
+- Gmail, Google Calendar and WhatsApp were built on synthetic data until real samples arrive.
 - Workers that are Claude Code sessions in tmux or cmux over ssh aren't implemented.
 
-[0.1.0]: https://github.com/AirKyzzZ/hermes-superagent/commits/main
+[0.1.0]: https://github.com/AirKyzzZ/hermes-superagent/releases/tag/v0.1.0
