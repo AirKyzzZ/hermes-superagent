@@ -409,6 +409,7 @@ def test_a_broken_model_reply_fails_loudly_and_saves_nothing(
         ("[briefs]\ndaily_limit = true\n", "daily_limit"),
         ("[briefs]\nnotes = 4\n", "notes"),
         ("[channels]\nbriefs = 5\n", "[channels]"),
+        ("[briefs]\ndaily_limt = 5\n", "unknown keys in [briefs]"),
     ],
 )
 def test_the_briefs_section_is_checked(section: str, message: str) -> None:

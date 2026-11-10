@@ -87,23 +87,19 @@ def parse_config(raw: str) -> Config:
         rules = parse_rules(raw)
     except RulesError as error:
         raise ConfigError(str(error)) from error
-    worker_argv = tuple(data.get("worker", {}).get("argv", ()))
+    worker_argv = _argv(data, "worker")
     if "worker" in data and not worker_argv:
         raise ConfigError("[worker] argv is required: the command that runs one worker")
     if worker_argv and "{brief}" not in " ".join(worker_argv):
         raise ConfigError("[worker] argv must reference {brief}: the file holding the task")
-    send_argv = tuple(data.get("outbound", {}).get("argv", ()))
-    defaults = WatchdogPolicy()
-    section = data.get("watchdog", {})
-    known = {entry.name for entry in fields(WatchdogPolicy)}
-    if unknown := set(section) - known:
-        raise ConfigError(f"unknown [watchdog] keys: {sorted(unknown)}")
-    try:
-        policy = WatchdogPolicy(**{key: type(getattr(defaults, key))(value) for key, value in section.items()})
-    except (TypeError, ValueError) as error:
-        raise ConfigError(f"invalid [watchdog] section: {error}") from error
-    allow_same_user = bool(data.get("worker", {}).get("allow_same_user", False))
-    digest_channel = str(data.get("digest", {}).get("channel", ""))
+    send_argv = _argv(data, "outbound")
+    policy = _watchdog(_table(data, "watchdog"))
+    allow_same_user = _table(data, "worker").get("allow_same_user", False)
+    if not isinstance(allow_same_user, bool):
+        raise ConfigError("[worker] allow_same_user must be true or false")
+    digest_channel = _table(data, "digest").get("channel", "")
+    if not isinstance(digest_channel, str):
+        raise ConfigError("[digest] channel must be a string such as discord:123")
     tick_section = _table(data, "tick")
     deadline = _number(tick_section, "tick", "deadline_seconds", 600.0, minimum=1.0)
     alert_after = _number(tick_section, "tick", "alert_after_seconds", 300.0, minimum=0.0)
@@ -145,9 +141,6 @@ def parse_config(raw: str) -> Config:
         raise ConfigError('[briefs] repos maps owner/repo to a path, such as { "your-org/app" = "~/code/app" }')
     if isinstance(limit, bool) or not isinstance(limit, int) or limit < 0:
         raise ConfigError("[briefs] daily_limit must be a whole number, 0 or more")
-    heartbeat = _table(data, "heartbeat").get("argv", [])
-    if not isinstance(heartbeat, list) or not all(isinstance(part, str) for part in heartbeat):
-        raise ConfigError("[heartbeat] argv must be a list of strings")
     return Config(
         rules,
         worker_argv,
@@ -156,7 +149,7 @@ def parse_config(raw: str) -> Config:
         allow_same_user,
         digest_channel=digest_channel,
         alerts_channel=alerts_channel,
-        heartbeat_argv=tuple(heartbeat),
+        heartbeat_argv=_argv(data, "heartbeat"),
         tick_deadline_seconds=deadline,
         alert_after_seconds=alert_after,
         connectors=connectors,
@@ -180,6 +173,24 @@ def _table(data: dict[str, object], name: str) -> dict[str, object]:
     return section
 
 
+def _argv(data: dict[str, object], name: str) -> tuple[str, ...]:
+    argv = _table(data, name).get("argv", [])
+    if not isinstance(argv, list) or not all(isinstance(part, str) for part in argv):
+        raise ConfigError(f'[{name}] argv must be a list of strings, such as ["hermes", "send"]')
+    return tuple(argv)
+
+
+def _watchdog(section: dict[str, object]) -> WatchdogPolicy:
+    defaults = WatchdogPolicy()
+    if unknown := set(section) - {entry.name for entry in fields(WatchdogPolicy)}:
+        raise ConfigError(f"unknown [watchdog] keys: {sorted(unknown)}")
+    for key, value in section.items():
+        whole = isinstance(getattr(defaults, key), int)
+        if isinstance(value, bool) or not isinstance(value, int if whole else (int, float)):
+            raise ConfigError(f"[watchdog] {key} must be a {'whole number' if whole else 'number'}")
+    return WatchdogPolicy(**{key: type(getattr(defaults, key))(value) for key, value in section.items()})
+
+
 def _number(section: dict[str, object], name: str, key: str, default: float, *, minimum: float) -> float:
     value = section.get(key, default)
     if isinstance(value, bool) or not isinstance(value, (int, float)) or not math.isfinite(value) or value < minimum:
@@ -189,13 +200,18 @@ def _number(section: dict[str, object], name: str, key: str, default: float, *, 
 
 def _reject_unknown_keys(data: dict[str, object]) -> None:
     problems = [f"unknown top-level keys: {sorted(unknown)}" for unknown in [set(data) - _KNOWN_KEYS[""]] if unknown]
-    for name, body in dict(data.get("sources") or {}).items():  # type: ignore[call-overload]
+    sources, semantic = data.get("sources", {}), data.get("semantic", [])
+    if not isinstance(sources, dict) or not all(isinstance(body, dict) for body in sources.values()):
+        raise ConfigError("sources must be one table per source, such as [sources.github]")
+    if not isinstance(semantic, list) or not all(isinstance(rule, dict) for rule in semantic):
+        raise ConfigError("semantic must be [[semantic]] tables")
+    for name, body in sources.items():
         if unknown := set(body) - _KNOWN_KEYS["sources"]:
             problems.append(f"unknown keys in [sources.{name}]: {sorted(unknown)}")
-    for rule in data.get("semantic") or []:  # type: ignore[attr-defined]
+    for rule in semantic:
         if unknown := set(rule) - _KNOWN_KEYS["semantic"]:
             problems.append(f"unknown keys in [[semantic]]: {sorted(unknown)}")
-    for section in ("worker", "outbound", "digest", "channels", "heartbeat", "tick", "brief"):
+    for section in ("worker", "outbound", "digest", "channels", "heartbeat", "tick", "brief", "briefs"):
         body = data.get(section) or {}
         if not isinstance(body, dict):
             problems.append(f"[{section}] must be a table")
