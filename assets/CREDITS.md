@@ -24,7 +24,7 @@ Licence evidence:
 - The API docs (https://metmuseum.github.io/) say the API gives access to Open Access data and "corresponding high resolution images (JPEG format) that are in the public domain".
 - The Met's Open Access repository (https://github.com/metmuseum/openaccess) says the dataset is released under Creative Commons Zero and that covered artworks are marked "with the Creative Commons Zero (CC0) icon" on the museum's website.
 
-Not verified: the object page and the Met's Open Access policy page both returned HTTP 429 to this script, so the CC0 icon on the object page itself was not seen. Open the object page to confirm it before release.
+Not seen: the object page and the Met's Open Access policy page return HTTP 429 to scripts, so the CC0 icon on the object page itself wasn't checked. The API record, re-read on 2026-11-10, still says `"isPublicDomain": true` for the same image.
 
 Attribution is not required. A suggested courtesy line is "Head: Marble head of Zeus Ammon, The Metropolitan Museum of Art, 2012.22 (public domain)."
 

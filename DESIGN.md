@@ -35,12 +35,12 @@ Nothing here touches Hermes core or imports its internals. Everything goes throu
 
 ## What the MVP includes
 
-Router dispatch, one worker per ticket, status back to the router, a gate with record-only rules, thread pass-through, the external watchdog, the guard hooks and the demo.
+Router dispatch, one worker per ticket, status back to the router, a gate with record-only rules, thread pass-through, the external watchdog, the guard hooks and the demo. Then the item ledger and its connectors, the daily brief, the agents board and the worker brief writer.
 
 ## What it leaves out
 
 - Kanban, tmux and cmux worker backends, and reading a worker's screen as progress evidence.
-- Email and calendar sources, and a full event ledger. The digest covers results, waiting questions, escalations and record-mode rule decisions, not every event.
+- A log of every gate and router event. The digest covers results, waiting questions, escalations and record-mode rule decisions, not every event.
 - Speculative execution, and waking the router model when a worker finishes (`ctx.inject_message`). Relay is code for now.
 - Memory updates from worker conclusions, and a desktop panel.
 - A watchdog that edits prompts or rules at runtime. DeepSeek's can. Ours can't, on purpose: see below.
@@ -58,7 +58,7 @@ Event content is attacker-controlled, and framing is only a mitigation. So who c
 | Forged webhook | Hermes checks each route's secret, and the gate admits an event only when the comment's or issue's author is also the one who triggered it, so nobody can act on someone else's text. Threads are scoped to their source | On a route without a secret, anyone who can reach it can claim any author |
 | Stranger steering a worker through a subscribed thread | Bots never reach workers, and strangers don't by default. `pass_strangers` opts a source in, framed and marked as having no authority, and a stranger can never resume a parked ticket | With the opt-in, a worker still reads hostile text |
 | Worker compromised by what it reads | **The boundary is the sandbox.** On a local terminal backend a worker runs as the router's OS user, so it could rewrite `superagent.toml` (whose commands the watchdog runs) and the database. The plugin therefore blocks `terminal`, file and code tools in a worker unless the profile uses a sandboxed backend such as docker, or the operator sets `allow_same_user` and accepts that. Workers also get an env allowlist, so no secrets or YOLO settings are inherited, and no outbound tools | This is a denylist over Hermes tools, not a full sandbox. The report command for agents outside Hermes has no such guard, so those agents need their own. A sandboxed worker can still do what its own credentials allow, so scope them |
-| Forged or late reports | Per-assignment token, hashed at rest, read by the tool from a private file in the session's worker directory, so it is not in the prompt. A session anywhere else gets no tools. A worker is fenced before it is stopped, then its reports and every tool call are refused | Only holds while the worker can't reach the database, see above. A worker may be able to read its own identity file, but the token only covers its own assignment |
+| Forged or late reports | Per-assignment token, hashed in the database and kept in plaintext only in a private file in the session's worker directory, where the tool reads it, so it is not in the prompt. A session anywhere else gets no tools. A worker is fenced before it is stopped, then its reports and every tool call are refused | Only holds while the worker can't reach the database, see above. A worker may be able to read its own identity file, but the token only covers its own assignment |
 | Worker report steering the router or exfiltrating files | Relay is code and the router model is not in that path. `MEDIA:` tags are neutralised, since `hermes send` would otherwise upload the file a report names. The drift judge sees reports framed as data, most recent first when truncated | Report text reaches people otherwise verbatim, capped at 100 words |
 | Watchdog as a high-value target | The judge has no tools and can only return `on_track` or `drifting`, so a fooled judge can only spend the repair budget and escalate. It cannot widen a mandate or edit rules. A broken judge never triggers a repair | A hostile report can cause a spurious nudge or restart, up to the budget |
 | Credentials | The plugin holds none. Model calls use `ctx.llm`, outbound uses the configured command | Depends on the operator's profile setup |
@@ -79,8 +79,8 @@ If the gate itself fails, the message is dropped and logged rather than let thro
 - A worker that ends its turn without a final report is parked, not restarted: its last output goes to a person as a question, so side effects aren't repeated. A worker that dies with no output at all is restarted.
 - Hermes gives hooks no mention flag, so chat messages count as addressed and rely on the adapter's own mention rules. Semantic rules therefore apply to listed bots and `ingest` sources for now.
 - Under `plugins.isolation: host`, Hermes skips `hermes superagent`, so use `python -m superagent` there.
-- `hermes plugins validate` passes with one scanner caution: the invisible-character regex in `framing.py`, which is the sanitizer itself.
-- CI runs the whole path on real Hermes with a fake model, in `tests/e2e`: a webhook message through the gate, the router, real workers, a tick and the relay. [One recorded run](docs/live-run.md) on a real model covers the brief writer, a worker, the watchdog and a relay to Discord. The router's own model turn, an incoming chat message, the drift judge and the watchdog's repairs haven't run live.
+- `hermes plugins validate` and a non-interactive install both pass, and the install scan's verdict is `safe`.
+- CI runs the router and worker path on real Hermes with a fake model, in `tests/e2e`: a webhook message through the gate, the router, real workers, a tick and a relay to a stub. [One recorded run](docs/live-run.md) on a real model covers the brief writer, a worker, the watchdog and a relay to Discord. The router's own model turn, an incoming chat message and the drift judge haven't run live, and the watchdog's nudge, restart and escalate haven't run on real Hermes at all, only in unit tests and the demo.
 
 ## How this differs from the catalog
 

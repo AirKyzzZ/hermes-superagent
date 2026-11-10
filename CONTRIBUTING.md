@@ -23,7 +23,7 @@ uv run --no-project --with-requirements requirements-dev.txt mypy
 uv run --no-project --with-requirements requirements-dev.txt pytest -q
 ```
 
-Two more CI jobs load the plugin through real Hermes (`hermes plugins doctor` and `hermes plugins validate`) and run the router and worker path end to end with a fake model. You don't need to run them locally, see [the workflow](.github/workflows/ci.yml).
+Three more CI jobs load and install the plugin through real Hermes (`hermes plugins doctor`, `hermes plugins validate` and a non-interactive install), run the router and worker path end to end with a fake model, and install the package into clean pip and uv environments. You don't need to run them locally, see [the workflow](.github/workflows/ci.yml).
 
 The plugin has no runtime dependencies, and it should stay that way. Dev tools go in `requirements-dev.txt`, never in `pyproject.toml`: Hermes rebuilds its shared environment when a plugin's `pyproject.toml` declares dependency groups.
 
@@ -49,7 +49,7 @@ fields = { id = "id", title = "name", url = "link", status = "state" }
 confirm_argv = ["my-tool", "show", "{id}", "--json"]
 ```
 
-`superagent doctor` polls it once without recording anything. Every key is described in the [configuration table](README.md#configuration). If it works for you, share the block in a [connector issue](https://github.com/AirKyzzZ/hermes-superagent/issues/new?template=connector.yml) so others can use it too.
+Set `total` or `limit` if the tool reports them, or a cut list reads as complete. `superagent doctor` polls it once without recording anything. Every key is described in the [configuration table](README.md#configuration). If it works for you, share the block in a [connector issue](https://github.com/AirKyzzZ/hermes-superagent/issues/new?template=connector.yml) so others can use it too.
 
 A built-in type is worth writing when a block can't express what the tool needs, such as pagination, a total to check against, or a lookup to confirm that one item closed. It's one file in [`superagent/connectors/`](superagent/connectors/):
 
