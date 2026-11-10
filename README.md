@@ -349,7 +349,7 @@ The rendered prompt becomes the goal, the comment's author is checked against `a
 
 ## Configuration
 
-`superagent.toml` lives in the shared directory, and edits to its rules apply without a restart. Unknown keys are refused everywhere but `[briefs]`. If an edit is refused, for bad TOML, an unknown key or a missing value, the plugin keeps running on the last good copy while every tick fails with the error until it's fixed. Hermes gives hooks no mention flag, so chat messages always count as addressed, and team rules only see listed bots and `ingest` events for now.
+`superagent.toml` lives in the shared directory, and edits to its rules apply without a restart. Unknown keys and values of the wrong type are refused. If an edit is refused, for bad TOML, an unknown key, a wrong type or a missing value, the plugin keeps running on the last good copy while every tick fails with the error until it's fixed. Hermes gives hooks no mention flag, so chat messages always count as addressed, and team rules only see listed bots and `ingest` events for now.
 
 | Key | Default | What it does |
 | --- | --- | --- |

@@ -387,7 +387,7 @@ def run_compare(args: argparse.Namespace, runtime: Runtime, writer: BriefWriter 
 def compare_pack(runtime: Runtime, task: PastTask) -> Pack:
     config = runtime.config
     spec = next((spec for spec in config.connectors if spec.name == task.item.connector), None)
-    repo = str(task.item.meta.get("repo", ""))
+    repo = repo_key(spec.type if spec else task.item.connector, str(task.item.meta.get("repo", "")))
     return build_pack(
         None,
         task.item,

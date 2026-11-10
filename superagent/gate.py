@@ -61,19 +61,19 @@ def parse_rules(raw: str) -> Rules:
         sources = {
             name: SourceRules(
                 policy=SourcePolicy(body["policy"]),
-                allow=frozenset(body.get("allow", [])),
-                bots=frozenset(body.get("bots", [])),
-                pass_strangers=bool(body.get("pass_strangers", False)),
-                notify=str(body.get("notify", "")),
-                via_router=bool(body.get("via_router", False)),
+                allow=_names(body, f"[sources.{name}]", "allow"),
+                bots=_names(body, f"[sources.{name}]", "bots"),
+                pass_strangers=_flag(body, f"[sources.{name}]", "pass_strangers"),
+                notify=_text(body, f"[sources.{name}]", "notify", ""),
+                via_router=_flag(body, f"[sources.{name}]", "via_router"),
             )
             for name, body in data.get("sources", {}).items()
         }
         semantic = tuple(
             SemanticRule(
-                name=rule["name"],
-                text=rule["text"],
-                mode=RuleMode(rule.get("mode", RuleMode.RECORD)),
+                name=_text(rule, "[[semantic]]", "name"),
+                text=_text(rule, "[[semantic]]", "text"),
+                mode=RuleMode(_text(rule, "[[semantic]]", "mode", RuleMode.RECORD)),
             )
             for rule in data.get("semantic", [])
         )
@@ -81,6 +81,27 @@ def parse_rules(raw: str) -> Rules:
         raise RulesError(f"invalid rules file: {error}") from error
     version = hashlib.sha256(raw.encode()).hexdigest()[:12]
     return Rules(version=version, sources=sources, semantic=semantic)
+
+
+def _names(body: dict[str, object], where: str, key: str) -> frozenset[str]:
+    value = body.get(key, [])
+    if not isinstance(value, list) or not all(isinstance(name, str) for name in value):
+        raise RulesError(f'{where} {key} must be a list of names, such as ["alice"]')
+    return frozenset(value)
+
+
+def _flag(body: dict[str, object], where: str, key: str) -> bool:
+    value = body.get(key, False)
+    if not isinstance(value, bool):
+        raise RulesError(f"{where} {key} must be true or false")
+    return value
+
+
+def _text(body: dict[str, object], where: str, key: str, default: str | None = None) -> str:
+    value = body[key] if default is None else body.get(key, default)
+    if not isinstance(value, str):
+        raise RulesError(f"{where} {key} must be a string")
+    return value
 
 
 def load_rules(path: Path) -> Rules:

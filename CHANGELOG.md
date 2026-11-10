@@ -2,6 +2,14 @@
 
 Notable changes to hermes-superagent. The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and versions follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Fixed
+
+- A config value of the wrong type, such as `argv = 1` or `pass_strangers = "false"`, is refused like any other bad edit, so the plugin keeps running on the last good config instead of crashing or reading `"false"` as true.
+- Unknown keys in `[briefs]` are refused, like everywhere else.
+- `briefs --compare` finds a GitLab task's checkout under its `gitlab:group/project` key, as a real brief does.
+
 ## [0.1.0] - 2026-11-10
 
 The first version, built for the Hermes Plugin Hackathon. It needs Hermes 0.22.7 or newer on macOS or Linux and has no Python dependencies of its own.
@@ -51,4 +59,5 @@ The first version, built for the Hermes Plugin Hackathon. It needs Hermes 0.22.7
 - Gmail, Google Calendar and WhatsApp were built on synthetic data until real samples arrive.
 - Workers that are Claude Code sessions in tmux or cmux over ssh aren't implemented.
 
+[Unreleased]: https://github.com/AirKyzzZ/hermes-superagent/compare/v0.1.0...HEAD
 [0.1.0]: https://github.com/AirKyzzZ/hermes-superagent/releases/tag/v0.1.0

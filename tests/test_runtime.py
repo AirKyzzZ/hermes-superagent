@@ -140,6 +140,46 @@ def test_config_rejects_unknown_keys(typo: str) -> None:
         parse_config(typo + '\n[worker]\nargv = ["w", "{brief}"]\n')
 
 
+@pytest.mark.parametrize(
+    "section",
+    [
+        "sources = 1\n",
+        'sources = ["github"]\n',
+        "[sources]\ngithub = 1\n",
+        "semantic = 1\n",
+        "semantic = [1]\n",
+        "watchdog = 1\n",
+        "[worker]\nargv = 1\n",
+        "[worker]\nargv = [1]\n",
+        '[worker]\nargv = "w {brief}"\n',
+        '[worker]\nargv = ["w", "{brief}"]\nallow_same_user = "false"\n',
+        '[outbound]\nargv = "echo"\n',
+        '[watchdog]\nnudge_budget = "2"\n',
+        "[watchdog]\nrepeat_limit = 1.5\n",
+        "[watchdog]\nstall_after_seconds = true\n",
+        "[digest]\nchannel = 1\n",
+        '[sources.github]\npolicy = "candidate"\nallow = "alice"\n',
+        '[sources.github]\npolicy = "candidate"\nbots = "ci"\n',
+        '[sources.github]\npolicy = "candidate"\npass_strangers = "false"\n',
+        '[sources.github]\npolicy = "candidate"\nvia_router = "no"\n',
+        '[sources.github]\npolicy = "candidate"\nnotify = 1\n',
+        '[[semantic]]\nname = 1\ntext = "t"\n',
+    ],
+)
+def test_config_refuses_a_value_of_the_wrong_type(section: str) -> None:
+    with pytest.raises(ConfigError):
+        parse_config(section)
+
+
+def test_a_wrong_typed_edit_keeps_the_last_good_config(tmp_path: Path) -> None:
+    home = home_with_config(tmp_path)
+    open_runtime(home)
+    (home / "superagent.toml").write_text(CONFIG.replace('allow = ["alice"]', 'allow = ["alice"]\npass_strangers = 1'))
+    runtime = open_runtime(home)
+    assert runtime.config.rules.sources["github"].pass_strangers is False
+    assert any("pass_strangers" in error and "last good config" in error for error in tick(runtime).errors)
+
+
 def test_candidate_assessment_takes_a_bounded_batch(tmp_path: Path) -> None:
     runtime = open_runtime(home_with_config(tmp_path))
     for number in range(MAX_ASSESS_BATCH + 5):

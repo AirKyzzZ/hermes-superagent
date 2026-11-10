@@ -126,6 +126,17 @@ def test_the_cli_refuses_risky_output_before_spending_anything(
     assert message in capsys.readouterr().err and llm.calls == []
 
 
+def test_a_gitlab_task_finds_its_checkout_like_a_real_brief_does(tmp_path: Path) -> None:
+    home = home_with(tmp_path, '[briefs]\nrepos = { "gitlab:acme/app" = "/code/app" }\n')
+    past = tmp_path / "past.json"
+    task = {"connector": "gitlab", "title": "acme/app!3 Fix the cache", "typed": "fix it", "ran": "Fix the cache."}
+    past.write_text(json.dumps([task | {"meta": {"repo": "acme/app"}}]))
+    llm = scripted()
+    argv = ["briefs", "--compare", str(past), "--out", str(tmp_path / "s.md"), "--key", str(tmp_path / "k.md")]
+    assert cli(home, *argv, llm=llm) == 0
+    assert "acme/app is checked out at /code/app" in llm.calls[0]["input"][0]["text"]
+
+
 def test_more_tasks_than_the_daily_limit_need_a_yes(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
     home = home_with(tmp_path, "[briefs]\ndaily_limit = 1\n")
     argv = ["briefs", "--compare", str(PAST), "--out", str(tmp_path / "s.md"), "--key", str(tmp_path / "k.md")]
