@@ -1,5 +1,3 @@
-> Draft for the v0.1.0 GitHub release. Nothing is tagged or published yet. Delete this line when publishing, and recheck "Not proven yet" against the state of `main`.
-
 # hermes-superagent 0.1.0
 
 A Hermes Agent plugin that brings DeepSeek's Super-agent design to Hermes: one router in front of a worker per task, a watchdog that restarts the stuck ones, and a ledger that never drops an issue, task or Claude Code session.
@@ -38,15 +36,15 @@ With no role set, the plugin's hooks do nothing and it offers no tools.
 - **A daily brief** that lists every open item at least every few days.
 - **Worker briefs** written from the ledger's context, challenged by a second model call and linted in code against untrusted text.
 
-The full list is in the [changelog](../CHANGELOG.md).
+The full list is in the [changelog](https://github.com/AirKyzzZ/hermes-superagent/blob/v0.1.0/CHANGELOG.md).
 
 ## What it does on your machine
 
-It runs the worker, delivery and connector commands you configure, spends tokens on your profile's model during ticks and worker briefs, and writes its database and worker directories under the home you choose. It only types into a terminal if you set `relaunch = true`. It makes no network calls of its own, sends no telemetry and holds no credentials. Details are in the [README](../README.md#what-it-does-on-your-machine).
+It runs the worker, delivery and connector commands you configure, spends tokens on your profile's model during ticks and worker briefs, and writes its database and worker directories under the home you choose. It only types into a terminal if you set `relaunch = true`. It makes no network calls of its own, sends no telemetry and holds no credentials. Details are in the [README](https://github.com/AirKyzzZ/hermes-superagent/blob/v0.1.0/README.md#what-it-does-on-your-machine).
 
 ## Not proven yet
 
-CI runs the whole router and worker path on real Hermes with a fake model. [One recorded run](live-run.md) on a real model covers the brief writer, a worker, the watchdog and a relay to Discord. The router's own model turn, an incoming chat message, the drift judge and the watchdog's repairs haven't run live. Gmail and WhatsApp were built on synthetic data.
+CI runs the whole router and worker path on real Hermes with a fake model. [One recorded run](https://github.com/AirKyzzZ/hermes-superagent/blob/v0.1.0/docs/live-run.md) on a real model covers the brief writer, a worker, the watchdog and a relay to Discord. The router's own model turn, an incoming chat message, the drift judge and the watchdog's repairs haven't run live. Gmail, Google Calendar and WhatsApp were built on synthetic data.
 
 ## Thanks
 
