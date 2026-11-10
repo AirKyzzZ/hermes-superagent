@@ -31,7 +31,7 @@ The form can go in as soon as the PR is open. Catalog checks run once a maintain
 
 ## Before submitting
 
-**Tested so far:** CI runs the whole path on real Hermes with a fake model. [One recorded run](live-run.md) on Hermes 0.23.0 and a real model wrote a brief, took a task through a worker and the watchdog, and relayed the result to Discord. The router's own model turn and an incoming chat message haven't run live. [SUBMISSION.md](../SUBMISSION.md) tracks what's left.
+**Tested so far:** CI runs the router and worker path on real Hermes with a fake model, relaying to a stub. [One recorded run](live-run.md) on Hermes 0.23.0 and a real model wrote a brief, took a task through a worker and the watchdog, and relayed the result to Discord. The router's own model turn, an incoming chat message and the drift judge haven't run live, and the watchdog's nudge, restart and escalate haven't run on real Hermes. [SUBMISSION.md](../SUBMISSION.md) tracks what's left.
 
 | Catalog rule | State | Evidence |
 | --- | --- | --- |
@@ -67,9 +67,9 @@ The plugin page renders the README through an allowlist that drops raw HTML, so 
 ```markdown
 Adds hermes-superagent, a plugin that brings DeepSeek's Super-agent design to Hermes: one resident router that talks to people and never executes, isolated workers that report only to it, a sender gate plus team-written trigger rules, and an external watchdog that checks real progress and goal drift, then nudges, restarts or escalates.
 
-It also keeps an item ledger fed by connectors (GitHub through `gh`, GitLab through `glab`, Todoist through `td`, Gmail and Google Calendar through `gog`, WhatsApp through `wacli`, CodexBar, Anki, any tool that prints JSON, and Claude Code sessions on several machines), so nothing a source shows is silently lost: polls that can't prove they're complete mark nothing gone, vanished items are checked one by one, triage rules file items by area, and a daily brief lists every open item at least every few days. On top of it, it writes worker briefs from that context (drafted, challenged and revised by the model, then linted in code against untrusted text), and can nudge a stopped Claude Code session when asked to.
+It also keeps an item ledger fed by connectors (GitHub through `gh`, GitLab through `glab`, Todoist through `td`, Gmail and Google Calendar through `gog`, WhatsApp through `wacli`, CodexBar, Anki, any tool that prints JSON, and Claude Code sessions on several machines), so nothing a source shows is silently lost: polls that can't prove they're complete mark nothing gone, vanished items are checked one by one, triage rules file items by area, and a daily brief lists every open item again once `stale_after` has passed, three days by default, unless it's snoozed or its worker is running. On top of it, `hermes superagent briefs` writes worker briefs from that context (drafted, challenged and revised by the model, then linted in code against untrusted text), and can nudge a stopped Claude Code session when asked to.
 
-Hermes surfaces: `ctx.register_tool` (7 tools), the hooks `pre_gateway_dispatch`, `pre_llm_call`, `pre_tool_call` and `post_tool_call`, `ctx.llm`, `ctx.register_cli_command` (`hermes superagent setup`, `doctor`, `tick`, `ledger`, `agents`, `brief`, `briefs` and more) and `ctx.register_automation_blueprint`. No core patches.
+Hermes surfaces: `ctx.register_tool` (7 tools), the hooks `pre_gateway_dispatch`, `pre_llm_call`, `pre_tool_call` and `post_tool_call`, `ctx.llm`, `ctx.register_system_prompt_section`, `ctx.register_cli_command` (`hermes superagent setup`, `doctor`, `tick`, `ledger`, `agents`, `brief`, `briefs` and more) and `ctx.register_automation_blueprint` (`watchdog` and `digest`). No core patches.
 
 Disclosure, also in the README:
 - Spawns long-running worker processes from the argv the operator configures, and runs the outbound send command and the connector commands the operator configures.
@@ -79,7 +79,7 @@ Disclosure, also in the README:
 - Stops or restarts its own workers by process group.
 - Spends tokens on the profile's model during ticks, and three calls per worker brief, capped per day.
 - Writes its database and worker directories under the configured home.
-- Inert until a profile sets a role. No telemetry, no network calls of its own, no stored credentials.
+- Inert until a profile sets a role, except in a session inside one of its own worker directories. No telemetry, no network connections in its own code (the `anki` connector posts to AnkiConnect through `curl`), no stored credentials.
 - The install scan's verdict is `safe`, with no high or critical findings. Its medium and low findings are pattern hits in the code that runs commands the operator configures, in docs, tests, examples and CI, and in the lint and sanitizer patterns themselves.
 - `assets/art` holds the scripts that built the cover from a public-domain Met image. The plugin never runs them.
 ```

@@ -1,6 +1,6 @@
 # Shadow install
 
-The steps that put hermes-superagent next to an existing Hermes setup in shadow mode. It watches every Claude Code session on each machine, keeps a ledger, and posts to its own Discord channels. It changes nothing else: no role in the live profile, no edits to Hermes config, and no messages anywhere except the channels named below. The [dogfood design](dogfood-design.md) explains why.
+The steps that put hermes-superagent next to an existing Hermes setup in shadow mode. It watches every Claude Code session on each machine, keeps a ledger, and posts to its own Discord channels. It changes nothing else: no role in the live profile, no edits to Hermes config, and no messages anywhere except the channels named below. The [dogfood design](dogfood-design.md) explains why. These are the steps from the maintainer's own install, written for an agent doing it with the machine's owner, so if you follow them yourself, "the owner" is you.
 
 ## 0. Check what's there
 

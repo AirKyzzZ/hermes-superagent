@@ -36,8 +36,8 @@ The first version, built for the Hermes Plugin Hackathon. It needs Hermes 0.22.7
 - Polls that can't prove they're complete mark nothing gone, and vanished items are checked one by one.
 - An agents board of every Claude Code session on your machines, from a small hook and a read-only probe over ssh.
 - Triage rules that file new items into areas.
-- A daily brief that lists every open item at least every few days.
-- Worker briefs written from the ledger's context: drafted, challenged and revised by the model, then linted in code against untrusted text, with a blind comparison against the briefs that ran.
+- A daily brief that lists every open item again once `stale_after` has passed, three days by default, unless it's snoozed or its worker is running.
+- Worker briefs on demand with `hermes superagent briefs`, written from the ledger's context: drafted, challenged and revised by the model, then linted in code and marked NEEDS APPROVAL when they draw on untrusted text, with a blind comparison against the briefs that ran. Workers don't get them automatically yet.
 - An optional nudge for Claude Code sessions stopped by an API error or a rate limit, off unless you set `relaunch = true`.
 
 #### Install and tooling
@@ -51,13 +51,13 @@ The first version, built for the Hermes Plugin Hackathon. It needs Hermes 0.22.7
 
 - Dispatch and forward accept only a trigger the gate admitted, offered within the hour, still allowed and unused.
 - Send directives in untrusted text are neutralised, including behind extra brackets.
-- Report tokens are per assignment and hashed at rest.
+- Report tokens are per assignment, hashed in the database and handed to each worker in a private file.
 - Workers start from an environment allowlist, so they inherit no YOLO or approval-bypass setting.
 - Stopping a worker checks its start time first and handles macOS zombies, other users and leaderless process groups.
 
 ### Known limits
 
-- CI runs the whole path on real Hermes with a fake model. [One recorded run](docs/live-run.md) on a real model covers the brief writer, a worker, the watchdog and a relay to Discord. The router's own model turn, an incoming chat message, the drift judge and the watchdog's repairs haven't run live.
+- CI runs the router and worker path on real Hermes with a fake model, from a webhook through the gateway to a stubbed relay. [One recorded run](docs/live-run.md) on a real model covers the brief writer, a worker, the watchdog and a relay to Discord. The router's own model turn, an incoming chat message and the drift judge haven't run live, and the watchdog's nudge, restart and escalate haven't run on real Hermes at all, only in unit tests and the demo.
 - Gmail, Google Calendar and WhatsApp were built on synthetic data until real samples arrive.
 - Workers that are Claude Code sessions in tmux or cmux over ssh aren't implemented.
 

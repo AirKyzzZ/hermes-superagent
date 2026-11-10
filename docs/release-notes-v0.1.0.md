@@ -25,7 +25,7 @@ hermes plugins install AirKyzzZ/hermes-superagent --enable
 hermes superagent --home ~/superagent setup
 ```
 
-With no role set, the plugin's hooks do nothing and it offers no tools.
+With no role set, outside its own worker directories, the plugin's hooks do nothing and it offers no tools.
 
 ## What's in it
 
@@ -33,18 +33,18 @@ With no role set, the plugin's hooks do nothing and it offers no tools.
 - **One worker per task.** Isolated sessions that report only to the router, with follow-ups passed through and blocked tasks parked until someone answers.
 - **A watchdog outside the workers.** It checks real progress and goal drift, then nudges, restarts or escalates within a budget. Old workers are fenced before they're stopped.
 - **A ledger that keeps everything.** GitHub, GitLab, Todoist, Gmail, Google Calendar, WhatsApp, coding-agent quota, Anki, any tool that prints JSON, and every Claude Code session on your machines. A poll that can't prove it's complete marks nothing gone.
-- **A daily brief** that lists every open item at least every few days.
-- **Worker briefs** written from the ledger's context, challenged by a second model call and linted in code against untrusted text.
+- **A daily brief** that lists every open item again once `stale_after` has passed, three days by default, unless it's snoozed or its worker is running.
+- **Worker briefs** on demand with `hermes superagent briefs`, written from the ledger's context, challenged by a second model call and linted in code against untrusted text.
 
 The full list is in the [changelog](https://github.com/AirKyzzZ/hermes-superagent/blob/v0.1.0/CHANGELOG.md).
 
 ## What it does on your machine
 
-It runs the worker, delivery and connector commands you configure, spends tokens on your profile's model during ticks and worker briefs, and writes its database and worker directories under the home you choose. It only types into a terminal if you set `relaunch = true`. It makes no network calls of its own, sends no telemetry and holds no credentials. Details are in the [README](https://github.com/AirKyzzZ/hermes-superagent/blob/v0.1.0/README.md#what-it-does-on-your-machine).
+It runs the worker, delivery and connector commands you configure, spends tokens on your profile's model during ticks and worker briefs, and writes its database and worker directories under the home you choose. It only types into a terminal if you set `relaunch = true`. It opens no network connections in its own code, sends no telemetry and stores none of your accounts' credentials: connectors use your tools' own logins, and `anki` posts to AnkiConnect through `curl`. Details are in the [README](https://github.com/AirKyzzZ/hermes-superagent/blob/v0.1.0/README.md#what-it-does-on-your-machine).
 
 ## Not proven yet
 
-CI runs the whole router and worker path on real Hermes with a fake model. [One recorded run](https://github.com/AirKyzzZ/hermes-superagent/blob/v0.1.0/docs/live-run.md) on a real model covers the brief writer, a worker, the watchdog and a relay to Discord. The router's own model turn, an incoming chat message, the drift judge and the watchdog's repairs haven't run live. Gmail, Google Calendar and WhatsApp were built on synthetic data.
+CI runs the router and worker path on real Hermes with a fake model, from a webhook through the gateway to a stubbed relay. [One recorded run](https://github.com/AirKyzzZ/hermes-superagent/blob/v0.1.0/docs/live-run.md) on a real model covers the brief writer, a worker, the watchdog and a relay to Discord. The router's own model turn, an incoming chat message and the drift judge haven't run live, and the watchdog's nudge, restart and escalate haven't run on real Hermes at all, only in unit tests and the demo. Gmail, Google Calendar and WhatsApp were built on synthetic data.
 
 ## Thanks
 

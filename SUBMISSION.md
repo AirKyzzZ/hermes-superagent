@@ -1,6 +1,6 @@
 # Submission checklist
 
-Hermes Agent Plugin Hackathon. Due Wednesday 2026-11-11 at 23:00 Paris (22:00 UTC). Target: Tuesday evening. The owner does the three steps at the bottom himself. Nothing in this repo opens the PR, posts or submits. Rules and the catalog table are in [docs/hackathon.md](docs/hackathon.md).
+Hermes Agent Plugin Hackathon. The announcement says Wednesday 2026-11-11 at 23:00 Paris (22:00 UTC), but the form says it ends at 1pm PST, 22:00 Paris, so treat that as the deadline. The owner does the three steps at the bottom himself. Nothing in this repo opens the PR, posts or submits. Rules and the catalog table are in [docs/hackathon.md](docs/hackathon.md).
 
 ## Where it stands
 
@@ -8,11 +8,11 @@ Hermes Agent Plugin Hackathon. Due Wednesday 2026-11-11 at 23:00 Paris (22:00 UT
 | --- | --- | --- |
 | Plugin on `main`, CI green on Ubuntu, macOS and real Hermes | Done | |
 | `hermes plugins install` passes Hermes's scan without `--force` | Done | |
-| Catalog entry and PR text | Ready | Pin the commit at submission |
+| Catalog entry and PR text | Done | Pinned at `83544d7`, the v0.1.0 commit |
 | Run on a live model | Done | Part A is [recorded](docs/live-run.md). It found one bug, fixed in #69 |
-| Demo video under 90 seconds | Missing | The video work is separate from this repo |
-| Catalog PR | Owner | Step 1 |
-| Post on X | Owner | Step 2 |
+| Demo video under 90 seconds | Done | Posted on X with the thread |
+| Catalog PR | Open | [NousResearch/hermes-agent#152772](https://github.com/NousResearch/hermes-agent/pull/152772) |
+| Post on X | Done | Step 2 |
 | Form | Owner | Step 3 |
 
 ## 1. Catalog PR
@@ -32,8 +32,7 @@ The last line is the check the catalog's CI runs, and it must pass.
 In a fork of `NousResearch/hermes-agent`, on a new branch:
 
 ```bash
-cp /path/to/hermes-superagent/docs/catalog-entry.yaml plugin-catalog/hermes-superagent.yaml
-sed -i '' "s/0000000000000000000000000000000000000000/$sha/g" plugin-catalog/hermes-superagent.yaml
+sed "s/0000000000000000000000000000000000000000/$sha/g" /path/to/hermes-superagent/docs/catalog-entry.yaml > plugin-catalog/hermes-superagent.yaml
 ```
 
 That replaces both the `sha` and the commit in the `image` URL. The PR changes that one file. Its text is the [PR description draft](docs/hackathon.md#pr-description-draft).
@@ -41,7 +40,7 @@ That replaces both the `sha` and the commit in the `image` URL. The PR changes t
 ## 2. Demo video on X
 
 - Under 90 seconds, showing the plugin working.
-- It can say that CI runs the whole path on real Hermes with a fake model and that one recorded run used real Hermes and a real model. It can't say a chat message has gone through the router on a live model.
+- It can say that CI runs the router and worker path on real Hermes with a fake model and that one recorded run used real Hermes and a real model. It can't say a chat message has gone through the router on a live model.
 - Posted on X, with @NousResearch tagged in the post.
 - Keep the post's URL for the form.
 

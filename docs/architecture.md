@@ -15,7 +15,7 @@ flowchart TB
     end
 
     subgraph poll["tick: poll"]
-        connectors["Connectors<br/>prove the list is whole"]
+        connectors["Connectors<br/>check the list is whole"]
     end
 
     workers@{ shape: procs, label: "Workers<br/>one session, directory and token per ticket" }
@@ -54,7 +54,7 @@ flowchart TB
 %%{init: {"theme":"base","layout":"dagre","flowchart":{"wrappingWidth":420,"nodeSpacing":36,"rankSpacing":48},"themeVariables":{"primaryColor":"#1a10b8","primaryTextColor":"#ffffff","primaryBorderColor":"#a9a9cc","lineColor":"#8a8ab8","textColor":"#ffffff","clusterBkg":"#14142a","clusterBorder":"#4a4a78","titleColor":"#f4f4fd","edgeLabelBackground":"#14142a"}}}%%
 ```
 
-Indigo boxes run a model, light boxes are code. No arrow goes from a model straight to a person: what workers report goes to the store, and code relays it, capped at 100 words.
+Indigo boxes run a model, light boxes are code. Apart from the router's chat replies, no arrow goes from a model straight to a person: what workers report goes to the store, and code relays it, capped at 100 words.
 
 ## Who decides what
 
@@ -67,7 +67,7 @@ Indigo boxes run a model, light boxes are code. No arrow goes from a model strai
 | Has this worker drifted off its goal? | Drift judge, model | It has no tools and can only answer `on_track` or `drifting`. The most a fooled judge can do is spend the repair budget |
 | Does a team rule apply to this event? | Rule assessor, model | It has no tools, and a rule only records what it would have done until you set `act` |
 | Is this item really closed? | The source, asked by id, code | Only a closed answer closes it. Anything else stays open |
-| What should this task's brief say? | Brief writer, model | Code lints the result: every line cites a real piece, and commands or addresses only strangers wrote never reach a brief marked ready |
+| What should this task's brief say? | Brief writer, model, on demand with `hermes superagent briefs` | Code lints the result: every line cites a real piece, and commands or addresses only strangers wrote never reach a brief marked ready |
 
 The full list of threats and what's left of each is in [DESIGN.md](../DESIGN.md#threat-model).
 
@@ -80,7 +80,7 @@ The full list of threats and what's left of each is in [DESIGN.md](../DESIGN.md#
 | `superagent tick` | Your timer, every 2 minutes or so | One pass of everything below, then it exits. A lock keeps two from overlapping |
 | Claude Code hook | Claude Code, on each session event | Appends a line to a local log that a read-only probe reads, over ssh for other machines. No Hermes needed |
 
-Everything lives in one directory: `superagent.toml`, `superagent.db`, and `workers/<ticket>/<assignment>/` with each worker's brief, log and private identity file. With no role set in a profile the plugin's hooks do nothing and it offers no tools.
+Everything lives in one directory: `superagent.toml`, `superagent.db`, and `workers/<ticket>/<assignment>/` with each worker's brief, log and private identity file. With no role set in a profile, outside its own worker directories, the plugin's hooks do nothing and it offers no tools.
 
 ## One tick
 
@@ -88,7 +88,7 @@ Each phase runs even if the one before it failed. A failure is collected and tri
 
 | # | Phase | What it does |
 | --- | --- | --- |
-| 1 | Poll | Reads each connector that's due into the ledger, within half of the tick's deadline. A list it can't prove is whole marks nothing as gone |
+| 1 | Poll | Reads each connector that's due into the ledger, within half of the tick's deadline. A list that fails its completeness checks marks nothing as gone |
 | 2 | Triage | Files new items by your `[[triage]]` rules, or sets them aside with a reason |
 | 3 | Relaunch | Sends one `continue` to a Claude Code session stopped by a rate limit or an API error, only with `relaunch = true` and after its pane, process and screen check out |
 | 4 | Brief | Saves the daily brief once it's due |
@@ -105,7 +105,7 @@ Each phase runs even if the one before it failed. A failure is collected and tri
 | --- | --- |
 | A worker crashes, hangs or loops | The next tick catches it and repairs within the budget, then a person is told |
 | A worker can't be stopped | It's escalated as possibly still running |
-| A source fails or returns a cut list | Nothing is marked gone, and the brief and the alerts channel say so |
+| A source fails or returns a cut list | Nothing is marked gone, and after three failed polls in a row the brief and the alerts channel say so |
 | A snapshot shrinks by half or more | It's held back until you run `superagent ledger accept` |
 | A message can't be delivered | It stays in the outbox and retries with backoff, in order |
 | A tick runs past its deadline | It's stopped, and the next tick raises an alert |

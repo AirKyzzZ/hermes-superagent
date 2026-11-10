@@ -1,5 +1,7 @@
 # Dogfood design: one owner's daily setup
 
+Status: this is the plan 0.1.0 was built from. Some of it isn't built, such as the owner role, `ledger assign`, the approval word and the quota gate, and the [README](../README.md) describes what exists.
+
 hermes-superagent becomes the owner's real daily setup. It goes into their live Hermes profile on a Linux VPS and, once it has proven itself, replaces a home-made mix of Hermes, ssh, cmux scripts and ad-hoc sweeps. That mix misses things: Todoist tasks never picked up, GitHub issues forgotten, emails dropped.
 
 **The one requirement that outranks the others: nothing that enters a source may be silently lost.** In practice, every item any source shows us is either still visible in a daily view or was closed with a recorded reason by someone (the source, a rule, the owner). A source that stops answering must be just as visible as an item.
@@ -52,7 +54,7 @@ Each one gets a test before the feature that relies on it.
 3. **Every open item is shown in full, regularly.** The reconciliation is everything still open, minus three kinds of item:
    - items snoozed to a future date;
    - items whose worker is confirmed alive on this tick;
-   - triaged items that changed within `stale_after`, 3 days by default.
+   - items listed in a brief within `stale_after`, 3 days by default.
 
    That's a complement, not a list of hand-picked cases. Every listed item gets its own line, never "and N more", so no open item goes unshown for longer than `stale_after`. The test checks the text that was actually delivered, not the set behind it.
 4. **Sources fail loudly.** Every poll writes a run row. Each of these raises an alert at once, and appears in every brief until it recovers:
@@ -63,7 +65,7 @@ Each one gets a test before the feature that relies on it.
    A `command` source fails its run when an item lacks its `id` or a mapped path is missing. That's how a CLI upgrade that changes the output gets caught.
 5. **A snapshot is complete only when it really is.** Every page is fetched and every sub-query has to succeed. When the source reports a total, the count must match it. A snapshot that shrinks from 5 or more items to zero, or loses more than half of them, still adds its new items, but its vanish marking is held back and alerted. That's what an expired token returning an empty list looks like. `superagent ledger accept <connector>` applies it after a real bulk cleanup.
 6. **Polling is idempotent and resumable.** Items are upserted by `(connector, external id)`. A delta cursor moves only after its batch commits, and every delta poll overlaps the previous window. So a VPS that was down for two days catches up without losing or duplicating anything. Polls run under the existing tick lock.
-7. **Owner-facing messages never expire.** Today the outbox drops a message after five failed sends. Briefs and alerts are retried with backoff until they're delivered, and "since the last brief" only moves forward once every part has been sent. The brief goes out once a day, at or after its hour, and is caught up if the box was down.
+7. **Owner-facing messages never expire.** The outbox never drops a message on its own. Briefs and alerts are retried with backoff until they're delivered, and "since the last brief" only moves forward once every part has been sent. The brief goes out once a day, at or after its hour, and is caught up if the box was down.
 8. **A stuck tick is a failure.** Each tick has a hard deadline, and model calls get their own timeout and are skipped for that tick when they run over. A tick that finds the lock held for longer than the deadline alerts and exits non-zero, instead of exiting 0 as "skipped". The `heartbeat` command, such as a ping to an external uptime check, runs only after a tick that completed every phase. That's how a dead timer or a hung tick gets noticed from somewhere other than the box. A heartbeat is required to leave shadow mode.
 9. **A bad config never stops polling, and never hides.** The last-good fallback already exists and covers connectors too. A config problem is now an alert, not just a line on stderr, and the brief lists connectors that are configured but not running.
 

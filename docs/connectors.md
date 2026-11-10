@@ -143,7 +143,7 @@ curl = ["ssh", "mac", "curl"]
 
 ## Anything that prints JSON
 
-A `command` block needs no code. `items` is the dotted path to the list, and `fields` maps `id` and `title` to paths or `{path}` templates. With `confirm_argv`, an item that leaves the list is looked up, and only a closed one is closed.
+A `command` block needs no code. `items` is the dotted path to the list, and `fields` maps `id` and `title` to paths or `{path}` templates. Set `total` or `limit`, or a cut list reads as complete. With `confirm_argv`, an item that leaves the list is looked up, and only a closed one is closed.
 
 ```toml
 [connectors.notes]
