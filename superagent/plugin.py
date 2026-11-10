@@ -334,6 +334,7 @@ class Plugin:
             judge=LlmDriftJudge(self.ctx.llm),
             assessor=LlmAssessor(self.ctx.llm),
             writer=BriefWriter(self.ctx.llm),
+            inside_hermes=True,
         )
 
 

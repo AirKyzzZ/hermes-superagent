@@ -131,7 +131,7 @@ def next_steps(home: Path, choices: Choices, cli: str) -> str:
     lines = [f"Wrote {home / CONFIG_FILENAME} with {', '.join(found) or 'no'} connectors.", "Next:"]
     if choices.agents:
         lines += [
-            "- Install the Claude Code hook on this machine, after the owner says yes:",
+            "- To put this machine's Claude Code sessions on the board, install the hook:",
             f"    mkdir -p ~/.superagent && {cli} agents --hook-script > ~/.superagent/hook.py",
             f"    {cli} agents --hook-settings",
             "  then merge the printed hooks block into ~/.claude/settings.json, next to any hooks already there.",

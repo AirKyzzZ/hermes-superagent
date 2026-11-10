@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import argparse
 import fcntl
 import json
 import os
@@ -10,7 +11,7 @@ from pathlib import Path
 
 import pytest
 
-from superagent.cli import main
+from superagent.cli import main, run, setup_parser
 from superagent.config import CONFIG_FILENAME, DB_FILENAME, LAST_GOOD_FILENAME, ConfigError, parse_config
 from superagent.connectors import build_connector, parse_specs
 from superagent.connectors.agents import NOT_HOOKED
@@ -121,6 +122,32 @@ def test_setup_through_hermes_sends_through_that_hermes(
     config = parse_config((bare_machine / CONFIG_FILENAME).read_text(encoding="utf-8"))
     assert config.send_argv[0] == str(launcher)
     assert f"{launcher} superagent --home {bare_machine} doctor" in capsys.readouterr().out
+
+
+def test_setup_through_a_launcher_that_hides_its_name_still_sends_through_hermes(
+    bare_machine: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    bin_dir = bare_machine.parent / "bin"
+    bin_dir.mkdir(parents=True)
+    (bin_dir / "hermes").write_text("#!/bin/sh\n")
+    (bin_dir / "hermes").chmod(0o755)
+    monkeypatch.setenv("PATH", str(bin_dir))
+    monkeypatch.setattr(sys, "argv", ["-c", "superagent"])
+    parser = argparse.ArgumentParser()
+    setup_parser(parser)
+    args = parser.parse_args(["--home", str(bare_machine), "setup", "--alerts", "discord:1"])
+    assert run(args, inside_hermes=True) == 0
+    config = parse_config((bare_machine / CONFIG_FILENAME).read_text(encoding="utf-8"))
+    assert config.send_argv[0] == "hermes"
+    assert f"hermes superagent --home {bare_machine} doctor" in capsys.readouterr().out
+
+
+def test_doctor_counts_one_minute_in_the_singular(bare_machine: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    assert main(["--home", str(bare_machine), "setup"]) == 0
+    tick(open_runtime(bare_machine))
+    later = time.time() + 60
+    monkeypatch.setattr("superagent.doctor.time.time", lambda: later)
+    assert named(diagnose(bare_machine, poll=False), "tick").detail == "the last tick finished 1 minute ago"
 
 
 def test_the_timezone_falls_back_to_utc(monkeypatch: pytest.MonkeyPatch) -> None:

@@ -9,6 +9,8 @@ Notable changes to hermes-superagent. The format follows [Keep a Changelog](http
 - A config value of the wrong type, such as `argv = 1` or `pass_strangers = "false"`, is refused like any other bad edit, so the plugin keeps running on the last good config instead of crashing or reading `"false"` as true.
 - Unknown keys in `[briefs]` are refused, like everywhere else.
 - `briefs --compare` finds a GitLab task's checkout under its `gitlab:group/project` key, as a real brief does.
+- `hermes superagent setup` sends through Hermes when Hermes was installed with its own installer, whose launcher hides its name. Before, `--alerts` was refused there and nothing was set to deliver messages.
+- `doctor` says "1 minute ago", and setup's hint for the Claude Code hook speaks to you rather than to an agent.
 
 ## [0.1.0] - 2026-11-10
 
