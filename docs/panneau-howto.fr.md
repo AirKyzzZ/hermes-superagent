@@ -32,7 +32,7 @@ UNIT
 systemctl --user daemon-reload
 systemctl --user enable --now superagent-panel.service
 loginctl enable-linger "$USER"
-journalctl --user -u superagent-panel -n 5
+sleep 1; journalctl --user -u superagent-panel -n 5
 ```
 
 Le journal affiche l'URL locale et l'URL Tailscale, chacune suivie du jeton après le `#`.
@@ -67,7 +67,7 @@ S'il a fuité, supprime-le et redémarre le service, qui en crée un nouveau. Le
 ```bash
 rm ~/superagent/.superagent.panel-token
 systemctl --user restart superagent-panel.service
-journalctl --user -u superagent-panel -n 5
+sleep 1; journalctl --user -u superagent-panel -n 5
 ```
 
 ## 5. L'ouvrir à côté de Discord
