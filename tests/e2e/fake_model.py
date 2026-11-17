@@ -87,8 +87,9 @@ def render(template: str, goal_id: str, work: Path, trigger: str = "", ticket: s
     return rendered.replace("{trigger}", trigger).replace("{ticket}", ticket)
 
 
-def wait_for_partner(goal_id: str) -> bool:
+def wait_for_partner(goal_id: str, work: Path) -> bool:
     deadline = time.monotonic() + RENDEZVOUS_SECONDS
+    (work / f"arrived-{goal_id}").touch()
     with arrivals_changed:
         arrivals.add(goal_id)
         arrivals_changed.notify_all()
@@ -161,7 +162,7 @@ def choose(body: dict[str, Any], work: Path) -> tuple[Step | None, dict[str, Any
         entry["missing_tool"] = step.tool
         return None, entry
     if step.rendezvous:
-        entry["overlapped"] = wait_for_partner(goal_id)
+        entry["overlapped"] = wait_for_partner(goal_id, work)
     if step.wait_for:
         entry["released"] = wait_for_file(work / render(step.wait_for, goal_id, work))
     entry["sent"] = step.tool
