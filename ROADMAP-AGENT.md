@@ -10,14 +10,18 @@ The working plan of the agent that maintains this repo between the owner's revie
 - **Hermes shipped v0.23.1 (2026-11-10) and v0.23.2 (2026-11-16).** CI tests 0.22.7 and 0.23.0 only. 0.23.2 rolls up about 2,000 PRs, including module moves with shims, profile rename fixes and new plugin API (`ctx.register_idle_task`, `ctx.redact_text()`, an `on_session_open` hook). The curated notes come with v0.24.0, so the new API waits for them.
 - **The README still says "not in the catalog"** in the comparison table, and the install line uses the GitHub path rather than the catalog name.
 
+## Progress
+
+- **2026-11-17:** the owner asked for a visual side panel and a delegation-first router on the same day, so they jumped to the top. In PRs: CI on 0.23.2 (#76), the worker cap (#77), the side panel (#78), delegation-first prompts (#79), projects and worker conversations in the panel (#80), and a saved token with `tailscale serve` support (#81).
+
 ## Ranked
 
 | # | Item | Why it ranks here | Size |
 | --- | --- | --- | --- |
-| 1 | CI on Hermes 0.23.2, the latest release | Everyone who installs today gets 0.23.2. If it broke something, that's the first bug every new user hits, and nothing would tell us | S |
+| 1 | CI on Hermes 0.23.2, the latest release, in #76 | Everyone who installs today gets 0.23.2. If it broke something, that's the first bug every new user hits, and nothing would tell us | S |
 | 2 | v0.1.1 and a catalog bump | Installing by name ships the #73 bug to installer-installed Hermes. Needs the owner: the tag, the release and the catalog PR are his | S, his go |
 | 3 | README and docs say what's true after the hackathon | "Not in the catalog" is wrong, and installing by name is the shortest path there is. The hackathon framing is over | S |
-| 4 | `[worker] max_running` and a queue | Ten tasks at once means ten model sessions at once, and the cost or the rate limit lands all at once. Without a cap, the router is risky to leave alone, which is the whole point. The fork needed it first | M |
+| 4 | `[worker] max_running` and a queue, in #77 | Ten tasks at once means ten model sessions at once, and the cost or the rate limit lands all at once. Without a cap, the router is risky to leave alone, which is the whole point. The fork needed it first | M |
 | 5 | Stop a worker's whole process tree | A worker that runs `setsid`, a daemon or a dev server leaves its group, and today survives a stop or a restart. Reliability is what the watchdog promises | M |
 | 6 | Claude Code as the worker | Most people who'd run "more agents than they can watch" run Claude Code. `superagent report` already exists for agents outside Hermes; a tested `[worker] argv` recipe, `{ticket}` and `{workdir}` in the command, and a doc turn that into a headline feature | M |
 | 7 | An ICS calendar connector | Listed as wanted. Any calendar shared as a link, no login, no CLI to install | S |
@@ -26,6 +30,17 @@ The working plan of the agent that maintains this repo between the owner's revie
 | 10 | A quota gate on CodexBar | Listed under Next. New work waits when the Claude quota is under a floor, and the brief says what's held | M |
 | 11 | Adopt the new Hermes plugin API | `register_idle_task` could replace the cron line, which is a setup step people get wrong. Waits for v0.24.0's notes | M, later |
 | 12 | `setup --team` for the three-profile Hermes install | The Hermes setup is about ten commands and hasn't run end to end. One command that prints, then applies, them would remove the biggest drop-off. Needs proof in the e2e job first | L, later |
+
+## Side panel, the owner's top ask
+
+| Step | State |
+| --- | --- |
+| Read-only panel on localhost: what needs you, flow, workers, sessions, ledger, sources, feed | #78 |
+| Projects as cards, a drawer per project, each worker's conversation | #80 |
+| Saved token, `--allow-host` for `tailscale serve` | #81 |
+| Actions from the panel: answer a blocked worker, cancel, accept a held snapshot, snooze | next |
+| A systemd user unit and a screenshot in the README | next |
+| The model-side transcript of a Hermes worker, once Hermes exposes sessions in a stable way | later |
 
 ## Not now
 
