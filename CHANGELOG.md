@@ -4,6 +4,10 @@ Notable changes to hermes-superagent. The format follows [Keep a Changelog](http
 
 ## [Unreleased]
 
+### Added
+
+- `[worker] max_running` caps how many workers run at once. Tasks past the cap wait in a queue, say so once, and start oldest first as workers finish, so a burst of requests doesn't start a model session each at the same moment.
+
 ### Fixed
 
 - A config value of the wrong type, such as `argv = 1` or `pass_strangers = "false"`, is refused like any other bad edit, so the plugin keeps running on the last good config instead of crashing or reading `"false"` as true.

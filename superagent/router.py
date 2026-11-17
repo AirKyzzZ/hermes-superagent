@@ -72,10 +72,11 @@ class NotAdmittedError(PermissionError):
 
 
 class Router:
-    def __init__(self, store: Store, rules: Rules, backend: WorkerBackend) -> None:
+    def __init__(self, store: Store, rules: Rules, backend: WorkerBackend, max_running: int = 0) -> None:
         self.store = store
         self.rules = rules
         self.backend = backend
+        self.max_running = max_running
 
     def ingest(self, trigger: Trigger, *, auto_dispatch: bool = True) -> Disposition:
         decision = gate(trigger, self.rules)
@@ -211,21 +212,40 @@ class Router:
                     "ticket": ticket.id,
                     "goal": shorten(ticket.goal),
                     "status": ticket.status.value,
-                    "state": reports[-1].state.value if reports else "starting",
+                    "state": self._state(ticket, reports),
                     "question": reports[-1].question if reports and ticket.status is TicketStatus.WAITING else "",
                 }
             )
         return lines
 
+    def _state(self, ticket: Ticket, reports: list[Report]) -> str:
+        if self.store.is_queued(ticket.id):
+            return "queued"
+        return reports[-1].state.value if reports else "starting"
+
     def is_allowed(self, trigger: Trigger) -> bool:
         rules = self.rules.sources.get(trigger.source)
         return rules is not None and trigger.actor in rules.allow
 
-    def start_worker(self, ticket: Ticket) -> Assignment | None:
-        created = self.store.create_assignment(ticket.id)
+    def start_worker(self, ticket: Ticket, *, restart: bool = False) -> Assignment | None:
+        created = self.store.create_assignment(ticket.id, self.max_running, self._queued_text(ticket), restart=restart)
         if created is None:
             return None
         return self._launch(ticket, *created)
+
+    def start_queued(self) -> list[Assignment]:
+        started = []
+        for ticket in self.store.queued_tickets():
+            assignment = self.start_worker(ticket)
+            if assignment is None:
+                break
+            started.append(assignment)
+        return started
+
+    def _queued_text(self, ticket: Ticket) -> str:
+        running = f"{self.max_running} worker is" if self.max_running == 1 else f"{self.max_running} workers are"
+        label = task_label(ticket.id, ticket.goal)
+        return chat_safe(shorten(f"Queued {label}: {running} already running, it starts when one finishes"))
 
     def _launch(self, ticket: Ticket, assignment: Assignment, token: str) -> Assignment:
         pending = self.store.pending_inputs(ticket.id)
@@ -270,7 +290,7 @@ class Router:
         return Disposition(Outcome.PASSED_THROUGH, "thread has a live subscriber", tuple(subscribers))
 
     def _resume_if_waiting(self, ticket: Ticket) -> None:
-        resumed = self.store.resume_waiting_ticket(ticket.id)
+        resumed = self.store.resume_waiting_ticket(ticket.id, self.max_running, self._queued_text(ticket))
         if resumed is not None:
             self._launch(ticket, *resumed)
 

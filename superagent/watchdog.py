@@ -113,7 +113,7 @@ def apply_repair(
         return
     router.backend.stop(assignment)
     if action is RepairAction.RESTART:
-        router.start_worker(ticket)
+        router.start_worker(ticket, restart=True)
         return
     router.store.end_ticket(ticket.id)
 
@@ -161,6 +161,7 @@ def check_once(
                 router.store.mark_reaped(assignment.id)
                 continue
         results.append(CheckResult(assignment.id, ticket.id, judgement.verdict, action, judgement.reason))
+    router.start_queued()
     for ticket in router.store.orphaned_tickets(active_policy.orphan_after_seconds):
         results.append(_repair_orphan(router, ticket, active_policy))
     return results

@@ -93,7 +93,7 @@ Each phase runs even if the one before it failed. A failure is collected and tri
 | 3 | Relaunch | Sends one `continue` to a Claude Code session stopped by a rate limit or an API error, only with `relaunch = true` and after its pane, process and screen check out |
 | 4 | Brief | Saves the daily brief once it's due |
 | 5 | Assess | Runs waiting events past your team's written rules, under Hermes only |
-| 6 | Watchdog | Checks every running worker and repairs within its budget: nudge, restart, escalate |
+| 6 | Watchdog | Checks every running worker and repairs within its budget: nudge, restart, escalate. Then starts queued tasks, oldest first, while `[worker] max_running` allows |
 | 7 | Relay | Delivers reports, escalations and briefs in order from the outbox |
 | 8 | Prune | Forgets ignored triggers after a week |
 | 9 | Alerts | Raises and resolves alerts on lasting errors and source problems |

@@ -442,6 +442,19 @@ def test_dispatch_tool_refuses_a_refused_trigger(tmp_path: Path) -> None:
     assert "not admitted" in answer["error"]
 
 
+def test_dispatch_tool_says_when_the_task_waits_for_a_free_worker(tmp_path: Path) -> None:
+    ctx = registered("router", tmp_path)
+    capped = CONFIG.replace('argv = ["hermes", "chat", "--query-file", "{brief}"]', 'argv = ["true", "{brief}"]')
+    (tmp_path / "superagent.toml").write_text(capped + "max_running = 1\n", encoding="utf-8")
+    answers = []
+    for message_id in ("1", "2"):
+        inbound(ctx, message_id=message_id)
+        offered(ctx)
+        handler = ctx.tools["superagent_dispatch"]["handler"]
+        answers.append(json.loads(handler({"trigger_id": f"discord:c1:{message_id}", "goal": "x"})))
+    assert [answer["queued"] for answer in answers] == [False, True]
+
+
 def test_forward_tool_reports_an_unknown_ticket(tmp_path: Path) -> None:
     ctx = registered("router", tmp_path)
     inbound(ctx)
