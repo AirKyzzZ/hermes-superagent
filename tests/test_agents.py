@@ -255,7 +255,7 @@ sys.exit(subprocess.run(argv, env={{"HOME": {home!r}, "PATH": "/usr/bin:/bin"}})
 
 
 @pytest.mark.parametrize(
-    ("options", "remote"), [(["-o", "BatchMode=yes", "mac"], []), (["gpu"], ["wsl.exe", "-e"])], ids=["mac", "wsl"]
+    ("options", "remote"), [(["-o", "BatchMode=yes", "mac"], []), (["pc"], ["wsl.exe", "-e"])], ids=["mac", "wsl"]
 )
 def test_a_remote_host_reads_its_own_home_and_gets_only_python_on_its_command_line(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, options: list[str], remote: list[str]

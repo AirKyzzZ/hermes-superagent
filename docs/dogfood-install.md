@@ -200,7 +200,7 @@ Claude Code's settings watcher normally picks up the new hooks in sessions that 
 
 ### Sessions on other machines
 
-The VPS reads every other machine over ssh through the tailnet: each poll runs `ssh <alias> <python> -` with the probe on stdin, and a relaunch sends its script the same way. Each machine needs an ssh server the VPS can log in to without a prompt, a `python3`, and the hook. Below, `mac` is the Mac's tailnet name, `gpu-wsl` the WSL node on the PC, and `you` the user on each. Use the names `tailscale status` shows, in `~/.ssh/config` on the VPS only.
+The VPS reads every other machine over ssh through the tailnet: each poll runs `ssh <alias> <python> -` with the probe on stdin, and a relaunch sends its script the same way. Each machine needs an ssh server the VPS can log in to without a prompt, a `python3`, and the hook. Below, `mac` is the Mac's tailnet name, `pc-wsl` the WSL node on the PC, and `you` the user on each. Use the names `tailscale status` shows, in `~/.ssh/config` on the VPS only.
 
 **The Mac.** Tailscale SSH only runs on a Mac with the open source `tailscaled`, not with the Tailscale app, so use macOS's own sshd over the tailnet. In System Settings > General > Sharing, turn on Remote Login for your user only, then add the VPS's key:
 
@@ -220,10 +220,11 @@ A non-interactive ssh session on macOS gets `PATH=/usr/bin:/bin:/usr/sbin:/sbin`
 
 In a WSL terminal on the PC:
 
+Inside WSL, with systemd on (the first line checks it) and Tailscale installed from the Linux steps on [tailscale.com/download/linux](https://tailscale.com/download/linux):
+
 ```bash
 grep -A1 '^\[boot\]' /etc/wsl.conf    # must show systemd=true
-curl -fsSL https://tailscale.com/install.sh | sh
-sudo tailscale up --ssh --hostname gpu-wsl --accept-dns=false
+sudo tailscale up --ssh --hostname pc-wsl --accept-dns=false
 python3 --version && tmux -V
 ```
 
@@ -248,7 +249,7 @@ Host mac
   IdentityFile ~/.ssh/superagent
 
 Host pc
-  HostName gpu-wsl
+  HostName pc-wsl
   User you
 EOF
 ssh -o StrictHostKeyChecking=accept-new mac /usr/bin/python3 --version
@@ -294,12 +295,12 @@ In WSL, `tmux` is on the ssh session's `PATH` and its socket is the one the hook
 
 A machine that's asleep or off fails its polls like any other source: after three in a row it goes to the alerts channel and the brief, until a poll works again.
 
-**Windows OpenSSH instead.** If Tailscale can't run inside WSL, Windows's own sshd can start the probe there with `host = ["ssh", "-o", "BatchMode=yes", "-o", "ConnectTimeout=10", "gpu", "wsl.exe", "-e"]` and `python = "/usr/bin/python3"`. The plugin keeps everything but `wsl.exe -e /usr/bin/python3 -` off the command line, so `cmd.exe` has nothing to mangle. What this depends on is `wsl.exe` passing the end of stdin through to Linux, which hasn't been tried on a real PC. Check it first; the first command must print `1` and return:
+**Windows OpenSSH instead.** If Tailscale can't run inside WSL, Windows's own sshd can start the probe there with `host = ["ssh", "-o", "BatchMode=yes", "-o", "ConnectTimeout=10", "pc", "wsl.exe", "-e"]` and `python = "/usr/bin/python3"`. The plugin keeps everything but `wsl.exe -e /usr/bin/python3 -` off the command line, so `cmd.exe` has nothing to mangle. What this depends on is `wsl.exe` passing the end of stdin through to Linux, which hasn't been tried on a real PC. Check it first; the first command must print `1` and return:
 
 ```bash
-echo 'print(1)' | ssh gpu wsl.exe -e /usr/bin/python3 -
-ssh gpu wsl.exe -e mkdir -p /home/you/.superagent
-hermes superagent agents --hook-script | ssh gpu wsl.exe -e tee /home/you/.superagent/hook.py > /dev/null
+echo 'print(1)' | ssh pc wsl.exe -e /usr/bin/python3 -
+ssh pc wsl.exe -e mkdir -p /home/you/.superagent
+hermes superagent agents --hook-script | ssh pc wsl.exe -e tee /home/you/.superagent/hook.py > /dev/null
 ```
 
 ## 4. Check it

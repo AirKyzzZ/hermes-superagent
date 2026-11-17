@@ -93,14 +93,15 @@ Sans rôle posé dans le profil, il n'y a ni router ni workers. Le panneau montr
 
 ## Voir les sessions du Mac et du PC
 
-Le tableau des agents lit les sessions Claude Code des autres machines par ssh depuis le VPS, à travers le tailnet. Le détail et les raisons sont dans [Sessions on other machines](dogfood-install.md#sessions-on-other-machines), avec les blocs de config. Ci-dessous, `mac`, `gpu-wsl` et `you` sont à remplacer par tes noms, dans `~/.ssh/config` du VPS seulement.
+Le tableau des agents lit les sessions Claude Code des autres machines par ssh depuis le VPS, à travers le tailnet. Le détail et les raisons sont dans [Sessions on other machines](dogfood-install.md#sessions-on-other-machines), avec les blocs de config. Ci-dessous, `mac`, `pc-wsl` et `you` sont à remplacer par tes noms, dans `~/.ssh/config` du VPS seulement.
 
 1. **Sur le Mac :** active Session à distance (Réglages Système > Général > Partage) pour ton utilisateur seulement, ajoute la clé publique du VPS à `~/.ssh/authorized_keys`, et vérifie que `/usr/bin/python3 --version` répond. S'il propose les outils de ligne de commande, installe-les. Pour que superagent puisse relancer une session dans cmux, mets Réglages cmux > Automation > Socket Control Mode sur « Automation mode ».
 2. **Sur le PC, dans un terminal WSL :** vérifie que `/etc/wsl.conf` contient `systemd=true` sous `[boot]`, puis installe Tailscale dans WSL avec son serveur SSH :
 
+   Installe Tailscale pour Linux dans WSL en suivant [tailscale.com/download/linux](https://tailscale.com/download/linux), puis :
+
    ```bash
-   curl -fsSL https://tailscale.com/install.sh | sh
-   sudo tailscale up --ssh --hostname gpu-wsl --accept-dns=false
+   sudo tailscale up --ssh --hostname pc-wsl --accept-dns=false
    ```
 
    Dans la politique du tailnet, la règle `ssh` doit être en `accept` et non en `check`, sinon le VPS bute sur une connexion par navigateur.
