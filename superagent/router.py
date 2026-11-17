@@ -227,8 +227,8 @@ class Router:
         rules = self.rules.sources.get(trigger.source)
         return rules is not None and trigger.actor in rules.allow
 
-    def start_worker(self, ticket: Ticket) -> Assignment | None:
-        created = self.store.create_assignment(ticket.id, self.max_running, self._queued_text(ticket))
+    def start_worker(self, ticket: Ticket, *, restart: bool = False) -> Assignment | None:
+        created = self.store.create_assignment(ticket.id, self.max_running, self._queued_text(ticket), restart=restart)
         if created is None:
             return None
         return self._launch(ticket, *created)

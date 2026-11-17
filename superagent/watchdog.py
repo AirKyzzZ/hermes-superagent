@@ -113,7 +113,7 @@ def apply_repair(
         return
     router.backend.stop(assignment)
     if action is RepairAction.RESTART:
-        router.start_worker(ticket)
+        router.start_worker(ticket, restart=True)
         return
     router.store.end_ticket(ticket.id)
 

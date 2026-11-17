@@ -1,5 +1,9 @@
 from __future__ import annotations
 
+import sqlite3
+from contextlib import closing
+from pathlib import Path
+
 import pytest
 
 from superagent.config import ConfigError, parse_config
@@ -60,6 +64,17 @@ def test_queued_work_starts_in_order_as_workers_finish(capped: Router, backend: 
     check_once(capped)
     assert [started[0] for started in backend.started] == [first, second, third]
     assert capped.store.queued_tickets() == []
+
+
+def test_new_work_waits_behind_the_queue_when_a_slot_frees_between_ticks(capped: Router, backend: FakeBackend) -> None:
+    capped.ingest(request(1))
+    capped.ingest(request(2))
+    finish(capped, backend, ticket_of(capped, "t1"))
+    capped.ingest(request(3))
+    assert [started[0] for started in backend.started] == [ticket_of(capped, "t1")]
+    check_once(capped)
+    assert backend.started[-1][0] == ticket_of(capped, "t2")
+    assert capped.store.queued_tickets()[0].id == ticket_of(capped, "t3")
 
 
 def test_a_queued_ticket_is_not_repaired_as_an_orphan(capped: Router, backend: FakeBackend) -> None:
@@ -136,3 +151,16 @@ def test_max_running_is_read_from_the_worker_table() -> None:
 def test_max_running_must_be_a_whole_number(value: str) -> None:
     with pytest.raises(ConfigError, match="max_running"):
         parse_config(f'[worker]\nargv = ["w", "{{brief}}"]\nmax_running = {value}\n')
+
+
+def test_an_older_database_gains_the_queue_column(tmp_path: Path) -> None:
+    path = tmp_path / "superagent.db"
+    Store(path)
+    with closing(sqlite3.connect(path)) as connection:
+        connection.execute("ALTER TABLE tickets DROP COLUMN queued_at")
+        connection.execute("PRAGMA user_version = 4")
+        connection.commit()
+    store = Store(path)
+    assert store.queued_tickets() == []
+    with closing(sqlite3.connect(path)) as connection:
+        assert "queued_at" in [row[1] for row in connection.execute("PRAGMA table_info(tickets)")]
