@@ -6,6 +6,7 @@ Notable changes to hermes-superagent. The format follows [Keep a Changelog](http
 
 ### Added
 
+- The panel's token is saved across restarts (`--new-token` replaces it), and `--allow-host` lets it answer behind `tailscale serve` on your tailnet.
 - The panel groups work by project, with a card per project, a drawer with its blockers, workers, sessions and pull requests, and each worker's full conversation one click further. `superagent_dispatch` takes an optional `project`.
 - `superagent panel` serves a live side panel on localhost: what needs you, ranked, then today's flow from sources to relay, what runs now, workers, Claude Code sessions, the ledger, sources and a feed. It reads the database read-only and needs the token from the URL it prints. `--json` prints the same snapshot.
 - `[worker] max_running` caps how many workers run at once. Tasks past the cap wait in a queue, say so once, and start oldest first as workers finish, so a burst of requests doesn't start a model session each at the same moment.

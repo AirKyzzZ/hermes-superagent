@@ -35,6 +35,9 @@ FEED_LIMIT = 20
 ESCALATIONS_SHOWN_SECONDS = 86400.0
 DEFAULT_PORT = 8765
 TOKEN_HEADER = "X-Superagent-Token"
+TOKEN_FILENAME = ".superagent.panel-token"
+_SAVED_TOKEN = re.compile(r"[A-Za-z0-9_-]{32,}")
+_HOST_NAME = re.compile(r"[a-z0-9](?:[a-z0-9-]*[a-z0-9])?(?:\.[a-z0-9](?:[a-z0-9-]*[a-z0-9])?)+")
 _CLOSED = (ItemState.DONE.value, ItemState.IGNORED.value)
 _ATTENTION_STATES = {state.value for state in ATTENTION_STATES}
 _ATTENTION_ORDER = ("escalation", "blocked", "session", "source", "overdue")
@@ -563,15 +566,41 @@ def make_token() -> str:
     return secrets.token_urlsafe(24)
 
 
-def panel_handler(home: Path, token: str) -> type[BaseHTTPRequestHandler]:
+def panel_token(home: Path, renew: bool = False) -> str:
+    path = home / TOKEN_FILENAME
+    if not renew:
+        try:
+            saved = path.read_text(encoding="utf-8").strip()
+        except FileNotFoundError:
+            saved = ""
+        if _SAVED_TOKEN.fullmatch(saved):
+            return saved
+    token = make_token()
+    path.unlink(missing_ok=True)
+    descriptor = os.open(path, os.O_CREAT | os.O_EXCL | os.O_WRONLY, 0o600)
+    with os.fdopen(descriptor, "w", encoding="utf-8") as file:
+        file.write(token)
+    return token
+
+
+def allowed_hosts(port: int, extra: Sequence[str] = ()) -> frozenset[str]:
+    named = {name.strip().lower() for name in extra}
+    if bad := sorted(name for name in named if not _HOST_NAME.fullmatch(name)):
+        raise ValueError(f"--allow-host takes a plain host name such as panel.your-tailnet.ts.net, not {bad[0]!r}")
+    return frozenset({f"127.0.0.1:{port}", f"localhost:{port}"} | named | {f"{name}:{port}" for name in named})
+
+
+def panel_handler(home: Path, token: str, extra_hosts: Sequence[str] = ()) -> type[BaseHTTPRequestHandler]:
     class PanelHandler(BaseHTTPRequestHandler):
         server_version = "superagent-panel"
 
         def do_GET(self) -> None:
             url = urlsplit(self.path)
-            port = getattr(self.server, "server_port", 0)
-            if self.headers.get("Host", "") not in {f"127.0.0.1:{port}", f"localhost:{port}"}:
-                self._send(421, "text/plain", b"open the panel on 127.0.0.1 or localhost")
+            hosts = allowed_hosts(getattr(self.server, "server_port", 0), extra_hosts)
+            if self.headers.get("Host", "").lower() not in hosts:
+                self._send(
+                    421, "text/plain", b"open the panel on 127.0.0.1, localhost or a host passed to --allow-host"
+                )
             elif url.path == "/":
                 self._send(200, "text/html", PAGE.encode())
             elif url.path == "/panel.js":
@@ -619,10 +648,13 @@ def panel_handler(home: Path, token: str) -> type[BaseHTTPRequestHandler]:
     return PanelHandler
 
 
-def serve(home: Path, port: int = DEFAULT_PORT, token: str = "") -> None:
-    secret = token or make_token()
-    server = ThreadingHTTPServer(("127.0.0.1", port), panel_handler(home, secret))
+def serve(home: Path, port: int = DEFAULT_PORT, token: str = "", extra_hosts: Sequence[str] = ()) -> None:
+    secret = token or panel_token(home)
+    allowed_hosts(port, extra_hosts)
+    server = ThreadingHTTPServer(("127.0.0.1", port), panel_handler(home, secret, extra_hosts))
     print(f"superagent panel on http://127.0.0.1:{server.server_port}/#{secret}", flush=True)
+    for name in extra_hosts:
+        print(f"and through your proxy on https://{name}/#{secret}", flush=True)
     print("Open it next to your chat. Ctrl-C stops it.", flush=True)
     try:
         server.serve_forever()

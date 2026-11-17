@@ -5,6 +5,7 @@ import http.client
 import json
 import os
 import sqlite3
+import stat
 import threading
 from collections.abc import Iterator
 from contextlib import closing
@@ -17,7 +18,15 @@ from superagent.cli import run, setup_parser
 from superagent.config import DB_FILENAME, Config, load_config
 from superagent.domain import Mandate, RepairAction, ReportState, Strength, Trigger
 from superagent.ledger import Ledger, SourceItem
-from superagent.panel import TOKEN_HEADER, panel_handler, snapshot, ticket_detail
+from superagent.panel import (
+    TOKEN_FILENAME,
+    TOKEN_HEADER,
+    allowed_hosts,
+    panel_handler,
+    panel_token,
+    snapshot,
+    ticket_detail,
+)
 from superagent.router import Router, project_name
 from superagent.store import Store
 
@@ -256,3 +265,32 @@ def test_ticket_detail_never_follows_a_link_out_of_the_worker_directory(tmp_path
     detail = ticket_detail(tmp_path, running.ticket_id)
     assert detail is not None
     assert (detail["log"], detail["brief"]) == ("", "")
+
+
+def test_the_token_survives_a_restart_until_renewed(tmp_path: Path) -> None:
+    first = panel_token(tmp_path)
+    assert panel_token(tmp_path) == first
+    assert stat.S_IMODE((tmp_path / TOKEN_FILENAME).stat().st_mode) == 0o600
+    renewed = panel_token(tmp_path, renew=True)
+    assert renewed != first
+    assert panel_token(tmp_path) == renewed
+
+
+def test_a_host_passed_to_allow_host_is_answered(tmp_path: Path) -> None:
+    busy_home(tmp_path)
+    server = ThreadingHTTPServer(("127.0.0.1", 0), panel_handler(tmp_path, "the-token", ["Panel.Example.ts.net"]))
+    threading.Thread(target=server.serve_forever, daemon=True).start()
+    try:
+        port = server.server_port
+        assert fetch(port, "/", {"Host": "panel.example.ts.net"})[0] == 200
+        assert fetch(port, "/", {"Host": "other.example.ts.net"})[0] == 421
+    finally:
+        server.shutdown()
+        server.server_close()
+
+
+def test_allow_host_refuses_anything_but_a_host_name() -> None:
+    with pytest.raises(ValueError, match="allow-host"):
+        allowed_hosts(8765, ["evil.example.com/path"])
+    with pytest.raises(ValueError, match="allow-host"):
+        allowed_hosts(8765, ["*"])
