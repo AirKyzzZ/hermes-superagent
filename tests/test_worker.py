@@ -231,6 +231,33 @@ def test_stop_reports_processes_that_survive_sigkill(tmp_path: Path, monkeypatch
     assert sent == [(fake, signal.SIGTERM), (fake, signal.SIGKILL)]
 
 
+@pytest.mark.parametrize("recovers", [True, False])
+def test_a_ps_timeout_after_sigterm_still_sends_sigkill(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, recovers: bool
+) -> None:
+    fake = max(os.getpid(), os.getpgrp()) + 1
+    sent: list[tuple[int, int]] = []
+    listings = iter([f"{fake} 1 {fake} S\n", None])
+
+    def ps(argv: Sequence[str]) -> subprocess.CompletedProcess[str]:
+        stdout = next(listings, "" if recovers else None)
+        if stdout is None:
+            raise subprocess.TimeoutExpired(list(argv), 10.0)
+        return subprocess.CompletedProcess(list(argv), 0, stdout, "")
+
+    monkeypatch.setattr("superagent.worker._ps", ps)
+    monkeypatch.setattr("superagent.worker._process_started_at", lambda pid: 1000.0)
+    monkeypatch.setattr("superagent.worker.os.kill", lambda pid, signum: sent.append((pid, signum)))
+    backend = SubprocessBackend(["worker", "{brief}"], tmp_path / "w")
+    running = Assignment("as-1", "tk-1", 1, AssignmentStatus.RUNNING, fake, 1000.0)
+    if recovers:
+        backend.stop(running)
+    else:
+        with pytest.raises(WorkerStopError, match="could not list processes: ps timed out"):
+            backend.stop(running)
+    assert sent == [(fake, signal.SIGTERM), (fake, signal.SIGKILL)]
+
+
 def test_stop_kills_a_setsid_grandchild_and_spares_unrelated_processes(tmp_path: Path) -> None:
     unrelated = subprocess.Popen(SLEEPER, start_new_session=True)
     backend, running, grandchild = start_with_grandchild(tmp_path, setsid_grandchild())
