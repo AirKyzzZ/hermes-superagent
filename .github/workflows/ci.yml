@@ -35,6 +35,7 @@ jobs:
         hermes:
           - { version: "0.22.7", pin: b200f5bc60e31588ba2cb60e288029c4a54ba5fa }
           - { version: "0.23.0", pin: 2bd378ed1b8d6bf2192cb26e0a55ff3091e6bd19 }
+          - { version: "0.23.2", pin: ae2a81ccc00e9b7c06301523e5bb09608397149c }
     steps:
       - uses: actions/checkout@v4
       - uses: astral-sh/setup-uv@v6
@@ -70,6 +71,7 @@ jobs:
         hermes:
           - { version: "0.22.7", pin: b200f5bc60e31588ba2cb60e288029c4a54ba5fa }
           - { version: "0.23.0", pin: 2bd378ed1b8d6bf2192cb26e0a55ff3091e6bd19 }
+          - { version: "0.23.2", pin: ae2a81ccc00e9b7c06301523e5bb09608397149c }
     steps:
       - uses: actions/checkout@v4
       - uses: astral-sh/setup-uv@v6
