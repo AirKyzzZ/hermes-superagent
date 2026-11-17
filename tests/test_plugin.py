@@ -730,3 +730,12 @@ def test_the_same_delivery_id_on_another_route_is_a_different_trigger(tmp_path: 
     store = Store(tmp_path / DB_FILENAME)
     assert store.get_trigger("webhook:webhook:github:delivery-7") is not None
     assert store.get_trigger("webhook:webhook:inbox:delivery-7") is not None
+
+
+def test_the_router_prompt_is_delegation_first_and_names_the_owner(tmp_path: Path) -> None:
+    ctx = registered("router", tmp_path)
+    section = next(iter(ctx.sections.values()))
+    assert "relaying for the people allowed to message you" in section({})
+    assert "Delegate by default" in section({})
+    (tmp_path / "superagent.toml").write_text(CONFIG + 'on_behalf_of = "Sam"\n', encoding="utf-8")
+    assert "relaying for Sam." in section({})

@@ -47,7 +47,7 @@ def stuck() -> None:
 
 def main() -> None:
     brief = Path(sys.argv[1]).read_text(encoding="utf-8")
-    goal = brief.split("## Task\n", 1)[1].split("\n\n## Rules", 1)[0]
+    goal = brief.split("## Goal\n", 1)[1].split("\n\n## Context", 1)[0]
     attempt = identity_from_workdir(Path.cwd()).attempt
     if "impossible" in goal or ("flaky" in goal and attempt == 1):
         stuck()

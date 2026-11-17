@@ -36,7 +36,7 @@ _KNOWN_KEYS = {
     },
     "sources": {"policy", "allow", "bots", "pass_strangers", "notify", "via_router"},
     "semantic": {"name", "text", "mode"},
-    "worker": {"argv", "allow_same_user", "max_running"},
+    "worker": {"argv", "allow_same_user", "max_running", "on_behalf_of"},
     "outbound": {"argv"},
     "digest": {"channel"},
     "channels": {"alerts", "brief", "briefs"},
@@ -55,6 +55,7 @@ class Config:
     watchdog: WatchdogPolicy
     allow_same_user: bool = False
     max_running: int = 0
+    on_behalf_of: str = ""
     problem: str = ""
     digest_channel: str = ""
     alerts_channel: str = ""
@@ -101,6 +102,9 @@ def parse_config(raw: str) -> Config:
     max_running = _table(data, "worker").get("max_running", 0)
     if isinstance(max_running, bool) or not isinstance(max_running, int) or max_running < 0:
         raise ConfigError("[worker] max_running must be a whole number, 0 for no cap")
+    on_behalf_of = _table(data, "worker").get("on_behalf_of", "")
+    if not isinstance(on_behalf_of, str) or len(on_behalf_of) > 80 or not on_behalf_of.isprintable():
+        raise ConfigError('[worker] on_behalf_of must be a short name on one line, such as "Sam"')
     digest_channel = _table(data, "digest").get("channel", "")
     if not isinstance(digest_channel, str):
         raise ConfigError("[digest] channel must be a string such as discord:123")
@@ -152,6 +156,7 @@ def parse_config(raw: str) -> Config:
         policy,
         allow_same_user,
         max_running=max_running,
+        on_behalf_of=on_behalf_of,
         digest_channel=digest_channel,
         alerts_channel=alerts_channel,
         heartbeat_argv=_argv(data, "heartbeat"),

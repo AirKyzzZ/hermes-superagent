@@ -11,6 +11,10 @@ Notable changes to hermes-superagent. The format follows [Keep a Changelog](http
 - `superagent panel` serves a live side panel on localhost: what needs you, ranked, then today's flow from sources to relay, what runs now, workers, Claude Code sessions, the ledger, sources and a feed. It reads the database read-only and needs the token from the URL it prints. `--json` prints the same snapshot.
 - `[worker] max_running` caps how many workers run at once. Tasks past the cap wait in a queue, say so once, and start oldest first as workers finish, so a burst of requests doesn't start a model session each at the same moment.
 
+### Changed
+
+- The router's prompt is delegation-first: its context is kept for talking and deciding, anything with more than one step goes to a worker, and each goal is written as a complete brief in English. The worker brief now says who relays for whom, then lists goal, context, what done means, constraints and how to report. `[worker] on_behalf_of` sets the name both use.
+
 ### Fixed
 
 - A config value of the wrong type, such as `argv = 1` or `pass_strangers = "false"`, is refused like any other bad edit, so the plugin keeps running on the last good config instead of crashing or reading `"false"` as true.
