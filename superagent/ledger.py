@@ -288,7 +288,7 @@ class Ledger:
             if actor != f"connector:{row['connector']}":
                 raise LedgerError(f"{actor} can't confirm an item from {row['connector']}")
             if upstream is not Upstream.CLOSED:
-                return _item(row)
+                return item_from_row(row)
             now = time.time()
             connection.execute("UPDATE items SET upstream = ? WHERE id = ?", (Upstream.CLOSED.value, row["id"]))
             content = {name: _loaded(name, row[name]) for name in _CONTENT_FIELDS} | {"upstream": "closed"}
@@ -359,22 +359,7 @@ class Ledger:
     def source(self, connector: str) -> SourceState:
         with self._connect() as connection:
             row = connection.execute("SELECT * FROM sources WHERE connector = ?", (connector,)).fetchone()
-        if row is None:
-            return SourceState(connector)
-        return SourceState(
-            connector,
-            row["cursor"],
-            row["first_attempt"],
-            row["last_attempt"],
-            row["last_ok"],
-            row["failures"],
-            row["last_error"],
-            row["applied_count"],
-            row["held_count"],
-            bool(row["accept_next"]),
-            row["last_new"],
-            row["confirm_error"],
-        )
+        return source_state_from_row(connector, row)
 
     def sources(self) -> list[SourceState]:
         with self._connect() as connection:
@@ -430,7 +415,7 @@ class Ledger:
             connection.executemany(
                 "UPDATE items SET confirm_attempt = ? WHERE id = ?", [(now, row["id"]) for row in rows]
             )
-        return [_item(row) for row in rows]
+        return [item_from_row(row) for row in rows]
 
     def confirm_round(self, connector: str, error: str) -> None:
         with self._connect() as connection:
@@ -548,11 +533,11 @@ class Ledger:
     def peek(self, identifier: str) -> Item | None:
         with self._connect() as connection:
             row = connection.execute("SELECT * FROM items WHERE id = ?", (identifier,)).fetchone()
-        return _item(row) if row else None
+        return item_from_row(row) if row else None
 
     def get(self, reference: str) -> Item:
         with self._connect() as connection:
-            return _item(_find(connection, reference))
+            return item_from_row(_find(connection, reference))
 
     def items(self, *, open_only: bool = False, connector: str = "", missing: bool = False) -> list[Item]:
         clauses: list[str] = []
@@ -568,7 +553,7 @@ class Ledger:
         where = f" WHERE {' AND '.join(clauses)}" if clauses else ""
         with self._connect() as connection:
             rows = connection.execute(f"SELECT * FROM items{where} ORDER BY first_seen", params).fetchall()
-        return [_item(row) for row in rows]
+        return [item_from_row(row) for row in rows]
 
     def history(self, reference: str) -> list[ItemEvent]:
         with self._connect() as connection:
@@ -640,7 +625,7 @@ def _reload_row(connection: sqlite3.Connection, identifier: str) -> sqlite3.Row:
 
 
 def _reload(connection: sqlite3.Connection, identifier: str) -> Item:
-    return _item(_reload_row(connection, identifier))
+    return item_from_row(_reload_row(connection, identifier))
 
 
 def _move(
@@ -686,7 +671,26 @@ def _log(
     )
 
 
-def _item(row: sqlite3.Row) -> Item:
+def source_state_from_row(connector: str, row: sqlite3.Row | None) -> SourceState:
+    if row is None:
+        return SourceState(connector)
+    return SourceState(
+        connector,
+        row["cursor"],
+        row["first_attempt"],
+        row["last_attempt"],
+        row["last_ok"],
+        row["failures"],
+        row["last_error"],
+        row["applied_count"],
+        row["held_count"],
+        bool(row["accept_next"]),
+        row["last_new"],
+        row["confirm_error"],
+    )
+
+
+def item_from_row(row: sqlite3.Row) -> Item:
     return Item(
         id=row["id"],
         connector=row["connector"],
