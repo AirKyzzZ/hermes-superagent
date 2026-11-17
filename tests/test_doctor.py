@@ -61,9 +61,53 @@ def test_setup_with_claude_code_but_no_hook_yet_passes_doctor(bare_machine: Path
     assert runtime.ledger.source("agents").failures == 0
 
 
+def setup_first(home: Path, cli: str = "superagent") -> str:
+    return f'no {CONFIG_FILENAME} in {home} yet: run "{cli} --home {home} setup" first'
+
+
 def test_doctor_without_a_config_points_to_setup(tmp_path: Path) -> None:
     [check] = diagnose(tmp_path)
-    assert check.status is Status.FAIL and "run superagent setup" in check.detail
+    assert check.status is Status.FAIL and check.detail == setup_first(tmp_path)
+
+
+@pytest.mark.parametrize("command", [["tick"], ["status"], ["brief"], ["panel", "--json"], ["panel"]])
+def test_a_command_before_setup_says_to_run_setup_in_one_line(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str], command: list[str]
+) -> None:
+    home = tmp_path / "sa"
+    assert main(["--home", str(home), *command]) == 2
+    assert capsys.readouterr() == ("", setup_first(home) + "\n")
+    assert not home.exists()
+
+
+def test_doctor_before_setup_fails_its_config_check_with_the_same_line(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    home = tmp_path / "sa"
+    assert main(["--home", str(home), "doctor", "--json"]) == 1
+    detail = setup_first(home)
+    assert json.loads(capsys.readouterr().out) == [{"name": "config", "status": "fail", "detail": detail}]
+    assert main(["--home", str(home), "doctor"]) == 1
+    assert capsys.readouterr() == (f"fail  config         {detail}\n", "")
+
+
+@pytest.mark.parametrize("command", [["tick"], ["status"], ["panel", "--json"]])
+def test_a_broken_config_with_no_good_copy_is_one_line_on_stderr(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str], command: list[str]
+) -> None:
+    home = write(tmp_path, "[sources.github\n")
+    assert main(["--home", str(home), *command]) == 1
+    out, err = capsys.readouterr()
+    assert out == "" and err.startswith(f"{home / CONFIG_FILENAME}: invalid TOML") and err.count("\n") == 1
+
+
+def test_a_deleted_config_still_runs_on_the_last_good_copy(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
+    home = write(tmp_path, "")
+    assert main(["--home", str(home), "status"]) == 0
+    (home / CONFIG_FILENAME).unlink()
+    capsys.readouterr()
+    assert main(["--home", str(home), "status"]) == 0
+    assert capsys.readouterr().err == ""
 
 
 def test_setup_on_a_bare_machine_writes_a_config_that_runs_with_no_connectors(

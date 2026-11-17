@@ -79,6 +79,15 @@ class ConfigError(ValueError):
     pass
 
 
+class NotSetUpError(ConfigError):
+    def __init__(self, home: Path) -> None:
+        super().__init__(f"no {CONFIG_FILENAME} in {home} yet")
+        self.home = home
+
+    def hint(self, cli: str) -> str:
+        return f'{self}: run "{cli} --home {self.home} setup" first'
+
+
 def parse_config(raw: str) -> Config:
     try:
         data = tomllib.loads(raw)
@@ -239,6 +248,8 @@ def load_config(home: Path) -> Config:
         config = parse_config(raw)
     except (OSError, ConfigError) as error:
         if not last_good.is_file():
+            if isinstance(error, FileNotFoundError):
+                raise NotSetUpError(home) from error
             raise ConfigError(f"{path}: {error}") from error
         fallback = parse_config(last_good.read_text(encoding="utf-8"))
         return replace(fallback, problem=f"{path}: {error}. Running on the last good config until it's fixed")

@@ -312,6 +312,7 @@ def test_a_token_others_can_read_is_replaced(tmp_path: Path) -> None:
 
 
 def panel_cli(home: Path, *argv: str) -> int:
+    (home / "superagent.toml").write_text(CONFIG, encoding="utf-8")
     parser = argparse.ArgumentParser()
     setup_parser(parser)
     return run(parser.parse_args(["--home", str(home), "panel", *argv]))
