@@ -11,7 +11,7 @@ Hermes Agent Plugin Hackathon. The announcement says Wednesday 2026-11-11 at 23:
 | Catalog entry and PR text | Done | Pinned at `83544d7`, the v0.1.0 commit |
 | Run on a live model | Done | Part A is [recorded](docs/live-run.md). It found one bug, fixed in #69 |
 | Demo video under 90 seconds | Done | Posted on X with the thread |
-| Catalog PR | Open | [NousResearch/hermes-agent#152772](https://github.com/NousResearch/hermes-agent/pull/152772) |
+| Catalog PR | Merged | [NousResearch/hermes-agent#152772](https://github.com/NousResearch/hermes-agent/pull/152772) |
 | Post on X | Done | Step 2 |
 | Form | Owner | Step 3 |
 

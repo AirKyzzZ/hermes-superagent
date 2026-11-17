@@ -44,6 +44,12 @@ uvx --from git+https://github.com/AirKyzzZ/hermes-superagent superagent-demo
 
 No uv? With Python 3.11+, clone the repo and run `python3 demo/run_demo.py`. To point the ledger at your own GitHub issues, still without Hermes, go to [Install](#install).
 
+Already on Hermes 0.22.7 or newer? Install the plugin from GitHub, then run `setup` and `doctor` as shown in [Install](#install). The catalog entry is still pinned to the v0.1.0 release, so this gets you the fixes since:
+
+```bash
+hermes plugins install AirKyzzZ/hermes-superagent --enable
+```
+
 ## Examples
 
 Three more one-command runs, also with no credentials, each with a recording. They need a clone and Python 3.11+:
@@ -464,7 +470,7 @@ These are three of the closest plugins in the Hermes catalog. Each solves a diff
 
 | | hermes-superagent | [nerve](https://github.com/keeltrace/hermes-nerve) | [agora](https://github.com/yzy806806/agora) | [diaktoros](https://github.com/coe0718/diaktoros) |
 | --- | --- | --- | --- | --- |
-| **Version** | 0.1.0, not in the catalog | 0.4.15 | 2.0.13 | 0.5.0 |
+| **Version** | 0.1.0 | 0.4.15 | 2.0.13 | 0.5.0 |
 | **Built for** | One agent in front of any work | Supervising agent turns and Kanban work: evidence, token spend, context | A role-based dev team that debates, votes and builds | Unattended pull request review and fixes, plus issue triage and CI repair |
 | **Who you talk to** | A router that can't execute | Your usual Hermes agent | Your usual Hermes agent, with a leader chairing the team | Nobody, GitHub events drive it |
 | **Unit of work** | One worker session per ticket | A Kanban card, on a local or SSH worker | A Kanban task for a role | A pull request |
