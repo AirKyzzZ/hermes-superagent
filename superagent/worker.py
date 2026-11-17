@@ -5,10 +5,9 @@ import os
 import re
 import signal
 import subprocess
-import sys
 import threading
 import time
-from collections.abc import Collection, Mapping, Sequence, Set
+from collections.abc import Mapping, Sequence, Set
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
@@ -17,7 +16,6 @@ from typing import Protocol
 from .domain import Assignment, Ticket
 
 IDENTITY_FILENAME = ".superagent-identity.json"
-ASSIGNMENT_MARKER = "WORKER_ASSIGNMENT"
 ROLE_WORKER = "worker"
 ROLE_ROUTER = "router"
 ROLE_WATCHDOG = "watchdog"
@@ -32,16 +30,9 @@ _PS_TIMEOUT_SECONDS = 10.0
 _LEADERLESS_GROUP_MAX_AGE_SECONDS = 6 * 3600.0
 _OUTPUT_TAIL_BYTES = 4000
 _TERMINAL_ESCAPES = re.compile(r"\x1b\[[0-9;?]*[A-Za-z]")
-_SHARED_DAEMONS = frozenset(
-    {"tmux", "screen", "gpg-agent", "dirmngr", "scdaemon", "ssh-agent", "dbus-daemon", "systemd", "launchd"}
-)
 
 
 class WorkerStopError(RuntimeError):
-    pass
-
-
-class _EnvironmentUnreadable(Exception):
     pass
 
 
@@ -50,17 +41,13 @@ class _Process:
     pid: int
     ppid: int
     pgid: int
-    uid: int
     zombie: bool
-    name: str
 
 
 @dataclass(frozen=True)
 class _Sweep:
-    targets: frozenset[int]
-    walked: dict[int, int]
-    owned: frozenset[int]
-    unreadable: str
+    targets: dict[int, int]
+    members: frozenset[int]
 
 
 class WorkerBackend(Protocol):
@@ -137,92 +124,29 @@ def _pid_exists(pid: int) -> bool:
     return True
 
 
-def _program_name(command: str) -> str:
-    # tmux renames its server "tmux: server" on Linux, and screen's server calls itself SCREEN.
-    return Path(command.split(":", 1)[0]).name.lower()
-
-
 def _list_processes() -> list[_Process]:
     try:
-        result = _ps(["ps", "-A", "-o", "pid=,ppid=,pgid=,uid=,stat=,comm="])
+        result = _ps(["ps", "-A", "-o", "pid=,ppid=,pgid=,stat="])
     except subprocess.TimeoutExpired as error:
         raise WorkerStopError(f"could not list processes: ps timed out after {_PS_TIMEOUT_SECONDS:g}s") from error
     if result.returncode != 0:
         raise WorkerStopError(f"could not list processes: {result.stderr.strip()}")
     processes = []
     for line in result.stdout.splitlines():
-        fields = line.split(None, 5)
-        if len(fields) >= 5:
-            pid, ppid, pgid, uid = int(fields[0]), int(fields[1]), int(fields[2]), int(fields[3])
-            name = _program_name(fields[5]) if len(fields) == 6 else ""
-            processes.append(_Process(pid, ppid, pgid, uid, "Z" in fields[4], name))
+        fields = line.split()
+        if len(fields) == 4:
+            processes.append(_Process(int(fields[0]), int(fields[1]), int(fields[2]), "Z" in fields[3]))
     return processes
 
 
-def _commands_by_pid(options: Sequence[str]) -> dict[int, str]:
-    argv = ["ps", "-A", "-ww", *options, "-o", "pid=,command="]
-    try:
-        result = _ps(argv)
-    except subprocess.TimeoutExpired as error:
-        raise _EnvironmentUnreadable(f"{' '.join(argv)} timed out after {_PS_TIMEOUT_SECONDS:g}s") from error
-    if result.returncode != 0:
-        raise _EnvironmentUnreadable(f"{' '.join(argv)} failed: {result.stderr.strip()}")
-    commands: dict[int, str] = {}
-    for line in result.stdout.splitlines():
-        pid, _, command = line.lstrip().partition(" ")
-        if pid.isdigit():
-            commands.setdefault(int(pid), command)
-    return commands
-
-
-def _marked_by_ps(candidates: Collection[int], entry: str) -> set[int]:
-    # ps -E appends the environment to argv, and macOS hides it for Apple's own binaries such as /bin/sleep.
-    commands = _commands_by_pid([])
-    with_environment = _commands_by_pid(["-E"])
-    marked = set()
-    for pid in candidates:
-        command, shown = commands.get(pid), with_environment.get(pid)
-        if command is None or shown is None or not shown.startswith(command):
-            continue
-        if entry in shown[len(command) :].split():
-            marked.add(pid)
-    return marked
-
-
-def _marked_by_proc(candidates: Collection[int], entry: str) -> set[int]:
-    wanted = entry.encode()
-    marked = set()
-    for pid in candidates:
-        try:
-            environment = Path(f"/proc/{pid}/environ").read_bytes()
-        except (FileNotFoundError, ProcessLookupError, PermissionError):
-            continue
-        if wanted in environment.split(b"\0"):
-            marked.add(pid)
-    return marked
-
-
-def _marked_processes(candidates: Collection[int], entry: str) -> set[int]:
-    if sys.platform == "darwin":
-        return _marked_by_ps(candidates, entry)
-    if Path("/proc/self/environ").is_file():
-        return _marked_by_proc(candidates, entry)
-    raise _EnvironmentUnreadable(f"{sys.platform} has neither /proc/<pid>/environ nor a known ps -E")
-
-
-def _sweep(group: int | None, entry: str, earlier: Mapping[int, int], foreign: Set[int]) -> _Sweep:
+def _sweep(group: int | None, earlier: Mapping[int, int], foreign: Set[int]) -> _Sweep:
     processes = _list_processes()
-    own_pid, own_group, own_uid = os.getpid(), os.getpgrp(), os.geteuid()
+    own_pid, own_group = os.getpid(), os.getpgrp()
     signalable = {
         process.pid
         for process in processes
         if process.pid > 1 and process.pid != own_pid and process.pgid != own_group and not process.zombie
     }
-    ours = [process.pid for process in processes if process.pid in signalable and process.uid == own_uid]
-    try:
-        marked, unreadable = _marked_processes(ours, entry), ""
-    except _EnvironmentUnreadable as error:
-        marked, unreadable = set(), str(error)
     children: dict[int, list[int]] = {}
     for process in processes:
         children.setdefault(process.ppid, []).append(process.pid)
@@ -235,13 +159,8 @@ def _sweep(group: int | None, entry: str, earlier: Mapping[int, int], foreign: S
         if pid in signalable and pid not in tree:
             tree.add(pid)
             pending.extend(children.get(pid, []))
-    by_pid = {process.pid: process for process in processes}
-    carriers_outside = {pid for pid in marked if by_pid[pid].pgid != group}
-    loose = {
-        pid for pid in marked if by_pid[pid].name not in _SHARED_DAEMONS and by_pid[pid].ppid not in carriers_outside
-    }
-    walked = {pid: by_pid[pid].pgid for pid in tree - foreign}
-    return _Sweep(frozenset((tree | loose) - foreign), walked, frozenset(marked.union(members)), unreadable)
+    targets = {process.pid: process.pgid for process in processes if process.pid in tree and process.pid not in foreign}
+    return _Sweep(targets, frozenset(members))
 
 
 def _send(sweep: _Sweep, signum: int) -> set[int]:
@@ -252,7 +171,7 @@ def _send(sweep: _Sweep, signum: int) -> set[int]:
         except ProcessLookupError:
             continue
         except PermissionError:
-            if pid not in sweep.owned:
+            if pid not in sweep.members:
                 foreign.add(pid)
     return foreign
 
@@ -308,7 +227,6 @@ class SubprocessBackend:
         write_identity(workdir, ticket.id, assignment.id, token, assignment.attempt)
         env = {name: os.environ[name] for name in _INHERITED_ENV if name in os.environ}
         env.update(self.extra_env)
-        env[ASSIGNMENT_MARKER] = assignment.id
         argv = [part.replace("{brief}", str(brief)) for part in self.argv]
         with (workdir / "worker.log").open("ab") as log:
             process = subprocess.Popen(
@@ -342,28 +260,21 @@ class SubprocessBackend:
         if assignment.pid is None:
             return
         group = _worker_group(assignment.pid, assignment.started_at)
-        entry = f"{ASSIGNMENT_MARKER}={assignment.id}"
         foreign: set[int] = set()
-        sweep = _sweep(group, entry, {}, foreign)
+        sweep = _sweep(group, {}, foreign)
         if sweep.targets:
             foreign |= _send(sweep, signal.SIGTERM)
-            _wait_for_exit(sweep.targets - foreign, _STOP_GRACE_SECONDS)
-            sweep = _sweep(group, entry, sweep.walked, foreign)
+            _wait_for_exit(sweep.targets.keys() - foreign, _STOP_GRACE_SECONDS)
+            sweep = _sweep(group, sweep.targets, foreign)
         killed: set[int] = set()
         for _ in range(_KILL_SWEEPS):
-            if not sweep.targets - killed:
+            if not sweep.targets.keys() - killed:
                 break
             foreign |= _send(sweep, signal.SIGKILL)
-            killed |= sweep.targets
-            _wait_for_exit(sweep.targets - foreign, _KILL_GRACE_SECONDS)
-            sweep = _sweep(group, entry, sweep.walked, foreign)
-        problems = []
+            killed |= sweep.targets.keys()
+            _wait_for_exit(sweep.targets.keys() - foreign, _KILL_GRACE_SECONDS)
+            sweep = _sweep(group, sweep.targets, foreign)
         if sweep.targets:
-            problems.append(f"processes still running after SIGKILL: {', '.join(map(str, sorted(sweep.targets)))}")
-        if sweep.unreadable:
-            problems.append(
-                f"could not read process environments ({sweep.unreadable}), "
-                "so processes it started outside its process group may still run"
+            raise WorkerStopError(
+                f"processes still running after SIGKILL: {', '.join(map(str, sorted(sweep.targets)))}"
             )
-        if problems:
-            raise WorkerStopError("; ".join(problems))
