@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import contextlib
 import json
 import os
 import re
@@ -264,8 +265,9 @@ class SubprocessBackend:
         sweep = _sweep(group, {}, foreign)
         if sweep.targets:
             foreign |= _send(sweep, signal.SIGTERM)
-            _wait_for_exit(sweep.targets.keys() - foreign, _STOP_GRACE_SECONDS)
-            sweep = _sweep(group, sweep.targets, foreign)
+            with contextlib.suppress(WorkerStopError):
+                _wait_for_exit(sweep.targets.keys() - foreign, _STOP_GRACE_SECONDS)
+                sweep = _sweep(group, sweep.targets, foreign)
         killed: set[int] = set()
         for _ in range(_KILL_SWEEPS):
             if not sweep.targets.keys() - killed:
