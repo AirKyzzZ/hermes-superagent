@@ -158,7 +158,7 @@ SCRIPT = r"""
 "use strict";
 const token = decodeURIComponent(location.hash.slice(1));
 const REFRESH_MS = 5000;
-const state = {snapshot: null, project: null, ticket: null, detail: null};
+const state = {snapshot: null, project: null, ticket: null, detail: null, open: {brief: false, log: true}};
 const esc = (value) => String(value ?? "").replace(/[&<>"']/g,
   (c) => ({"&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;"}[c]));
 const icon = (name) => `<svg class="icon" aria-hidden="true"><use href="#i-${name}"></use></svg>`;
@@ -394,6 +394,11 @@ function projectSheet(s) {
       ? `<div class="card">${itemRows(others, now)}</div>` : empty("Nothing else open.")), false);
 }
 
+function folded(key, title, text) {
+  return `<details data-key="${esc(key)}"${state.open[key] ? " open" : ""}><summary>${esc(title)}</summary>
+    <pre data-key="${esc(key)}">${esc(text)}</pre></details>`;
+}
+
 function ticketSheet(s) {
   const d = state.detail;
   const now = s.generated_at;
@@ -406,10 +411,8 @@ function ticketSheet(s) {
     + section("Conversation", d.timeline.length, `<div class="timeline">${d.timeline.map((e) => `<div class="event">
       <span class="when" title="${esc(ago(e.at, now))} ago">${esc(clock(e.at))}</span>
       <span class="kind">${esc(e.kind)}</span><span class="text">${esc(e.text)}</span></div>`).join("")}</div>`)
-    + `<details><summary>Brief the worker started from</summary><pre>${esc(d.brief || "No brief on disk.")}</pre>
-      </details>`
-    + `<details open><summary>Worker output, last lines</summary><pre>${esc(d.log || "No output yet.")}</pre>
-      </details>`, true);
+    + folded("brief", "Brief the worker started from", d.brief || "No brief on disk.")
+    + folded("log", "Worker output, last lines", d.log || "No output yet."), true);
 }
 
 function render() {
@@ -422,11 +425,14 @@ function render() {
     panel.innerHTML = header(s, you) + `<div class="banner">${esc(s.missing)}</div>`;
     return;
   }
-  const scroll = document.querySelector(".sheet")?.scrollTop ?? 0;
+  const scrolls = new Map([...document.querySelectorAll(".layer[data-close] .sheet, pre[data-key]")]
+    .map((el) => [el.closest(".layer").dataset.close + (el.dataset.key || ""), el.scrollTop]));
   panel.innerHTML = header(s, you) + overview(s)
     + (state.project ? projectSheet(s) : "") + (state.ticket ? ticketSheet(s) : "");
-  const sheets = document.querySelectorAll(".sheet");
-  if (sheets.length) sheets[sheets.length - 1].scrollTop = scroll;
+  for (const el of document.querySelectorAll(".layer[data-close] .sheet, pre[data-key]")) {
+    const key = el.closest(".layer").dataset.close + (el.dataset.key || "");
+    if (scrolls.has(key)) el.scrollTop = scrolls.get(key);
+  }
 }
 
 function offline(message) {
@@ -501,6 +507,10 @@ document.addEventListener("click", async (event) => {
     render();
   }
 });
+
+document.addEventListener("toggle", (event) => {
+  if (event.target.matches("details[data-key]")) state.open[event.target.dataset.key] = event.target.open;
+}, true);
 
 document.addEventListener("keydown", (event) => {
   if (event.key === "Escape" && (state.ticket || state.project)) close(state.ticket ? "ticket" : "project");

@@ -2,9 +2,11 @@ from __future__ import annotations
 
 import hmac
 import json
+import os
 import re
 import secrets
 import sqlite3
+import stat
 import time
 from collections.abc import Iterator, Sequence
 from contextlib import closing, contextmanager
@@ -545,11 +547,15 @@ def ticket_detail(home: Path, ticket_id: str) -> dict[str, object] | None:
 
 def _tail(path: Path, limit: int) -> str:
     try:
-        with path.open("rb") as file:
-            file.seek(max(0, path.stat().st_size - limit))
-            text = file.read().decode("utf-8", errors="replace")
+        descriptor = os.open(path, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK)
     except OSError:
         return ""
+    with os.fdopen(descriptor, "rb") as file:
+        size = os.fstat(descriptor)
+        if not stat.S_ISREG(size.st_mode):
+            return ""
+        file.seek(max(0, size.st_size - limit))
+        text = file.read().decode("utf-8", errors="replace")
     return redact(_TERMINAL_ESCAPES.sub("", text)).strip()
 
 

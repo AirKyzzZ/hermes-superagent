@@ -3,6 +3,7 @@ from __future__ import annotations
 import argparse
 import http.client
 import json
+import os
 import sqlite3
 import threading
 from collections.abc import Iterator
@@ -240,3 +241,18 @@ def test_ticket_detail_has_the_whole_conversation(tmp_path: Path) -> None:
 def test_the_ticket_endpoint_needs_the_token_and_a_real_ticket(served: int) -> None:
     assert fetch(served, "/api/ticket?id=tk-00000000")[0] == 403
     assert fetch(served, "/api/ticket?id=tk-00000000", {TOKEN_HEADER: "the-token"})[0] == 404
+
+
+def test_ticket_detail_never_follows_a_link_out_of_the_worker_directory(tmp_path: Path) -> None:
+    busy_home(tmp_path)
+    store = Store(tmp_path / DB_FILENAME)
+    running = store.running_assignments()[0]
+    workdir = tmp_path / "workers" / running.ticket_id / running.id
+    workdir.mkdir(parents=True)
+    secret = tmp_path / "elsewhere.txt"
+    secret.write_text("not the worker's", encoding="utf-8")
+    (workdir / "worker.log").symlink_to(secret)
+    os.mkfifo(workdir / "brief.md")
+    detail = ticket_detail(tmp_path, running.ticket_id)
+    assert detail is not None
+    assert (detail["log"], detail["brief"]) == ("", "")
