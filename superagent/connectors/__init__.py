@@ -76,7 +76,7 @@ class ConnectorType:
 
 
 def connector_types() -> dict[str, ConnectorType]:
-    from . import agents, anki, codexbar, command, gcal, github, gitlab, gmail, todoist, whatsapp
+    from . import agents, anki, codexbar, command, gcal, github, gitlab, gmail, markdown, todoist, whatsapp
 
     return {
         "command": ConnectorType(command.KEYS, command.build),
@@ -88,6 +88,7 @@ def connector_types() -> dict[str, ConnectorType]:
         "anki": ConnectorType(anki.KEYS, anki.build),
         "whatsapp": ConnectorType(whatsapp.KEYS, whatsapp.build),
         "todoist": ConnectorType(todoist.KEYS, todoist.build),
+        "markdown": ConnectorType(markdown.KEYS, markdown.build),
         "agents": ConnectorType(agents.KEYS, agents.build),
     }
 

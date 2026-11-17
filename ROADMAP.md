@@ -21,6 +21,7 @@ Each connector reads one tool into the ledger, so nothing it shows gets lost. [d
 | Claude Code | a hook and an ssh probe | a session, with its state: working, waiting, stuck, rate-limited, gone | Done |
 | Any JSON CLI | `command` | whatever the tool lists | Done |
 | Todoist | `td` | an active task | Done |
+| Markdown task file | `markdown`, no CLI | an open `- [ ]` task in a file, a folder or an Obsidian vault | Done |
 | Gmail | `gog`, one block per account | an inbox thread, closed once it's archived or trashed | Done |
 | Google Calendar | `gog`, one block per account | an event in the next few days, info | Done |
 | Any calendar shared as a link | an ICS URL | an event, info | Wanted |
@@ -29,7 +30,7 @@ Each connector reads one tool into the ledger, so nothing it shows gets lost. [d
 | Anki | AnkiConnect through `curl` | today's due cards, info | Done |
 | CodexBar | `codexbar` | coding-agent usage and quota, info | Done |
 
-No ledger item starts work on its own, and mail and chat never will, because anyone can write to you. Something else you'd want in the ledger, such as Linear, Jira or a Markdown task file? [Open a connector issue](https://github.com/AirKyzzZ/hermes-superagent/issues/new?template=connector.yml).
+No ledger item starts work on its own, and mail and chat never will, because anyone can write to you. Something else you'd want in the ledger, such as Linear or Jira? [Open a connector issue](https://github.com/AirKyzzZ/hermes-superagent/issues/new?template=connector.yml).
 
 ## Next
 
