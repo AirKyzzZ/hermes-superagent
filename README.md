@@ -286,7 +286,14 @@ tailscale serve --bg 8765
 hermes superagent --home ~/superagent panel --allow-host your-server.your-tailnet.ts.net
 ```
 
-`--allow-host` only adds a name the panel answers to, it still listens on `127.0.0.1`. Don't put it behind `tailscale funnel` or any public proxy: the token is the only thing standing between the internet and your work. [The shadow install guide](docs/dogfood-install.md#keep-the-panel-open) has a systemd unit that keeps it running, and [a French walkthrough](docs/panneau-howto.fr.md) covers a server reached over Tailscale.
+A bare name is answered on any port, so when 443 is already taken on that server the same `--allow-host` works behind another HTTPS port, and you open `https://your-server.your-tailnet.ts.net:8443/#<token>`:
+
+```bash
+tailscale serve --bg --https=8443 http://127.0.0.1:8765
+hermes superagent --home ~/superagent panel --allow-host your-server.your-tailnet.ts.net
+```
+
+`--allow-host your-server.your-tailnet.ts.net:8443` answers to that name on that port only. A request for any other `Host` gets a `421` that names the `Host` it saw and the ones the panel answers to. `--allow-host` only adds a name the panel answers to, it still listens on `127.0.0.1`. Don't put it behind `tailscale funnel` or any public proxy: the token is the only thing standing between the internet and your work. [The shadow install guide](docs/dogfood-install.md#keep-the-panel-open) has a systemd unit that keeps it running, and [a French walkthrough](docs/panneau-howto.fr.md) covers a server reached over Tailscale.
 
 ### Run it with Hermes
 

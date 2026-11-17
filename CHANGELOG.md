@@ -18,6 +18,7 @@ Notable changes to hermes-superagent. The format follows [Keep a Changelog](http
 
 ### Fixed
 
+- The panel answers behind a proxy on another port, such as `tailscale serve --https=8443` when 443 is taken: a bare `--allow-host` name is answered on any port, `name:port` only on that port, and a refused request's `421` names the `Host` it saw and the ones the panel answers to.
 - A config value of the wrong type, such as `argv = 1` or `pass_strangers = "false"`, is refused like any other bad edit, so the plugin keeps running on the last good config instead of crashing or reading `"false"` as true.
 - Unknown keys in `[briefs]` are refused, like everywhere else.
 - `briefs --compare` finds a GitLab task's checkout under its `gitlab:group/project` key, as a real brief does.

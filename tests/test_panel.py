@@ -7,8 +7,8 @@ import os
 import sqlite3
 import stat
 import threading
-from collections.abc import Iterator
-from contextlib import closing
+from collections.abc import Iterator, Sequence
+from contextlib import closing, contextmanager
 from http.server import ThreadingHTTPServer
 from pathlib import Path
 
@@ -19,6 +19,7 @@ from superagent.config import DB_FILENAME, Config, load_config
 from superagent.domain import Mandate, RepairAction, ReportState, Strength, Trigger
 from superagent.ledger import Ledger, SourceItem
 from superagent.panel import (
+    HOST_SHOWN_CHARS,
     TOKEN_FILENAME,
     TOKEN_HEADER,
     allowed_hosts,
@@ -133,16 +134,22 @@ def test_text_from_reports_is_redacted(tmp_path: Path) -> None:
     assert "[redacted]" in shot
 
 
-@pytest.fixture
-def served(tmp_path: Path) -> Iterator[int]:
-    busy_home(tmp_path)
-    server = ThreadingHTTPServer(("127.0.0.1", 0), panel_handler(tmp_path, "the-token"))
-    threading.Thread(target=server.serve_forever, daemon=True).start()
+@contextmanager
+def panel_server(home: Path, extra_hosts: Sequence[str] = ()) -> Iterator[int]:
+    server = ThreadingHTTPServer(("127.0.0.1", 0), panel_handler(home, "the-token", extra_hosts))
+    threading.Thread(target=server.serve_forever, kwargs={"poll_interval": 0.01}, daemon=True).start()
     try:
         yield server.server_port
     finally:
         server.shutdown()
         server.server_close()
+
+
+@pytest.fixture
+def served(tmp_path: Path) -> Iterator[int]:
+    busy_home(tmp_path)
+    with panel_server(tmp_path) as port:
+        yield port
 
 
 def fetch(port: int, path: str, headers: dict[str, str] | None = None) -> tuple[int, dict[str, str], bytes]:
@@ -276,24 +283,63 @@ def test_the_token_survives_a_restart_until_renewed(tmp_path: Path) -> None:
     assert panel_token(tmp_path) == renewed
 
 
-def test_a_host_passed_to_allow_host_is_answered(tmp_path: Path) -> None:
-    busy_home(tmp_path)
-    server = ThreadingHTTPServer(("127.0.0.1", 0), panel_handler(tmp_path, "the-token", ["Panel.Example.ts.net"]))
-    threading.Thread(target=server.serve_forever, daemon=True).start()
-    try:
-        port = server.server_port
-        assert fetch(port, "/", {"Host": "panel.example.ts.net"})[0] == 200
-        assert fetch(port, "/", {"Host": "other.example.ts.net"})[0] == 421
-    finally:
-        server.shutdown()
-        server.server_close()
+@pytest.mark.parametrize(
+    ("allowed", "host", "status"),
+    [
+        ("Panel.Example.ts.net", "panel.example.ts.net", 200),
+        ("panel.example.ts.net", "Panel.Example.ts.net:8443", 200),
+        ("panel.example.ts.net", "other.example.ts.net", 421),
+        ("panel.example.ts.net", "panel.example.ts.net:abc", 421),
+        ("panel.example.ts.net:8443", "panel.example.ts.net:8443", 200),
+        ("panel.example.ts.net:8443", "panel.example.ts.net:9443", 421),
+        ("panel.example.ts.net:8443", "panel.example.ts.net", 421),
+        ("panel.example.ts.net:443", "panel.example.ts.net", 200),
+        ("panel.example.ts.net", "localhost:8443", 421),
+        ("panel.example.ts.net", "127.0.0.1:8443", 421),
+        ("panel.example.ts.net", "localhost", 421),
+    ],
+)
+def test_a_name_passed_to_allow_host_is_answered_on_any_port_unless_one_is_given(
+    tmp_path: Path, allowed: str, host: str, status: int
+) -> None:
+    with panel_server(tmp_path, [allowed]) as port:
+        assert fetch(port, "/", {"Host": host})[0] == status
 
 
-def test_allow_host_refuses_anything_but_a_host_name() -> None:
+def test_a_name_with_a_port_is_not_answered_on_the_panel_port(tmp_path: Path) -> None:
+    with panel_server(tmp_path, ["panel.example.ts.net:8443"]) as port:
+        assert fetch(port, "/", {"Host": f"panel.example.ts.net:{port}"})[0] == 421
+        assert fetch(port, "/", {"Host": f"localhost:{port}"})[0] == 200
+
+
+def test_a_refused_host_is_named_next_to_the_names_the_panel_answers_to(tmp_path: Path) -> None:
+    with panel_server(tmp_path, ["panel.example.ts.net", "other.example.ts.net:8443"]) as port:
+        status, headers, body = fetch(port, "/", {"Host": "evil.example:80"})
+        assert status == 421
+        assert headers["Content-Type"] == "text/plain; charset=utf-8"
+        assert body.decode() == (
+            f"this panel answers to 127.0.0.1:{port}, localhost:{port}, panel.example.ts.net and "
+            'other.example.ts.net:8443, not "evil.example:80". --allow-host adds a name.'
+        )
+        assert b'not "evil\\".example"' in fetch(port, "/", {"Host": 'evil".example'})[2]
+        assert b'not "' + b"a" * HOST_SHOWN_CHARS + b'"' in fetch(port, "/", {"Host": "a" * 500})[2]
+
+
+@pytest.mark.parametrize(
+    "entry",
+    [
+        "evil.example.com/path",
+        "*",
+        "https://panel.example.ts.net",
+        "panel.example.ts.net:0",
+        "panel.example.ts.net:99999",
+        "panel.example.ts.net:abc",
+        "panel.example.ts.net:",
+    ],
+)
+def test_allow_host_refuses_anything_but_a_name_or_a_name_and_a_port(entry: str) -> None:
     with pytest.raises(ValueError, match="allow-host"):
-        allowed_hosts(8765, ["evil.example.com/path"])
-    with pytest.raises(ValueError, match="allow-host"):
-        allowed_hosts(8765, ["*"])
+        allowed_hosts(8765, [entry])
 
 
 @pytest.mark.parametrize("saved", [b"\xff\xfe not text", b"a" * 31, b"a" * 40])

@@ -38,6 +38,8 @@ TOKEN_HEADER = "X-Superagent-Token"
 TOKEN_FILENAME = ".superagent.panel-token"
 _SAVED_TOKEN = re.compile(r"[A-Za-z0-9_-]{32}")
 _HOST_NAME = re.compile(r"[a-z0-9](?:[a-z0-9-]*[a-z0-9])?(?:\.[a-z0-9](?:[a-z0-9-]*[a-z0-9])?)+")
+_PORT = re.compile(r"[1-9][0-9]{0,4}")
+HOST_SHOWN_CHARS = 100
 _CLOSED = (ItemState.DONE.value, ItemState.IGNORED.value)
 _ATTENTION_STATES = {state.value for state in ATTENTION_STATES}
 _ATTENTION_ORDER = ("escalation", "blocked", "session", "source", "overdue")
@@ -584,11 +586,36 @@ def panel_token(home: Path, renew: bool = False) -> str:
     return token
 
 
-def allowed_hosts(port: int, extra: Sequence[str] = ()) -> frozenset[str]:
-    named = {name.strip().lower() for name in extra}
-    if bad := sorted(name for name in named if not _HOST_NAME.fullmatch(name)):
-        raise ValueError(f"--allow-host takes a plain host name such as panel.your-tailnet.ts.net, not {bad[0]!r}")
-    return frozenset({f"127.0.0.1:{port}", f"localhost:{port}"} | named | {f"{name}:{port}" for name in named})
+def _is_port(text: str) -> bool:
+    return bool(_PORT.fullmatch(text)) and int(text) <= 65535
+
+
+def allowed_hosts(port: int, extra: Sequence[str] = ()) -> tuple[str, ...]:
+    hosts = [f"127.0.0.1:{port}", f"localhost:{port}"]
+    for entry in extra:
+        host = entry.strip().lower()
+        name, colon, given = host.partition(":")
+        if not _HOST_NAME.fullmatch(name) or (colon and not _is_port(given)):
+            raise ValueError(
+                "--allow-host takes a host name such as panel.your-tailnet.ts.net, or a name and a port "
+                f"from 1 to 65535 such as panel.your-tailnet.ts.net:8443, not {entry!r}"
+            )
+        hosts.append(host)
+    return tuple(dict.fromkeys(hosts))
+
+
+def host_allowed(host: str, allowed: Sequence[str]) -> bool:
+    host = host.lower()
+    name, colon, port = host.partition(":")
+    if not colon:
+        return name in allowed or f"{name}:80" in allowed or f"{name}:443" in allowed
+    return _is_port(port) and (host in allowed or name in allowed)
+
+
+def _wrong_host(host: str, allowed: Sequence[str]) -> bytes:
+    names = ", ".join(allowed[:-1]) + f" and {allowed[-1]}"
+    shown = json.dumps(host[:HOST_SHOWN_CHARS])
+    return f"this panel answers to {names}, not {shown}. --allow-host adds a name.".encode()
 
 
 def panel_handler(home: Path, token: str, extra_hosts: Sequence[str] = ()) -> type[BaseHTTPRequestHandler]:
@@ -598,10 +625,9 @@ def panel_handler(home: Path, token: str, extra_hosts: Sequence[str] = ()) -> ty
         def do_GET(self) -> None:
             url = urlsplit(self.path)
             hosts = allowed_hosts(getattr(self.server, "server_port", 0), extra_hosts)
-            if self.headers.get("Host", "").lower() not in hosts:
-                self._send(
-                    421, "text/plain", b"open the panel on 127.0.0.1, localhost or a host passed to --allow-host"
-                )
+            host = self.headers.get("Host", "")
+            if not host_allowed(host, hosts):
+                self._send(421, "text/plain", _wrong_host(host, hosts))
             elif url.path == "/":
                 self._send(200, "text/html", PAGE.encode())
             elif url.path == "/panel.js":
