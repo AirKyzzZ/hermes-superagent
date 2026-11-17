@@ -280,7 +280,7 @@ tailscale serve --bg 8765
 hermes superagent --home ~/superagent panel --allow-host your-server.your-tailnet.ts.net
 ```
 
-`--allow-host` only adds a name the panel answers to, it still listens on `127.0.0.1`. Don't put it behind `tailscale funnel` or any public proxy: the token is the only thing standing between the internet and your work. [The shadow install guide](docs/dogfood-install.md#keep-the-panel-open) has a systemd unit that keeps it running.
+`--allow-host` only adds a name the panel answers to, it still listens on `127.0.0.1`. Don't put it behind `tailscale funnel` or any public proxy: the token is the only thing standing between the internet and your work. [The shadow install guide](docs/dogfood-install.md#keep-the-panel-open) has a systemd unit that keeps it running, and [a French walkthrough](docs/panneau-howto.fr.md) covers a server reached over Tailscale.
 
 ### Run it with Hermes
 
