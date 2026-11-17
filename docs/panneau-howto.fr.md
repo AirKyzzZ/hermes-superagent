@@ -12,7 +12,7 @@ mkdir -p ~/superagent && hermes superagent --home ~/superagent setup
 hermes superagent --home ~/superagent doctor
 ```
 
-`setup` écrit `~/superagent/superagent.toml`, en mode 0600, d'après ce que le VPS a : un connecteur pour chaque outil trouvé parmi `gh`, `glab`, `td` et `codexbar`, le tableau des sessions (`agents`) si Claude Code est là, l'envoi des messages par le `hermes` qui la lance, et le fuseau horaire de la machine pour le brief. Elle ne touche jamais à une config qui existe déjà. Pour recevoir les pannes sur un salon Discord, passe `--alerts discord:<id du salon>` dès ce premier lancement, sinon ajoute-le plus tard à la main sous `[channels]`. Elle imprime ensuite la suite, dont, si Claude Code est là, le hook qui met tes sessions sur le tableau. Le tick toutes les 2 minutes qu'elle conseille, c'est la section 2.
+`setup` écrit `~/superagent/superagent.toml`, en mode 0600, d'après ce que le VPS a : un connecteur pour chaque outil trouvé parmi `gh`, `glab`, `td` et `codexbar`, le tableau des sessions (`agents`) si Claude Code est là, l'envoi des messages par le `hermes` qui la lance, et le fuseau horaire de la machine pour le brief. Elle ne touche jamais à une config qui existe déjà. Pour recevoir les pannes sur un salon Discord, passe `--alerts discord:<id du salon>` dès ce premier lancement, sinon ajoute-le plus tard à la main sous `[channels]`. Elle imprime ensuite la suite, dont, si Claude Code est là, le hook qui met tes sessions sur le tableau. Le tick toutes les 2 minutes qu'elle conseille, c'est l'étape 2.
 
 `doctor` imprime une ligne par vérification et interroge chaque source une fois. À ce stade, des `warn` sont normaux : aucun tick n'a encore tourné, pas de salon d'alertes, pas de heartbeat. Une ligne `fail` est à régler avant de continuer.
 
@@ -54,7 +54,7 @@ systemctl --user enable --now superagent-tick.timer
 loginctl enable-linger "$USER"
 ```
 
-Chaque outil trouvé par `setup` doit être dans ce `PATH`. Si `gh`, `glab` ou `codexbar` vivent ailleurs que dans `/usr/local/bin` ou `/usr/bin`, ajoute leur dossier. `td` se lance avec `node`, donc il faut les deux dossiers : `dirname "$(command -v td)"` et `dirname "$(command -v node)"`.
+Chaque outil trouvé par `setup` doit être dans ce `PATH`. Si `gh`, `glab` ou `codexbar` vivent ailleurs que dans `/usr/local/bin` ou `/usr/bin`, ajoute leur dossier dans `Environment=PATH=` du service, puis `systemctl --user daemon-reload`. `td` se lance avec `node`, donc il y faut les deux dossiers : `dirname "$(command -v td)"` et `dirname "$(command -v node)"`.
 
 Pour lancer un tick tout de suite par le service et lire son journal :
 
