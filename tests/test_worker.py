@@ -8,7 +8,8 @@ import stat
 import subprocess
 import sys
 import time
-from collections.abc import Collection
+from collections.abc import Collection, Sequence
+from dataclasses import replace
 from pathlib import Path
 
 import pytest
@@ -19,8 +20,11 @@ from superagent.worker import (
     IDENTITY_FILENAME,
     SubprocessBackend,
     WorkerStopError,
+    _commands_by_pid,
     _EnvironmentUnreadable,
+    _list_processes,
     _Process,
+    _program_name,
     render_brief,
     write_identity,
 )
@@ -30,6 +34,20 @@ STUBBORN = (
 )
 PRINT_ENV = "import json, os; print(json.dumps(dict(os.environ)))"
 SLEEPER = [sys.executable, "-c", "import time; time.sleep(30)"]
+STUBBORN_DAEMON = (
+    "import os, pathlib, signal, subprocess, sys, time\n"
+    "signal.signal(signal.SIGTERM, signal.SIG_IGN)\n"
+    "child = subprocess.Popen([sys.executable, '-c', 'import time; time.sleep(60)'])\n"
+    "pathlib.Path('pids.tmp').write_text(f'{os.getpid()} {child.pid}')\n"
+    "os.replace('pids.tmp', 'pids')\n"
+    "time.sleep(60)\n"
+)
+DOUBLE_FORK = (
+    "import subprocess, sys, time\n"
+    "launch = 'import subprocess, sys; subprocess.Popen([sys.executable, sys.argv[1]])'\n"
+    "subprocess.Popen([sys.executable, '-c', launch, sys.argv[1]], start_new_session=True).wait()\n"
+    "time.sleep(60)\n"
+)
 
 
 def setsid_grandchild(env: str, *, ignore_sigterm: bool = False, worker_stays: bool = True) -> str:
@@ -82,6 +100,15 @@ def ps_field(pid: int, field: str) -> str:
 def is_gone(pid: int) -> bool:
     state = ps_field(pid, "stat")
     return not state or "Z" in state
+
+
+def wait_for_pids(path: Path) -> tuple[int, int]:
+    deadline = time.time() + 10
+    while not path.exists():
+        assert time.time() < deadline
+        time.sleep(0.05)
+    parent, child = path.read_text().split()
+    return int(parent), int(child)
 
 
 def kill_quietly(pid: int) -> None:
@@ -231,7 +258,9 @@ def test_stop_reports_processes_that_survive_sigkill(tmp_path: Path, monkeypatch
     fake = max(os.getpid(), os.getpgrp()) + 1
     sent: list[tuple[int, int]] = []
     monkeypatch.setattr("superagent.worker.os.kill", lambda pid, signum: sent.append((pid, signum)))
-    monkeypatch.setattr("superagent.worker._list_processes", lambda: [_Process(fake, 1, fake, os.geteuid(), False)])
+    monkeypatch.setattr(
+        "superagent.worker._list_processes", lambda: [_Process(fake, 1, fake, os.geteuid(), False, "python")]
+    )
     monkeypatch.setattr("superagent.worker._marked_processes", lambda candidates, entry: set())
     monkeypatch.setattr("superagent.worker._process_started_at", lambda pid: 1000.0)
     monkeypatch.setattr("superagent.worker._STOP_GRACE_SECONDS", 0.0)
@@ -285,6 +314,85 @@ def test_stop_kills_a_descendant_that_ignores_sigterm_after_its_parent_dies(
         assert is_gone(grandchild)
     finally:
         kill_quietly(grandchild)
+
+
+def test_stop_leaves_a_marked_shared_daemon_and_what_runs_under_it(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    leader = subprocess.Popen(SLEEPER, start_new_session=True, env=unmarked_env())
+    daemon = subprocess.Popen(
+        [sys.executable, "-c", STUBBORN_DAEMON],
+        start_new_session=True,
+        cwd=tmp_path,
+        env=unmarked_env(**{ASSIGNMENT_MARKER: "as-1"}),
+    )
+    _, child = wait_for_pids(tmp_path / "pids")
+    monkeypatch.setattr(
+        "superagent.worker._list_processes",
+        lambda: [
+            replace(process, name="tmux") if process.pid == daemon.pid else process for process in _list_processes()
+        ],
+    )
+    backend = SubprocessBackend(["worker", "{brief}"], tmp_path / "w")
+    try:
+        backend.stop(Assignment("as-1", "tk-1", 1, AssignmentStatus.RUNNING, leader.pid, time.time()))
+        assert leader.wait(timeout=5) == -signal.SIGTERM
+        assert daemon.poll() is None
+        assert not is_gone(child)
+    finally:
+        kill_quietly(child)
+        for process in (leader, daemon):
+            process.kill()
+            process.wait()
+
+
+def test_stop_kills_a_double_forked_process_then_its_orphaned_child(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr("superagent.worker._STOP_GRACE_SECONDS", 0.5)
+    (tmp_path / "worker.py").write_text(DOUBLE_FORK, encoding="utf-8")
+    (tmp_path / "daemon.py").write_text(STUBBORN_DAEMON, encoding="utf-8")
+    backend = SubprocessBackend(
+        [sys.executable, str(tmp_path / "worker.py"), str(tmp_path / "daemon.py")], tmp_path / "w"
+    )
+    started = assignment()
+    pid = backend.start(ticket(), started, "token")
+    daemon, child = wait_for_pids(tmp_path / "w" / "tk-1" / "as-1" / "pids")
+    try:
+        deadline = time.time() + 10
+        while ps_field(daemon, "ppid") == ps_field(daemon, "pgid"):
+            assert time.time() < deadline
+            time.sleep(0.05)
+        assert ps_field(child, "ppid") == str(daemon)
+        backend.stop(Assignment(started.id, started.ticket_id, 1, started.status, pid, started.started_at))
+        assert is_gone(pid)
+        assert is_gone(daemon)
+        assert is_gone(child)
+    finally:
+        for leftover in (daemon, child):
+            kill_quietly(leftover)
+
+
+def test_program_names_see_through_paths_and_renamed_servers() -> None:
+    assert _program_name("/opt/homebrew/bin/tmux") == "tmux"
+    assert _program_name("tmux: server") == "tmux"
+    assert _program_name("SCREEN") == "screen"
+    assert next(process for process in _list_processes() if process.pid == os.getpid()).name
+
+
+def test_a_hung_ps_fails_the_stop_or_counts_environments_as_unreadable(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    def hung(argv: Sequence[str], **kwargs: object) -> subprocess.CompletedProcess[str]:
+        raise subprocess.TimeoutExpired(argv, 10.0)
+
+    monkeypatch.setattr("superagent.worker.subprocess.run", hung)
+    with pytest.raises(WorkerStopError, match="could not list processes: ps timed out"):
+        _list_processes()
+    with pytest.raises(WorkerStopError, match="ps timed out reading the start time of process 4242"):
+        SubprocessBackend(["worker"], tmp_path).stop(Assignment("as-1", "tk-1", 1, AssignmentStatus.RUNNING, 4242, 0.0))
+    with pytest.raises(_EnvironmentUnreadable, match="-E -o pid=,command= timed out"):
+        _commands_by_pid(["-E"])
 
 
 def test_stop_says_when_it_cannot_look_outside_the_group(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:

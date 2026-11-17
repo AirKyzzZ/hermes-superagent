@@ -27,9 +27,14 @@ _PID_START_TOLERANCE_SECONDS = 10
 _STOP_GRACE_SECONDS = 5.0
 _STOP_POLL_SECONDS = 0.2
 _KILL_GRACE_SECONDS = 2.0
+_KILL_SWEEPS = 5
+_PS_TIMEOUT_SECONDS = 10.0
 _LEADERLESS_GROUP_MAX_AGE_SECONDS = 6 * 3600.0
 _OUTPUT_TAIL_BYTES = 4000
 _TERMINAL_ESCAPES = re.compile(r"\x1b\[[0-9;?]*[A-Za-z]")
+_SHARED_DAEMONS = frozenset(
+    {"tmux", "screen", "gpg-agent", "dirmngr", "scdaemon", "ssh-agent", "dbus-daemon", "systemd", "launchd"}
+)
 
 
 class WorkerStopError(RuntimeError):
@@ -47,11 +52,13 @@ class _Process:
     pgid: int
     uid: int
     zombie: bool
+    name: str
 
 
 @dataclass(frozen=True)
 class _Sweep:
-    targets: dict[int, int]
+    targets: frozenset[int]
+    walked: dict[int, int]
     owned: frozenset[int]
     unreadable: str
 
@@ -97,14 +104,23 @@ def write_identity(workdir: Path, ticket_id: str, assignment_id: str, token: str
         json.dump({"assignment": assignment_id, "ticket": ticket_id, "token": token, "attempt": attempt}, file)
 
 
-def _process_started_at(pid: int) -> float | None:
-    result = subprocess.run(
-        ["ps", "-o", "lstart=", "-p", str(pid)],
+def _ps(argv: Sequence[str]) -> subprocess.CompletedProcess[str]:
+    return subprocess.run(
+        argv,
         capture_output=True,
         text=True,
+        errors="replace",
         check=False,
+        timeout=_PS_TIMEOUT_SECONDS,
         env={**os.environ, "LC_ALL": "C"},
     )
+
+
+def _process_started_at(pid: int) -> float | None:
+    try:
+        result = _ps(["ps", "-o", "lstart=", "-p", str(pid)])
+    except subprocess.TimeoutExpired as error:
+        raise WorkerStopError(f"ps timed out reading the start time of process {pid}") from error
     started = " ".join(result.stdout.split())
     if not started:
         return None
@@ -121,30 +137,34 @@ def _pid_exists(pid: int) -> bool:
     return True
 
 
+def _program_name(command: str) -> str:
+    # tmux renames its server "tmux: server" on Linux, and screen's server calls itself SCREEN.
+    return Path(command.split(":", 1)[0]).name.lower()
+
+
 def _list_processes() -> list[_Process]:
-    result = subprocess.run(
-        ["ps", "-A", "-o", "pid=,ppid=,pgid=,uid=,stat="],
-        capture_output=True,
-        text=True,
-        check=False,
-        env={**os.environ, "LC_ALL": "C"},
-    )
+    try:
+        result = _ps(["ps", "-A", "-o", "pid=,ppid=,pgid=,uid=,stat=,comm="])
+    except subprocess.TimeoutExpired as error:
+        raise WorkerStopError(f"could not list processes: ps timed out after {_PS_TIMEOUT_SECONDS:g}s") from error
     if result.returncode != 0:
         raise WorkerStopError(f"could not list processes: {result.stderr.strip()}")
     processes = []
     for line in result.stdout.splitlines():
-        fields = line.split()
-        if len(fields) == 5:
+        fields = line.split(None, 5)
+        if len(fields) >= 5:
             pid, ppid, pgid, uid = int(fields[0]), int(fields[1]), int(fields[2]), int(fields[3])
-            processes.append(_Process(pid, ppid, pgid, uid, "Z" in fields[4]))
+            name = _program_name(fields[5]) if len(fields) == 6 else ""
+            processes.append(_Process(pid, ppid, pgid, uid, "Z" in fields[4], name))
     return processes
 
 
 def _commands_by_pid(options: Sequence[str]) -> dict[int, str]:
     argv = ["ps", "-A", "-ww", *options, "-o", "pid=,command="]
-    result = subprocess.run(
-        argv, capture_output=True, text=True, errors="replace", check=False, env={**os.environ, "LC_ALL": "C"}
-    )
+    try:
+        result = _ps(argv)
+    except subprocess.TimeoutExpired as error:
+        raise _EnvironmentUnreadable(f"{' '.join(argv)} timed out after {_PS_TIMEOUT_SECONDS:g}s") from error
     if result.returncode != 0:
         raise _EnvironmentUnreadable(f"{' '.join(argv)} failed: {result.stderr.strip()}")
     commands: dict[int, str] = {}
@@ -208,15 +228,20 @@ def _sweep(group: int | None, entry: str, earlier: Mapping[int, int], foreign: S
         children.setdefault(process.ppid, []).append(process.pid)
     members = [process.pid for process in processes if process.pgid == group]
     still_there = [process.pid for process in processes if earlier.get(process.pid) == process.pgid]
-    pending = members + sorted(marked) + still_there
+    pending = members + still_there
     tree: set[int] = set()
     while pending:
         pid = pending.pop()
         if pid in signalable and pid not in tree:
             tree.add(pid)
             pending.extend(children.get(pid, []))
-    targets = {process.pid: process.pgid for process in processes if process.pid in tree and process.pid not in foreign}
-    return _Sweep(targets, frozenset(marked.union(members)), unreadable)
+    by_pid = {process.pid: process for process in processes}
+    carriers_outside = {pid for pid in marked if by_pid[pid].pgid != group}
+    loose = {
+        pid for pid in marked if by_pid[pid].name not in _SHARED_DAEMONS and by_pid[pid].ppid not in carriers_outside
+    }
+    walked = {pid: by_pid[pid].pgid for pid in tree - foreign}
+    return _Sweep(frozenset((tree | loose) - foreign), walked, frozenset(marked.union(members)), unreadable)
 
 
 def _send(sweep: _Sweep, signum: int) -> set[int]:
@@ -322,12 +347,16 @@ class SubprocessBackend:
         sweep = _sweep(group, entry, {}, foreign)
         if sweep.targets:
             foreign |= _send(sweep, signal.SIGTERM)
-            _wait_for_exit(sweep.targets.keys() - foreign, _STOP_GRACE_SECONDS)
-            sweep = _sweep(group, entry, sweep.targets, foreign)
-        if sweep.targets:
+            _wait_for_exit(sweep.targets - foreign, _STOP_GRACE_SECONDS)
+            sweep = _sweep(group, entry, sweep.walked, foreign)
+        killed: set[int] = set()
+        for _ in range(_KILL_SWEEPS):
+            if not sweep.targets - killed:
+                break
             foreign |= _send(sweep, signal.SIGKILL)
-            _wait_for_exit(sweep.targets.keys() - foreign, _KILL_GRACE_SECONDS)
-            sweep = _sweep(group, entry, sweep.targets, foreign)
+            killed |= sweep.targets
+            _wait_for_exit(sweep.targets - foreign, _KILL_GRACE_SECONDS)
+            sweep = _sweep(group, entry, sweep.walked, foreign)
         problems = []
         if sweep.targets:
             problems.append(f"processes still running after SIGKILL: {', '.join(map(str, sorted(sweep.targets)))}")
