@@ -234,7 +234,7 @@ Tailscale SSH follows the `ssh` rules of the tailnet policy. The default rule us
 
 If the VPS is tagged, tag the WSL node too and name both tags in the rule.
 
-**The VPS.** One key with no passphrase for the Mac, and an alias per machine. Tailscale SSH needs no key.
+**The VPS.** One key with no passphrase for the Mac, and an alias per machine. Tailscale SSH needs no key. `ssh-copy-id` asks for the Mac password, so run that line yourself in a terminal, not through an agent.
 
 ```bash
 ssh-keygen -t ed25519 -N '' -f ~/.ssh/superagent -C superagent
@@ -248,7 +248,7 @@ Host pc
   HostName pc-wsl
   User you
 EOF
-ssh-copy-id -i ~/.ssh/superagent.pub mac    # asks for your Mac password once
+ssh-copy-id -o StrictHostKeyChecking=accept-new -i ~/.ssh/superagent.pub mac    # asks for your Mac password
 ssh -o StrictHostKeyChecking=accept-new mac /usr/bin/python3 --version
 ssh -o StrictHostKeyChecking=accept-new pc python3 --version
 ```

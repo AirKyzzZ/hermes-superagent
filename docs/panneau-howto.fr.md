@@ -105,7 +105,7 @@ Le tableau des agents lit les sessions Claude Code des autres machines par ssh d
    ```
 
    Dans la politique du tailnet, la règle `ssh` doit être en `accept` et non en `check`, sinon le VPS bute sur une connexion par navigateur.
-3. **Sur le VPS, par Hermes :** crée la clé et les alias `mac` et `pc` comme dans le guide, copie la clé sur le Mac avec `ssh-copy-id -i ~/.ssh/superagent.pub mac` (ton mot de passe du Mac, une seule fois), enregistre la clé d'hôte de chaque machine et pose le hook. Hermes fusionne ensuite le bloc imprimé par `hermes superagent agents --hook-settings` dans `~/.claude/settings.json` de chaque machine, en te montrant le diff.
+3. **Sur le VPS, par Hermes :** crée la clé et les alias `mac` et `pc` comme dans le guide, copie la clé sur le Mac avec `ssh-copy-id -o StrictHostKeyChecking=accept-new -i ~/.ssh/superagent.pub mac` (cette ligne demande ton mot de passe du Mac, lance-la toi-même dans un terminal, pas par Hermes), enregistre la clé d'hôte de chaque machine et pose le hook. Hermes fusionne ensuite le bloc imprimé par `hermes superagent agents --hook-settings` dans `~/.claude/settings.json` de chaque machine, en te montrant le diff.
 
    ```bash
    ssh -o StrictHostKeyChecking=accept-new mac /usr/bin/python3 --version
