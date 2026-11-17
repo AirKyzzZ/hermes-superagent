@@ -37,6 +37,9 @@ _DIRECTIVE_OPENING = re.compile(r"\[(?=\[)")
 _MENTION = re.compile(r"@(?=everyone|here)|<@|<#")
 
 
+PROJECT_NAME_LIMIT = 60
+
+
 class Outcome(StrEnum):
     DISPATCHED = "dispatched"
     PASSED_THROUGH = "passed_through"
@@ -99,10 +102,10 @@ class Router:
         ticket = self._open_ticket(trigger, trigger.text, Strength.EXPLICIT)
         return Disposition(Outcome.DISPATCHED, decision.reason, (ticket.id,))
 
-    def dispatch(self, trigger_id: str, goal: str) -> Ticket:
+    def dispatch(self, trigger_id: str, goal: str, project: str = "") -> Ticket:
         trigger = self._admitted_trigger(trigger_id)
         if self.store.claim_offered_trigger(trigger_id, "dispatched", OFFER_VALID_SECONDS):
-            return self._open_ticket(trigger, goal, Strength.EXPLICIT)
+            return self._open_ticket(trigger, goal, Strength.EXPLICIT, project_name(project))
         existing = self.store.ticket_for_trigger(trigger_id)
         if existing is not None and self.store.assessment_of(trigger_id) == "dispatched":
             return existing
@@ -270,11 +273,11 @@ class Router:
             raise NotAdmittedError(f"trigger {trigger_id} is no longer allowed by the current rules")
         return trigger
 
-    def _open_ticket(self, trigger: Trigger, goal: str, strength: Strength) -> Ticket:
+    def _open_ticket(self, trigger: Trigger, goal: str, strength: Strength, project: str = "") -> Ticket:
         mandate = Mandate(self.rules.version, goal, strength, trigger.actor, trigger.source, trigger.id)
         source = self.rules.sources.get(trigger.source)
         channel = source.notify if source is not None and source.notify else trigger.channel
-        ticket, created = self.store.create_ticket(goal, mandate, channel, trigger.thread)
+        ticket, created = self.store.create_ticket(goal, mandate, channel, trigger.thread, project)
         if created:
             self.start_worker(ticket)
         return ticket
@@ -299,6 +302,11 @@ class Router:
         if rules is None or rules.policy is SourcePolicy.IGNORE or trigger.is_bot:
             return False
         return self.is_allowed(trigger) or rules.pass_strangers
+
+
+def project_name(value: str) -> str:
+    name = value.strip().rstrip("/").rsplit("/", 1)[-1].strip()
+    return name if len(name) <= PROJECT_NAME_LIMIT and name.isprintable() else ""
 
 
 def chat_safe(text: str) -> str:
