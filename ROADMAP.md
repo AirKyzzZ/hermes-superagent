@@ -5,7 +5,10 @@ Where this is going and where help is most useful. What's already done is ticked
 ## Now
 
 - **A real chat message through the router.** CI proves the router and worker path on real Hermes with a fake model, and [one recorded run](docs/live-run.md) took a worker, the watchdog and a Discord relay through a real model. That task skipped the router's model turn, so a message on a real chat platform is next.
-- **The Hermes Plugin Hackathon entry,** due 2026-11-11.
+- **Hermes 0.23.2.** CI tests 0.22.7 and 0.23.0, and installs today get 0.23.2.
+- **A cap on running workers,** so a burst of tasks queues instead of starting a model session each at once.
+
+The maintainer agent's ranked plan, with its reasoning, is in [ROADMAP-AGENT.md](ROADMAP-AGENT.md).
 
 ## Connectors
 
