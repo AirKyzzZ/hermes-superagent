@@ -130,7 +130,7 @@ def report_states(runtime: Runtime, ticket: str) -> list[str]:
 def scenario_overlap(runtime: Runtime, log: Path, work: Path) -> None:
     tickets = {"alpha": start_task(runtime, "scenario=report id=alpha")}
     # Hermes 0.23.2 can fail one of two clients that auto-start its gateway at once: let alpha bring it up.
-    wait_until(lambda: (work / "arrived-alpha").exists())
+    check("alpha reached the model before beta starts", wait_until(lambda: (work / "arrived-alpha").exists()))
     tickets["beta"] = start_task(runtime, "scenario=report id=beta")
     for goal_id, ticket in tickets.items():
         wait_until(lambda t=ticket: "ready" in report_states(runtime, t))
