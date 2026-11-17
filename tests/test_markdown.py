@@ -1,13 +1,22 @@
 from __future__ import annotations
 
 import os
+import threading
+from collections.abc import Callable
 from itertools import count
 from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
 
-from superagent.connectors import ConnectorConfigError, ConnectorError, ConnectorSpec, build_connector, parse_specs
+from superagent.connectors import (
+    ConnectorConfigError,
+    ConnectorError,
+    ConnectorSpec,
+    Poll,
+    build_connector,
+    parse_specs,
+)
 from superagent.connectors import markdown as markdown_module
 from superagent.ledger import ItemState, Ledger, Upstream
 from superagent.polling import poll_sources
@@ -24,8 +33,27 @@ def markdown_spec(*paths: Path | str, **extra: object) -> ConnectorSpec:
     return parse_specs({"notes": body})[0]
 
 
+POSIX_ONLY = pytest.mark.skipif(os.name != "posix", reason="needs FIFOs and symlinks")
+
+
 def titles(*paths: Path | str) -> list[str]:
     return [item.title for item in build_connector(markdown_spec(*paths)).poll("").items]
+
+
+def without_blocking(call: Callable[[], object]) -> object:
+    outcome: list[object] = []
+
+    def run() -> None:
+        try:
+            outcome.append(call())
+        except Exception as error:
+            outcome.append(error)
+
+    worker = threading.Thread(target=run, daemon=True)
+    worker.start()
+    worker.join(10)
+    assert outcome, "the poll blocked"
+    return outcome[0]
 
 
 def test_only_open_tasks_outside_code_become_items(tmp_path: Path) -> None:
@@ -78,7 +106,7 @@ def test_ids_stay_put_when_lines_move_and_change_with_the_text(tmp_path: Path) -
 def test_due_dates_come_from_obsidian_tasks_or_due_tags(tmp_path: Path) -> None:
     todo = note(
         tmp_path / "TODO.md",
-        "- [ ] Renew the domain 📅 2026-11-20\n- [ ] Book flights 📅️2026-12-01 ⏳ 2026-11-25\n"
+        "- [ ] Renew the domain 📅 2026-11-20\n- [ ] Book flights 📅\ufe0f2026-12-01 ⏳ 2026-11-25\n"
         "- [ ] File taxes due:2026-11-30\n- [ ] Someday\n- [ ] Overdue:2026-01-01 isn't a tag\n",
     )
     items = build_connector(markdown_spec(todo)).poll("").items
@@ -173,13 +201,89 @@ def test_an_unreadable_note_fails_the_poll_with_its_path(tmp_path: Path) -> None
         locked.chmod(0o644)
 
 
-def test_a_poll_past_its_timeout_stops(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    note(tmp_path / "vault" / "a.md", "- [ ] One\n")
+def test_a_walk_past_its_timeout_stops_even_before_any_note(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    (tmp_path / "vault" / "a" / "b").mkdir(parents=True)
     connector = build_connector(markdown_spec(tmp_path / "vault", timeout=5))
     ticks = count(step=10)
     monkeypatch.setattr(markdown_module, "time", SimpleNamespace(monotonic=lambda: float(next(ticks))))
     with pytest.raises(ConnectorError, match="longer than 5s"):
         connector.poll("")
+
+
+def test_tilde_fences_and_an_unterminated_fence_hide_their_tasks(tmp_path: Path) -> None:
+    todo = note(
+        tmp_path / "TODO.md",
+        "~~~~\n- [ ] Inside\n~~~\n- [ ] A shorter fence doesn't close it\n~~~~\n- [ ] Outside\n"
+        "```\n- [ ] Never closed\n",
+    )
+    assert titles(todo) == ["Outside"]
+
+
+def test_a_duplicate_keeps_its_id_after_the_first_copy_is_ticked(tmp_path: Path) -> None:
+    todo = note(tmp_path / "TODO.md", "- [ ] Review the PR\n- [ ] Review the PR\n")
+    connector = build_connector(markdown_spec(todo))
+    first, second = (item.external_id for item in connector.poll("").items)
+    assert second == f"{first}~2"
+    note(todo, "- [x] Review the PR\n- [ ] Review the PR\n")
+    [left] = connector.poll("").items
+    assert left.external_id == second
+    assert connector.confirm(first) is Upstream.CLOSED
+
+
+@POSIX_ONLY
+def test_a_fifo_or_a_folder_named_like_a_note_is_never_read(tmp_path: Path) -> None:
+    vault = tmp_path / "vault"
+    note(vault / "a.md", "- [ ] Top\n")
+    os.mkfifo(vault / "pipe.md")
+    (vault / "folder.md").mkdir()
+    poll = without_blocking(lambda: build_connector(markdown_spec(vault)).poll(""))
+    assert isinstance(poll, Poll) and [item.title for item in poll.items] == ["Top"]
+    with pytest.raises(ConnectorError, match="isn't a file or a directory"):
+        build_connector(markdown_spec(vault / "pipe.md")).poll("")
+
+
+@POSIX_ONLY
+def test_a_fifo_that_slips_past_the_walk_fails_instead_of_blocking(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    vault = tmp_path / "vault"
+    vault.mkdir()
+    os.mkfifo(vault / "pipe.md")
+    monkeypatch.setattr(markdown_module, "_regular_inside", lambda path, inside: True)
+    error = without_blocking(lambda: build_connector(markdown_spec(vault)).poll(""))
+    assert isinstance(error, ConnectorError) and "pipe.md isn't a regular file" in str(error)
+
+
+@POSIX_ONLY
+def test_dangling_and_looping_links_are_skipped(tmp_path: Path) -> None:
+    vault = tmp_path / "vault"
+    note(vault / "a.md", "- [ ] Top\n")
+    (vault / "dead.md").symlink_to(vault / "missing.md")
+    (vault / "loop.md").symlink_to(vault / "loop.md")
+    connector = build_connector(markdown_spec(vault))
+    for _ in range(2):
+        assert [item.title for item in connector.poll("").items] == ["Top"]
+
+
+@POSIX_ONLY
+def test_links_never_lead_outside_the_root(tmp_path: Path) -> None:
+    vault = tmp_path / "vault"
+    note(vault / "inside.md", "- [ ] Inside\n")
+    secret = note(tmp_path / "secret.md", "- [ ] Outside file\n")
+    note(tmp_path / "elsewhere" / "far.md", "- [ ] Outside folder\n")
+    (vault / "escape.md").symlink_to(secret)
+    (vault / "elsewhere").symlink_to(tmp_path / "elsewhere", target_is_directory=True)
+    (vault / "again").symlink_to(vault, target_is_directory=True)
+    assert titles(vault) == ["Inside"]
+    assert titles(vault / "**" / "*.md") == ["Inside"]
+
+
+def test_a_note_over_the_size_cap_fails_the_poll(tmp_path: Path) -> None:
+    note(tmp_path / "vault" / "a.md", "- [ ] Top\n")
+    with (tmp_path / "vault" / "huge.md").open("wb") as huge:
+        huge.truncate(markdown_module.MAX_NOTE_BYTES + 1)
+    with pytest.raises(ConnectorError, match="huge.md is over 8 MB"):
+        build_connector(markdown_spec(tmp_path / "vault")).poll("")
 
 
 def test_confirm_closes_a_ticked_task_and_never_a_vanished_one(tmp_path: Path) -> None:
