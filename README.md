@@ -263,6 +263,14 @@ superagent --home ~/superagent tick && superagent --home ~/superagent brief
 
 Without Hermes, write `superagent` instead of `hermes superagent` in that line. [The shadow install guide](docs/dogfood-install.md) has a systemd timer, other machines and the Claude Code hook.
 
+### Keep a panel next to your chat
+
+```bash
+hermes superagent --home ~/superagent panel
+```
+
+It prints a URL on `127.0.0.1:8765` to open beside your chat, in a browser split or a cmux browser pane. The page refreshes every 5 seconds: what needs you first (escalations, blocked workers with their question, Claude Code sessions waiting or stuck, failing sources, overdue items), then the flow from sources to relay with today's counts, what runs now, every worker with its silence against the stall threshold, the sessions board, the ledger, sources and a feed. It reads the database in one read-only transaction, so it never holds up a tick. Text is redacted like the brief, and nothing on the page acts yet. When the database lives on a server, run it there and tunnel the port with `ssh -L 8765:127.0.0.1:8765 your-server`. `--port` picks another port, and `--json` prints one snapshot instead of serving the page.
+
 ### Run it with Hermes
 
 Needs Hermes 0.22.7 or newer on macOS or Linux. These steps haven't been run end to end yet, see the warning above.
@@ -483,7 +491,8 @@ If the gate itself fails, the message is dropped and logged, so a person gets si
 - **Spends model tokens:** ticks call the watchdog profile's model through `ctx.llm` when there's a new report to judge or a candidate event to assess, and `hermes superagent briefs` makes three calls per new brief, six at most with retries, within `daily_limit`. Router and workers use their own profiles' models as usual.
 - **Writes files:** `superagent.db`, a lock file, a last-good copy of the config and per-worker directories under `home`, each with a brief, a private identity file and the worker's log, and it reads `superagent.toml` from there.
 - **Leaves approvals to Hermes:** workers start non-interactively from an environment allowlist, so they inherit no YOLO or approval-bypass setting. Hermes's approval rules apply to them as usual, which means that in a sandbox with no host mounts Hermes skips its dangerous-command prompts and the sandbox is the boundary.
-- **Doesn't:** open network connections in its own code, send telemetry, or store your accounts' credentials. Connectors go through your tools' own logins, and `anki` posts to AnkiConnect through `curl`. The scripts in `assets/art` that fetched the source image are build tools the plugin never runs.
+- **Listens only while you ask:** `superagent panel` serves its page on `127.0.0.1` until you stop it, and checks the `Host` header. The snapshot needs the token from the URL it prints, the page loads nothing from outside, and it only reads the database.
+- **Doesn't:** open outbound network connections in its own code, send telemetry, or store your accounts' credentials. Connectors go through your tools' own logins, and `anki` posts to AnkiConnect through `curl`. The scripts in `assets/art` that fetched the source image are build tools the plugin never runs.
 
 ## Roadmap
 

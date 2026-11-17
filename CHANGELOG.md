@@ -6,6 +6,7 @@ Notable changes to hermes-superagent. The format follows [Keep a Changelog](http
 
 ### Added
 
+- `superagent panel` serves a live side panel on localhost: what needs you, ranked, then today's flow from sources to relay, what runs now, workers, Claude Code sessions, the ledger, sources and a feed. It reads the database read-only and needs the token from the URL it prints. `--json` prints the same snapshot.
 - `[worker] max_running` caps how many workers run at once. Tasks past the cap wait in a queue, say so once, and start oldest first as workers finish, so a burst of requests doesn't start a model session each at the same moment.
 
 ### Fixed

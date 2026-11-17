@@ -16,12 +16,13 @@ from pathlib import Path
 from .agents import ATTENTION_STATES, HOOK_SCRIPT, SessionState, settings_block
 from .brief import BriefSettings, build_brief
 from .briefwriter import BriefWriter, Pack, build_pack
-from .config import CONFIG_FILENAME, DB_FILENAME
+from .config import CONFIG_FILENAME, DB_FILENAME, load_config
 from .connectors import ConnectorError
 from .digest import build_digest, send_digest
 from .doctor import Status, diagnose
 from .domain import ReportState, Trigger
 from .ledger import Item, ItemState, Ledger, LedgerError
+from .panel import DEFAULT_PORT, serve, snapshot
 from .parity import PastTask, PastTaskError, compare, load_past_tasks
 from .reporting import identity_from_workdir, submit_report
 from .router import Assessor, chat_safe
@@ -101,10 +102,25 @@ def setup_parser(parser: argparse.ArgumentParser) -> None:
     snooze = ledger_commands.add_parser("snooze", help="hide an item from reconciliation until a date")
     snooze.add_argument("item")
     snooze.add_argument("--until", required=True, help="ISO date or date and time, local time")
+    panel = commands.add_parser("panel", help="serve a live page of what needs you, workers, sessions and sources")
+    panel.add_argument("--port", type=int, default=DEFAULT_PORT, help="port on 127.0.0.1")
+    panel.add_argument("--json", action="store_true", help="print one snapshot instead of serving the page")
     report = commands.add_parser("report", help="report status from a worker directory, for agents outside Hermes")
     report.add_argument("--state", required=True, choices=_WORKER_STATES)
     report.add_argument("--summary", required=True)
     report.add_argument("--question", default="")
+
+
+def run_panel(args: argparse.Namespace, home: Path) -> int:
+    if args.json:
+        print(json.dumps(snapshot(home, load_config(home)), indent=1))
+        return 0
+    try:
+        serve(home, args.port)
+    except OSError as error:
+        print(f"could not listen on 127.0.0.1:{args.port}: {error}. Pass --port with a free one", file=sys.stderr)
+        return 1
+    return 0
 
 
 def run(
@@ -135,6 +151,8 @@ def run(
         return 0
     if args.superagent_command == "setup":
         return run_setup(args, home, inside_hermes=inside_hermes)
+    if args.superagent_command == "panel":
+        return run_panel(args, home)
     if args.superagent_command == "doctor":
         checks = diagnose(home, poll=not args.no_poll)
         if args.json:
