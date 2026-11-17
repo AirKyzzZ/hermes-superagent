@@ -121,6 +121,7 @@ function ago(at, now) {
 const safeUrl = (url) => /^https?:\/\//i.test(url || "") ? url : "";
 const KINDS = {escalation: "Escalated", blocked: "Worker blocked", session: "Claude Code", source: "Source",
   overdue: "Overdue"};
+const tone = (state) => Object.hasOwn(TONES, state) ? TONES[state] : "idle";
 const TONES = {running: "run", starting: "run", queued: "idle", parked: "you", working: "run", background: "run",
   waiting: "you", stuck: "bad", limited: "bad", gone: "bad", idle: "idle", ended: "idle"};
 
@@ -184,7 +185,7 @@ function workerCard(w, now) {
   const pct = w.stall_after > 0 ? Math.round(Math.min(1, w.quiet_for / w.stall_after) * 100) : 0;
   const detail = w.state === "parked" ? w.question : w.last;
   return `<div class="card">
-    <div class="row"><span class="chip ${TONES[w.state] || "idle"}">${esc(w.state)}</span>
+    <div class="row"><span class="chip ${esc(tone(w.state))}">${esc(w.state)}</span>
       <span class="grow title">${esc(w.goal)}</span><span class="age">${esc(ago(w.since, now))}</span></div>
     <div class="sub"><span class="mono">${esc(w.ticket)}</span>${w.attempt ? ` · attempt ${esc(w.attempt)}` : ""}
       ${detail ? ` · ${esc(detail)}` : ""}</div>
@@ -200,7 +201,7 @@ function sessionsBlock(sessions, now) {
   const hosts = [...new Set(sessions.map((s) => s.host))];
   return `<div class="card">${hosts.map((host) => `<div class="host">${esc(host)}</div>` + sessions
     .filter((s) => s.host === host)
-    .map((s) => `<div class="row"><span class="chip ${TONES[s.state] || "idle"}">${esc(s.state)}</span>
+    .map((s) => `<div class="row"><span class="chip ${esc(tone(s.state))}">${esc(s.state)}</span>
       <span class="grow">${esc(s.project)} <span class="sub mono">${esc(s.branch)}</span></span>
       <span class="age">${esc(ago(s.since, now))}</span></div>`).join("")).join("")}</div>`;
 }
@@ -280,14 +281,19 @@ function offline(message) {
 }
 
 async function refresh() {
+  let body;
   try {
     const response = await fetch("api/snapshot", {headers: {"X-Superagent-Token": token}, cache: "no-store"});
     if (response.status === 403) return offline("Wrong or missing token: open the URL superagent panel printed.");
-    const body = await response.json();
+    body = await response.json();
     if (!response.ok) return offline(body.error || `The panel server answered ${response.status}.`);
+  } catch (error) {
+    return offline("Can't reach the panel server. Is superagent panel still running?");
+  }
+  try {
     render(body);
   } catch (error) {
-    offline("Can't reach the panel server. Is superagent panel still running?");
+    offline(`The panel couldn't draw this snapshot: ${error.message}`);
   }
 }
 

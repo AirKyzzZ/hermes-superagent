@@ -3,8 +3,10 @@ from __future__ import annotations
 import argparse
 import http.client
 import json
+import sqlite3
 import threading
 from collections.abc import Iterator
+from contextlib import closing
 from http.server import ThreadingHTTPServer
 from pathlib import Path
 
@@ -171,3 +173,24 @@ def test_panel_json_prints_one_snapshot(tmp_path: Path, capsys: pytest.CaptureFi
     setup_parser(parser)
     assert run(parser.parse_args(["--home", str(tmp_path), "panel", "--json"])) == 0
     assert len(json.loads(capsys.readouterr().out)["attention"]) == 4
+
+
+def test_an_escalation_leaves_once_someone_asks_again_on_its_thread(tmp_path: Path) -> None:
+    config = busy_home(tmp_path)
+    router = Router(Store(tmp_path / DB_FILENAME), config.rules, FakeBackend())
+    router.ingest(Trigger("t9", "chat", "th3", "alice", "try that loop again, smaller", "chat:c1", True, False))
+    attention = snapshot(tmp_path, config)["attention"]
+    assert isinstance(attention, list)
+    assert "escalation" not in [card["kind"] for card in attention]
+
+
+def test_a_database_from_an_older_version_asks_for_a_tick(tmp_path: Path) -> None:
+    config = busy_home(tmp_path)
+    with closing(sqlite3.connect(tmp_path / DB_FILENAME)) as connection:
+        connection.execute("ALTER TABLE tickets DROP COLUMN queued_at")
+        connection.commit()
+    assert "run a tick" in str(snapshot(tmp_path, config)["missing"])
+
+
+def test_a_token_outside_ascii_is_refused_cleanly(served: int) -> None:
+    assert fetch(served, "/api/snapshot", {TOKEN_HEADER: "tökén"})[0] == 403

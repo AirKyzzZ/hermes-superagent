@@ -51,6 +51,8 @@ def snapshot(home: Path, config: Config, now: float | None = None) -> dict[str, 
     if not path.is_file():
         return {**base, "missing": f"no {DB_FILENAME} in {home} yet, run a tick first"}
     with _read(path) as connection:
+        if not _schema_ready(connection):
+            return {**base, "missing": f"{DB_FILENAME} is from an older version, run a tick to update it"}
         items = [
             item_from_row(row) for row in connection.execute("SELECT * FROM items WHERE state NOT IN (?, ?)", _CLOSED)
         ]
@@ -80,6 +82,15 @@ def _read(path: Path) -> Iterator[sqlite3.Connection]:
             yield connection
         finally:
             connection.execute("ROLLBACK")
+
+
+def _schema_ready(connection: sqlite3.Connection) -> bool:
+    columns = {
+        (table, row[1])
+        for table in ("tickets", "items", "sources")
+        for row in connection.execute(f"PRAGMA table_info({table})").fetchall()
+    }
+    return {("tickets", "queued_at"), ("items", "last_briefed"), ("sources", "confirm_error")} <= columns
 
 
 def _text(value: object, limit: int = TEXT_LIMIT) -> str:
@@ -163,8 +174,8 @@ def _workers(connection: sqlite3.Connection, config: Config, moment: float) -> l
                 "kind": "worker",
                 "ticket": ticket["id"],
                 "goal": _text(ticket["goal"], 160),
-                "source": json.loads(ticket["mandate"]).get("source", ""),
-                "channel": ticket["channel"],
+                "source": _text(json.loads(ticket["mandate"]).get("source", ""), 80),
+                "channel": _text(ticket["channel"], 80),
                 "state": state,
                 "attempt": assignment["attempt"] if assignment else 0,
                 "since": assignment["started_at"] if running else ticket["created_at"],
@@ -190,8 +201,8 @@ def _sessions(specs: Sequence[ConnectorSpec], items: Sequence[Item]) -> list[dic
                 "kind": "session",
                 "host": item.connector,
                 "handle": item.handle,
-                "project": PurePosixPath(cwd).name if cwd else _text(item.title, 60),
-                "branch": item.meta.get("branch", ""),
+                "project": _text(PurePosixPath(cwd).name if cwd else item.title, 60),
+                "branch": _text(item.meta.get("branch", ""), 80),
                 "state": item.meta.get("state", ""),
                 "since": item.last_changed,
                 "detail": _text(item.meta.get("error", "")) if boards[item.connector].notify_detail else "",
@@ -267,7 +278,9 @@ def _attention(
         }
         for row in connection.execute(
             "SELECT e.ticket_id, e.reason, e.at, t.goal FROM watchdog_events e JOIN tickets t ON t.id = e.ticket_id "
-            "WHERE e.action = 'escalate' AND e.at >= ? ORDER BY e.at",
+            "WHERE e.action = 'escalate' AND e.at >= ? AND NOT EXISTS (SELECT 1 FROM subscriptions s "
+            "JOIN subscriptions later ON later.thread = s.thread JOIN tickets newer ON newer.id = later.ticket_id "
+            "WHERE s.ticket_id = e.ticket_id AND newer.created_at > e.at) ORDER BY e.at",
             (moment - ESCALATIONS_SHOWN_SECONDS,),
         ).fetchall()
     ]
@@ -318,7 +331,7 @@ def _attention(
             "detail": f"{item.connector} · due {item.due[:10]}",
             "quote": "",
             "handle": item.handle,
-            "url": item.url,
+            "url": _text(item.url, 500),
             "since": item.last_changed,
         }
         for item in _tracked(items, config)
@@ -341,7 +354,7 @@ def _feed(connection: sqlite3.Connection) -> list[dict[str, object]]:
         {
             "at": row["received_at"],
             "who": "gate",
-            "text": f"{_ADMISSION_WORDS.get(row['admission'], 'Saw')} a {row['source']} event",
+            "text": f"{_ADMISSION_WORDS.get(row['admission'], 'Saw')} a {_text(row['source'], 80)} event",
         }
         for row in connection.execute(
             "SELECT received_at, admission, source FROM triggers ORDER BY received_at DESC LIMIT ?", (limit,)
@@ -394,7 +407,7 @@ def panel_handler(home: Path, token: str) -> type[BaseHTTPRequestHandler]:
                 self._send(200, "text/javascript", SCRIPT.encode())
             elif url.path != "/api/snapshot":
                 self._send(404, "text/plain", b"not found")
-            elif not hmac.compare_digest(self.headers.get(TOKEN_HEADER, ""), token):
+            elif not hmac.compare_digest(self.headers.get(TOKEN_HEADER, "").encode(), token.encode()):
                 self._send(403, "text/plain", b"missing or wrong token, use the URL superagent panel printed")
             else:
                 self._snapshot()
