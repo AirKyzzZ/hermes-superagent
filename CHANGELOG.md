@@ -25,6 +25,7 @@ Notable changes to hermes-superagent. The format follows [Keep a Changelog](http
 - `doctor` says "1 minute ago", and setup's hint for the Claude Code hook speaks to you rather than to an agent.
 - Stopping a worker also stops its descendants that left its process group, such as a `setsid` dev server, while their parent chain leads back to the worker, and it never reads other processes' environments. Before, they survived a stop or a restart. A process that left the group and lost its parent first, such as a double-forked daemon, still isn't found.
 - A stop that can't list processes after SIGTERM, because `ps` timed out or failed, still sends SIGKILL, and still reports the worker as possibly running unless a later listing shows it gone.
+- An `agents` host that ssh can't reach or log in to now says so in `doctor` and in poll errors, with the command to try by hand, instead of "the probe exited 255". A missing `python3` and output that isn't JSON, such as a shell banner, are named too.
 
 ## [0.1.0] - 2026-11-10
 

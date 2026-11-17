@@ -235,6 +235,27 @@ def test_an_agents_host_warns_until_its_hook_has_run(tmp_path: Path, monkeypatch
     assert poll.complete and poll.notes == () and poll.problems == ()
 
 
+@pytest.mark.parametrize(
+    ("remote", "said"),
+    [
+        (
+            "echo 'ssh: connect to host mac port 22: Operation timed out' >&2; exit 255",
+            "ssh exited 255, its code for a failed connection or login, try `{ssh} mac true`: ssh: connect to host",
+        ),
+        ("echo 'zsh:1: command not found: python3' >&2; exit 127", "couldn't find python3 (exit 127), set python"),
+        ("echo 'Welcome to the PC'; echo '{}'", "its output starts with 'Welcome to the PC"),
+    ],
+)
+def test_doctor_says_why_a_remote_agents_host_failed(tmp_path: Path, remote: str, said: str) -> None:
+    ssh = tmp_path / "bin" / "ssh"
+    ssh.parent.mkdir()
+    ssh.write_text(f"#!/bin/sh\n{remote}\n")
+    ssh.chmod(0o755)
+    home = write(tmp_path / "sa", f'[connectors.agents-mac]\ntype = "agents"\nhost = ["{ssh}", "mac"]\n')
+    check = named(diagnose(home), "agents-mac")
+    assert check.status is Status.FAIL and said.format(ssh=ssh) in check.detail
+
+
 def test_setup_without_a_sender_refuses_channels_that_would_get_nothing(
     bare_machine: Path, capsys: pytest.CaptureFixture[str]
 ) -> None:
