@@ -619,7 +619,7 @@ def _until(request: dict[str, object]) -> float:
         raise ActionError(400, hint)
     try:
         return datetime.fromisoformat(until).timestamp()
-    except ValueError as error:
+    except (ValueError, OverflowError, OSError) as error:
         raise ActionError(400, f"{hint}, not {until!r}") from error
 
 

@@ -459,6 +459,11 @@ def test_snooze_hides_an_overdue_item_until_then(served: int, tmp_path: Path) ->
     status, reply = post(served, {"action": "snooze", "item": item.handle, "until": "2020-01-01"})
     assert status == 400 and "future" in str(reply["error"])
     assert post(served, {"action": "snooze", "item": item.handle, "until": "next week"})[0] == 400
+    assert post(served, {"action": "snooze", "item": item.handle, "until": "9999-12-31T23:59:59+14:00"})[0] in (
+        200,
+        400,
+    )
+    assert post(served, {"action": "snooze", "item": item.handle, "until": "0001-01-01T00:00:00-14:00"})[0] == 400
     unknown = post(served, {"action": "snooze", "item": "it-zzzz", "until": tomorrow})
     assert unknown == (404, {"error": "no item it-zzzz"})
     assert post(served, {"action": "snooze", "item": "it-; drop", "until": tomorrow})[0] == 400
