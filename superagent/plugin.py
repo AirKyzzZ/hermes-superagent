@@ -12,7 +12,7 @@ from .briefwriter import BriefWriter
 from .cli import run, setup_parser
 from .config import load_config
 from .digest import DigestError, build_digest, send_digest
-from .domain import ReportState, Trigger
+from .domain import ReportState, Ticket, Trigger
 from .framing import frame_trigger
 from .guard import (
     TOOL_CANCEL,
@@ -238,7 +238,7 @@ class Plugin:
         except Exception as error:
             logger.exception("dispatch failed")
             return _error(f"dispatch failed: {error}")
-        return json.dumps({"ticket": ticket.id, "status": ticket.status.value})
+        return _ticket_answer(self.runtime(), ticket)
 
     def forward_tool(self, args: Mapping[str, Any], **kwargs: Any) -> str:
         if self.role != ROLE_ROUTER:
@@ -250,7 +250,7 @@ class Plugin:
         except Exception as error:
             logger.exception("forward failed")
             return _error(f"forward failed: {error}")
-        return json.dumps({"ticket": ticket.id, "status": ticket.status.value})
+        return _ticket_answer(self.runtime(), ticket)
 
     def cancel_tool(self, args: Mapping[str, Any], **kwargs: Any) -> str:
         if self.role != ROLE_ROUTER:
@@ -414,6 +414,12 @@ def _message_text(message: object) -> str:
         parts = [part.get("text", "") for part in message if isinstance(part, dict)]
         return "\n".join(str(part) for part in parts)
     return ""
+
+
+def _ticket_answer(runtime: Runtime, ticket: Ticket) -> str:
+    return json.dumps(
+        {"ticket": ticket.id, "status": ticket.status.value, "queued": runtime.store.is_queued(ticket.id)}
+    )
 
 
 def _error(message: str) -> str:

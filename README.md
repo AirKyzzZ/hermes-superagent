@@ -363,6 +363,7 @@ The rendered prompt becomes the goal, the comment's author is checked against `a
 | `[[semantic]] mode` | `record` | `record` only logs, `act` opens a ticket |
 | `[worker] argv` | required for workers | Command for one worker, must reference `{brief}` |
 | `[worker] allow_same_user` | `false` | Allows host tools in a worker with no sandbox |
+| `[worker] max_running` | `0`, no cap | How many workers run at once. A task past the cap waits in a queue, says so once on its channel, and starts on the first tick after a worker finishes, oldest first. A restarted worker keeps its own slot, and a waiting task is never treated as stuck |
 | `[outbound] argv` | none | Delivery command using `{channel}` and `{text}`. Without it nothing is sent, and messages are still marked sent. A failed send fails every tick until it gets through. Retries back off up to 30 minutes and never give up, and `superagent outbox` lists what's waiting or drops a message for good. Messages over 1900 characters go out in numbered parts |
 | `[digest] channel` | none | Where `superagent digest --send` and the daily digest blueprint deliver |
 | `[channels] alerts` | none | Where alerts go. An alert is sent when a tick error has lasted `alert_after_seconds`, and "Resolved" follows once it has stayed clear as long. A tick stopped at its deadline, one stuck holding the lock, or a source warning is alerted at once. With no channel set, an alert waits for one for as long as its problem lasts |

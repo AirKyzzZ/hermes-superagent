@@ -36,7 +36,7 @@ _KNOWN_KEYS = {
     },
     "sources": {"policy", "allow", "bots", "pass_strangers", "notify", "via_router"},
     "semantic": {"name", "text", "mode"},
-    "worker": {"argv", "allow_same_user"},
+    "worker": {"argv", "allow_same_user", "max_running"},
     "outbound": {"argv"},
     "digest": {"channel"},
     "channels": {"alerts", "brief", "briefs"},
@@ -54,6 +54,7 @@ class Config:
     send_argv: tuple[str, ...]
     watchdog: WatchdogPolicy
     allow_same_user: bool = False
+    max_running: int = 0
     problem: str = ""
     digest_channel: str = ""
     alerts_channel: str = ""
@@ -97,6 +98,9 @@ def parse_config(raw: str) -> Config:
     allow_same_user = _table(data, "worker").get("allow_same_user", False)
     if not isinstance(allow_same_user, bool):
         raise ConfigError("[worker] allow_same_user must be true or false")
+    max_running = _table(data, "worker").get("max_running", 0)
+    if isinstance(max_running, bool) or not isinstance(max_running, int) or max_running < 0:
+        raise ConfigError("[worker] max_running must be a whole number, 0 for no cap")
     digest_channel = _table(data, "digest").get("channel", "")
     if not isinstance(digest_channel, str):
         raise ConfigError("[digest] channel must be a string such as discord:123")
@@ -147,6 +151,7 @@ def parse_config(raw: str) -> Config:
         send_argv,
         policy,
         allow_same_user,
+        max_running=max_running,
         digest_channel=digest_channel,
         alerts_channel=alerts_channel,
         heartbeat_argv=_argv(data, "heartbeat"),
