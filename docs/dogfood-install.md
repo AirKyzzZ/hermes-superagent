@@ -218,9 +218,7 @@ A non-interactive ssh session on macOS gets `PATH=/usr/bin:/bin:/usr/sbin:/sbin`
 - sshd inside WSL. WSL's default NAT network hides it from the tailnet, so it also needs a Windows port proxy and firewall rule, or mirrored networking, and a way to start sshd.
 - Windows OpenSSH with a `wsl.exe -e` prefix, covered at the end of this section. It adds Windows's sshd and its admin key file, and every poll crosses `cmd.exe` and `wsl.exe`, which CI can't test.
 
-In a WSL terminal on the PC:
-
-Inside WSL, with systemd on (the first line checks it) and Tailscale installed from the Linux steps on [tailscale.com/download/linux](https://tailscale.com/download/linux):
+In a WSL terminal on the PC, with systemd on (the first line checks it) and Tailscale installed from the Linux steps on [tailscale.com/download/linux](https://tailscale.com/download/linux):
 
 ```bash
 grep -A1 '^\[boot\]' /etc/wsl.conf    # must show systemd=true

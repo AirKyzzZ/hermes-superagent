@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import os
 import re
+import shlex
 import subprocess
 import sys
 from collections.abc import Mapping
@@ -145,7 +146,7 @@ class AgentsConnector:
 
     def _failure(self, code: int, said: str) -> str:
         if self.host and code == SSH_FAILED:
-            name, retry = PurePath(self.host[0]).name, " ".join(self.host)
+            name, retry = PurePath(self.host[0]).name, shlex.join(self.host)
             return f"{name} exited 255, its code for a failed connection or login, try `{retry} true`: {said}"
         if self.host and code == NOT_FOUND:
             return f"the host couldn't find {self.python} (exit 127), set python to its full path there: {said}"
