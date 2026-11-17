@@ -5,9 +5,11 @@ import os
 import re
 import signal
 import subprocess
+import sys
 import threading
 import time
-from collections.abc import Mapping, Sequence
+from collections.abc import Collection, Mapping, Sequence, Set
+from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
 from typing import Protocol
@@ -15,6 +17,7 @@ from typing import Protocol
 from .domain import Assignment, Ticket
 
 IDENTITY_FILENAME = ".superagent-identity.json"
+ASSIGNMENT_MARKER = "WORKER_ASSIGNMENT"
 ROLE_WORKER = "worker"
 ROLE_ROUTER = "router"
 ROLE_WATCHDOG = "watchdog"
@@ -31,6 +34,26 @@ _TERMINAL_ESCAPES = re.compile(r"\x1b\[[0-9;?]*[A-Za-z]")
 
 class WorkerStopError(RuntimeError):
     pass
+
+
+class _EnvironmentUnreadable(Exception):
+    pass
+
+
+@dataclass(frozen=True)
+class _Process:
+    pid: int
+    ppid: int
+    pgid: int
+    uid: int
+    zombie: bool
+
+
+@dataclass(frozen=True)
+class _Sweep:
+    targets: dict[int, int]
+    owned: frozenset[int]
+    unreadable: str
 
 
 class WorkerBackend(Protocol):
@@ -98,9 +121,9 @@ def _pid_exists(pid: int) -> bool:
     return True
 
 
-def _group_has_live_member(group: int) -> bool:
+def _list_processes() -> list[_Process]:
     result = subprocess.run(
-        ["ps", "-A", "-o", "pgid=,stat="],
+        ["ps", "-A", "-o", "pid=,ppid=,pgid=,uid=,stat="],
         capture_output=True,
         text=True,
         check=False,
@@ -108,20 +131,126 @@ def _group_has_live_member(group: int) -> bool:
     )
     if result.returncode != 0:
         raise WorkerStopError(f"could not list processes: {result.stderr.strip()}")
+    processes = []
     for line in result.stdout.splitlines():
         fields = line.split()
-        if len(fields) == 2 and fields[0] == str(group) and "Z" not in fields[1]:
-            return True
-    return False
+        if len(fields) == 5:
+            pid, ppid, pgid, uid = int(fields[0]), int(fields[1]), int(fields[2]), int(fields[3])
+            processes.append(_Process(pid, ppid, pgid, uid, "Z" in fields[4]))
+    return processes
 
 
-def _group_exited_within(group: int, seconds: float) -> bool:
+def _commands_by_pid(options: Sequence[str]) -> dict[int, str]:
+    argv = ["ps", "-A", "-ww", *options, "-o", "pid=,command="]
+    result = subprocess.run(
+        argv, capture_output=True, text=True, errors="replace", check=False, env={**os.environ, "LC_ALL": "C"}
+    )
+    if result.returncode != 0:
+        raise _EnvironmentUnreadable(f"{' '.join(argv)} failed: {result.stderr.strip()}")
+    commands: dict[int, str] = {}
+    for line in result.stdout.splitlines():
+        pid, _, command = line.lstrip().partition(" ")
+        if pid.isdigit():
+            commands.setdefault(int(pid), command)
+    return commands
+
+
+def _marked_by_ps(candidates: Collection[int], entry: str) -> set[int]:
+    # ps -E appends the environment to argv, and macOS hides it for Apple's own binaries such as /bin/sleep.
+    commands = _commands_by_pid([])
+    with_environment = _commands_by_pid(["-E"])
+    marked = set()
+    for pid in candidates:
+        command, shown = commands.get(pid), with_environment.get(pid)
+        if command is None or shown is None or not shown.startswith(command):
+            continue
+        if entry in shown[len(command) :].split():
+            marked.add(pid)
+    return marked
+
+
+def _marked_by_proc(candidates: Collection[int], entry: str) -> set[int]:
+    wanted = entry.encode()
+    marked = set()
+    for pid in candidates:
+        try:
+            environment = Path(f"/proc/{pid}/environ").read_bytes()
+        except (FileNotFoundError, ProcessLookupError, PermissionError):
+            continue
+        if wanted in environment.split(b"\0"):
+            marked.add(pid)
+    return marked
+
+
+def _marked_processes(candidates: Collection[int], entry: str) -> set[int]:
+    if sys.platform == "darwin":
+        return _marked_by_ps(candidates, entry)
+    if Path("/proc/self/environ").is_file():
+        return _marked_by_proc(candidates, entry)
+    raise _EnvironmentUnreadable(f"{sys.platform} has neither /proc/<pid>/environ nor a known ps -E")
+
+
+def _sweep(group: int | None, entry: str, earlier: Mapping[int, int], foreign: Set[int]) -> _Sweep:
+    processes = _list_processes()
+    own_pid, own_group, own_uid = os.getpid(), os.getpgrp(), os.geteuid()
+    signalable = {
+        process.pid
+        for process in processes
+        if process.pid > 1 and process.pid != own_pid and process.pgid != own_group and not process.zombie
+    }
+    ours = [process.pid for process in processes if process.pid in signalable and process.uid == own_uid]
+    try:
+        marked, unreadable = _marked_processes(ours, entry), ""
+    except _EnvironmentUnreadable as error:
+        marked, unreadable = set(), str(error)
+    children: dict[int, list[int]] = {}
+    for process in processes:
+        children.setdefault(process.ppid, []).append(process.pid)
+    members = [process.pid for process in processes if process.pgid == group]
+    still_there = [process.pid for process in processes if earlier.get(process.pid) == process.pgid]
+    pending = members + sorted(marked) + still_there
+    tree: set[int] = set()
+    while pending:
+        pid = pending.pop()
+        if pid in signalable and pid not in tree:
+            tree.add(pid)
+            pending.extend(children.get(pid, []))
+    targets = {process.pid: process.pgid for process in processes if process.pid in tree and process.pid not in foreign}
+    return _Sweep(targets, frozenset(marked.union(members)), unreadable)
+
+
+def _send(sweep: _Sweep, signum: int) -> set[int]:
+    foreign = set()
+    for pid in sweep.targets:
+        try:
+            os.kill(pid, signum)
+        except ProcessLookupError:
+            continue
+        except PermissionError:
+            if pid not in sweep.owned:
+                foreign.add(pid)
+    return foreign
+
+
+def _wait_for_exit(pids: Set[int], seconds: float) -> None:
     deadline = time.monotonic() + seconds
-    while time.monotonic() < deadline:
-        if not _group_has_live_member(group):
-            return True
+    while any(process.pid in pids and not process.zombie for process in _list_processes()):
+        if time.monotonic() >= deadline:
+            return
         time.sleep(_STOP_POLL_SECONDS)
-    return not _group_has_live_member(group)
+
+
+def _worker_group(leader: int, started_at: float) -> int | None:
+    leader_started_at = _process_started_at(leader)
+    if leader_started_at is not None:
+        return leader if abs(leader_started_at - started_at) <= _PID_START_TOLERANCE_SECONDS else None
+    if _pid_exists(leader):
+        raise WorkerStopError(f"could not read the start time of process {leader}")
+    if not any(process.pgid == leader and not process.zombie for process in _list_processes()):
+        return None
+    if time.time() - started_at > _LEADERLESS_GROUP_MAX_AGE_SECONDS:
+        raise WorkerStopError(f"process group {leader} has no leader and is too old to identify")
+    return leader
 
 
 def is_same_process(pid: int, started_at: float) -> bool:
@@ -154,6 +283,7 @@ class SubprocessBackend:
         write_identity(workdir, ticket.id, assignment.id, token, assignment.attempt)
         env = {name: os.environ[name] for name in _INHERITED_ENV if name in os.environ}
         env.update(self.extra_env)
+        env[ASSIGNMENT_MARKER] = assignment.id
         argv = [part.replace("{brief}", str(brief)) for part in self.argv]
         with (workdir / "worker.log").open("ab") as log:
             process = subprocess.Popen(
@@ -186,28 +316,25 @@ class SubprocessBackend:
     def stop(self, assignment: Assignment) -> None:
         if assignment.pid is None:
             return
-        group = assignment.pid
-        leader_started_at = _process_started_at(group)
-        if leader_started_at is None:
-            if _pid_exists(group):
-                raise WorkerStopError(f"could not read the start time of process {group}")
-            if not _group_has_live_member(group):
-                return
-            if time.time() - assignment.started_at > _LEADERLESS_GROUP_MAX_AGE_SECONDS:
-                raise WorkerStopError(f"process group {group} has no leader and is too old to identify")
-        elif abs(leader_started_at - assignment.started_at) > _PID_START_TOLERANCE_SECONDS:
-            return
-        try:
-            os.killpg(group, signal.SIGTERM)
-            if _group_exited_within(group, _STOP_GRACE_SECONDS):
-                return
-            os.killpg(group, signal.SIGKILL)
-        except ProcessLookupError:
-            return
-        # macOS raises EPERM for a group holding only zombies, and any OS raises it for another user's processes.
-        except PermissionError as error:
-            if _group_has_live_member(group):
-                raise WorkerStopError(f"process group {group} is still running: {error}") from error
-            return
-        if not _group_exited_within(group, _KILL_GRACE_SECONDS):
-            raise WorkerStopError(f"process group {group} survived SIGKILL")
+        group = _worker_group(assignment.pid, assignment.started_at)
+        entry = f"{ASSIGNMENT_MARKER}={assignment.id}"
+        foreign: set[int] = set()
+        sweep = _sweep(group, entry, {}, foreign)
+        if sweep.targets:
+            foreign |= _send(sweep, signal.SIGTERM)
+            _wait_for_exit(sweep.targets.keys() - foreign, _STOP_GRACE_SECONDS)
+            sweep = _sweep(group, entry, sweep.targets, foreign)
+        if sweep.targets:
+            foreign |= _send(sweep, signal.SIGKILL)
+            _wait_for_exit(sweep.targets.keys() - foreign, _KILL_GRACE_SECONDS)
+            sweep = _sweep(group, entry, sweep.targets, foreign)
+        problems = []
+        if sweep.targets:
+            problems.append(f"processes still running after SIGKILL: {', '.join(map(str, sorted(sweep.targets)))}")
+        if sweep.unreadable:
+            problems.append(
+                f"could not read process environments ({sweep.unreadable}), "
+                "so processes it started outside its process group may still run"
+            )
+        if problems:
+            raise WorkerStopError("; ".join(problems))

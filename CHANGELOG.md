@@ -22,6 +22,7 @@ Notable changes to hermes-superagent. The format follows [Keep a Changelog](http
 - `briefs --compare` finds a GitLab task's checkout under its `gitlab:group/project` key, as a real brief does.
 - `hermes superagent setup` sends through Hermes when Hermes was installed with its own installer, whose launcher hides its name. Before, `--alerts` was refused there and nothing was set to deliver messages.
 - `doctor` says "1 minute ago", and setup's hint for the Claude Code hook speaks to you rather than to an agent.
+- Stopping a worker stops what it started outside its process group too, such as a `setsid` dev server or a double-forked daemon, found through its parents or the `WORKER_ASSIGNMENT` marker in its environment. Before, those survived a stop or a restart.
 
 ## [0.1.0] - 2026-11-10
 

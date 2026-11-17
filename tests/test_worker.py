@@ -1,22 +1,50 @@
 from __future__ import annotations
 
+import contextlib
 import json
 import os
+import signal
 import stat
 import subprocess
 import sys
 import time
+from collections.abc import Collection
 from pathlib import Path
 
 import pytest
 
 from superagent.domain import Assignment, AssignmentStatus, Mandate, Strength, Ticket, TicketStatus
-from superagent.worker import IDENTITY_FILENAME, SubprocessBackend, WorkerStopError, render_brief, write_identity
+from superagent.worker import (
+    ASSIGNMENT_MARKER,
+    IDENTITY_FILENAME,
+    SubprocessBackend,
+    WorkerStopError,
+    _EnvironmentUnreadable,
+    _Process,
+    render_brief,
+    write_identity,
+)
 
 STUBBORN = (
     "import signal, time\nsignal.signal(signal.SIGTERM, signal.SIG_IGN)\nopen('ready', 'w').close()\ntime.sleep(60)\n"
 )
 PRINT_ENV = "import json, os; print(json.dumps(dict(os.environ)))"
+SLEEPER = [sys.executable, "-c", "import time; time.sleep(30)"]
+
+
+def setsid_grandchild(env: str, *, ignore_sigterm: bool = False, worker_stays: bool = True) -> str:
+    grandchild = (
+        "import os, pathlib, signal, time\n"
+        + ("signal.signal(signal.SIGTERM, signal.SIG_IGN)\n" if ignore_sigterm else "")
+        + "pathlib.Path('grandchild.tmp').write_text(str(os.getpid()))\n"
+        "os.replace('grandchild.tmp', 'grandchild')\n"
+        "time.sleep(60)\n"
+    )
+    return (
+        "import subprocess, sys, time\n"
+        f"subprocess.Popen([sys.executable, '-c', {grandchild!r}], start_new_session=True, env={env})\n"
+        + ("time.sleep(60)\n" if worker_stays else "")
+    )
 
 
 def ticket(goal: str = "a task") -> Ticket:
@@ -26,6 +54,39 @@ def ticket(goal: str = "a task") -> Ticket:
 
 def assignment(pid: int | None = None) -> Assignment:
     return Assignment("as-1", "tk-1", 1, AssignmentStatus.RUNNING, pid, time.time())
+
+
+def unmarked_env(**extra: str) -> dict[str, str]:
+    return {**{name: value for name, value in os.environ.items() if name != ASSIGNMENT_MARKER}, **extra}
+
+
+def start_with_grandchild(tmp_path: Path, script: str) -> tuple[SubprocessBackend, Assignment, int]:
+    worker = tmp_path / "worker.py"
+    worker.write_text(script, encoding="utf-8")
+    backend = SubprocessBackend([sys.executable, str(worker), "{brief}"], tmp_path / "w")
+    started = assignment()
+    pid = backend.start(ticket(), started, "token")
+    pid_file = tmp_path / "w" / "tk-1" / "as-1" / "grandchild"
+    deadline = time.time() + 10
+    while not pid_file.exists():
+        assert time.time() < deadline
+        time.sleep(0.05)
+    running = Assignment(started.id, started.ticket_id, 1, started.status, pid, started.started_at)
+    return backend, running, int(pid_file.read_text())
+
+
+def ps_field(pid: int, field: str) -> str:
+    return subprocess.run(["ps", "-o", f"{field}=", "-p", str(pid)], capture_output=True, text=True).stdout.strip()
+
+
+def is_gone(pid: int) -> bool:
+    state = ps_field(pid, "stat")
+    return not state or "Z" in state
+
+
+def kill_quietly(pid: int) -> None:
+    with contextlib.suppress(ProcessLookupError):
+        os.kill(pid, signal.SIGKILL)
 
 
 def test_stop_kills_a_worker_that_ignores_sigterm(tmp_path: Path) -> None:
@@ -66,22 +127,54 @@ def test_stop_tolerates_a_worker_that_already_exited(tmp_path: Path, monkeypatch
         zombie.wait()
 
 
-def test_stop_reports_a_group_it_is_not_allowed_to_signal(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    def denied(group: int, signum: int) -> None:
-        raise PermissionError(1, "Operation not permitted")
+def test_stop_reports_its_group_and_marked_processes_when_they_refuse_signals(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    real_kill = os.kill
 
+    def refuse(pid: int, signum: int) -> None:
+        if signum:
+            raise PermissionError(1, "Operation not permitted")
+        real_kill(pid, signum)
+
+    monkeypatch.setattr("superagent.worker._STOP_GRACE_SECONDS", 0.2)
+    monkeypatch.setattr("superagent.worker._KILL_GRACE_SECONDS", 0.2)
     started_at = time.time()
-    live = subprocess.Popen([sys.executable, "-c", "import time; time.sleep(30)"], start_new_session=True)
+    leader = subprocess.Popen(SLEEPER, start_new_session=True, env=unmarked_env())
+    marked = subprocess.Popen(SLEEPER, start_new_session=True, env=unmarked_env(**{ASSIGNMENT_MARKER: "as-1"}))
+    backend = SubprocessBackend(["worker", "{brief}"], tmp_path / "w")
+    survivors = ", ".join(str(pid) for pid in sorted([leader.pid, marked.pid]))
     try:
-        monkeypatch.setattr("superagent.worker.os.killpg", denied)
-        backend = SubprocessBackend(["worker", "{brief}"], tmp_path / "w")
-        running = Assignment("as-1", "tk-1", 1, AssignmentStatus.RUNNING, live.pid, started_at)
-        with pytest.raises(WorkerStopError, match="still running"):
-            backend.stop(running)
+        monkeypatch.setattr("superagent.worker.os.kill", refuse)
+        with pytest.raises(WorkerStopError, match=rf"still running after SIGKILL: {survivors}$"):
+            backend.stop(Assignment("as-1", "tk-1", 1, AssignmentStatus.RUNNING, leader.pid, started_at))
     finally:
         monkeypatch.undo()
-        live.kill()
-        live.wait()
+        for process in (leader, marked):
+            process.kill()
+            process.wait()
+
+
+def test_stop_treats_a_refused_descendant_without_the_marker_as_not_ours(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    backend, running, grandchild = start_with_grandchild(tmp_path, setsid_grandchild("{}"))
+    real_kill = os.kill
+
+    def refuse_grandchild(pid: int, signum: int) -> None:
+        if pid == grandchild and signum:
+            raise PermissionError(1, "Operation not permitted")
+        real_kill(pid, signum)
+
+    try:
+        assert running.pid is not None
+        monkeypatch.setattr("superagent.worker.os.kill", refuse_grandchild)
+        backend.stop(running)
+        assert is_gone(running.pid)
+        assert not is_gone(grandchild)
+    finally:
+        monkeypatch.undo()
+        kill_quietly(grandchild)
 
 
 def test_stop_kills_a_child_that_outlives_its_leader(tmp_path: Path) -> None:
@@ -134,17 +227,80 @@ def test_stop_refuses_when_it_cannot_read_a_live_process(tmp_path: Path, monkeyp
         live.wait()
 
 
-def test_stop_reports_a_group_that_survives_sigkill(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    sent: list[int] = []
-    monkeypatch.setattr("superagent.worker.os.killpg", lambda group, signum: sent.append(signum))
-    monkeypatch.setattr("superagent.worker._group_has_live_member", lambda group: True)
+def test_stop_reports_processes_that_survive_sigkill(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    fake = max(os.getpid(), os.getpgrp()) + 1
+    sent: list[tuple[int, int]] = []
+    monkeypatch.setattr("superagent.worker.os.kill", lambda pid, signum: sent.append((pid, signum)))
+    monkeypatch.setattr("superagent.worker._list_processes", lambda: [_Process(fake, 1, fake, os.geteuid(), False)])
+    monkeypatch.setattr("superagent.worker._marked_processes", lambda candidates, entry: set())
     monkeypatch.setattr("superagent.worker._process_started_at", lambda pid: 1000.0)
     monkeypatch.setattr("superagent.worker._STOP_GRACE_SECONDS", 0.0)
     monkeypatch.setattr("superagent.worker._KILL_GRACE_SECONDS", 0.0)
     backend = SubprocessBackend(["worker", "{brief}"], tmp_path / "w")
-    with pytest.raises(WorkerStopError, match="survived"):
-        backend.stop(Assignment("as-1", "tk-1", 1, AssignmentStatus.RUNNING, 4242, 1000.0))
-    assert len(sent) == 2
+    with pytest.raises(WorkerStopError, match=rf"still running after SIGKILL: {fake}$"):
+        backend.stop(Assignment("as-1", "tk-1", 1, AssignmentStatus.RUNNING, fake, 1000.0))
+    assert sent == [(fake, signal.SIGTERM), (fake, signal.SIGKILL)]
+
+
+def test_stop_kills_a_setsid_grandchild_and_spares_unrelated_processes(tmp_path: Path) -> None:
+    unmarked = subprocess.Popen(SLEEPER, start_new_session=True, env=unmarked_env())
+    other = subprocess.Popen(SLEEPER, start_new_session=True, env=unmarked_env(**{ASSIGNMENT_MARKER: "as-2"}))
+    backend, running, grandchild = start_with_grandchild(tmp_path, setsid_grandchild("{}"))
+    try:
+        assert running.pid is not None
+        assert ps_field(grandchild, "pgid") != str(running.pid)
+        backend.stop(running)
+        assert is_gone(running.pid)
+        assert is_gone(grandchild)
+        assert unmarked.poll() is None
+        assert other.poll() is None
+    finally:
+        kill_quietly(grandchild)
+        for process in (unmarked, other):
+            process.kill()
+            process.wait()
+
+
+def test_stop_finds_a_reparented_grandchild_by_its_marker(tmp_path: Path) -> None:
+    backend, running, grandchild = start_with_grandchild(tmp_path, setsid_grandchild("None", worker_stays=False))
+    try:
+        assert running.pid is not None
+        deadline = time.time() + 10
+        while not is_gone(running.pid) or ps_field(grandchild, "ppid") == str(running.pid):
+            assert time.time() < deadline
+            time.sleep(0.05)
+        backend.stop(running)
+        assert is_gone(grandchild)
+    finally:
+        kill_quietly(grandchild)
+
+
+def test_stop_kills_a_descendant_that_ignores_sigterm_after_its_parent_dies(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr("superagent.worker._STOP_GRACE_SECONDS", 0.5)
+    backend, running, grandchild = start_with_grandchild(tmp_path, setsid_grandchild("{}", ignore_sigterm=True))
+    try:
+        backend.stop(running)
+        assert is_gone(grandchild)
+    finally:
+        kill_quietly(grandchild)
+
+
+def test_stop_says_when_it_cannot_look_outside_the_group(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    def unreadable(candidates: Collection[int], entry: str) -> set[int]:
+        raise _EnvironmentUnreadable("no way to read them here")
+
+    monkeypatch.setattr("superagent.worker._marked_processes", unreadable)
+    live = subprocess.Popen(SLEEPER, start_new_session=True)
+    backend = SubprocessBackend(["worker", "{brief}"], tmp_path / "w")
+    try:
+        with pytest.raises(WorkerStopError, match=r"could not read process environments \(no way to read them here\)"):
+            backend.stop(Assignment("as-1", "tk-1", 1, AssignmentStatus.RUNNING, live.pid, time.time()))
+        assert live.wait(timeout=5) == -signal.SIGTERM
+    finally:
+        live.kill()
+        live.wait()
 
 
 def test_stop_leaves_a_reused_pid_alone(tmp_path: Path) -> None:
@@ -178,6 +334,7 @@ def test_worker_env_is_an_allowlist(tmp_path: Path) -> None:
     assert "HERMES_YOLO_MODE" not in output
     assert "SUPERAGENT_" not in output
     assert "token" not in output
+    assert json.loads(output)[ASSIGNMENT_MARKER] == "as-1"
 
 
 def test_goal_never_reaches_argv(tmp_path: Path) -> None:
