@@ -56,7 +56,7 @@ every = "5m"
 
 ## Markdown
 
-Reads open tasks, such as `- [ ] Call the bank 📅 2026-11-20`, from your notes with no account or CLI. Each path is a file, a folder searched for `*.md` with hidden folders such as `.obsidian` skipped, or a glob. Moving lines around changes nothing, and a task closes once it's ticked `[x]` in its file. One you delete stays open under "gone without a close", for you to close. Two files with the same path inside their folders, such as two vaults' `Inbox.md`, need a block each. Add `trusted = true` when the notes are your own words.
+Reads open tasks, such as `- [ ] Call the bank 📅 2026-11-20`, from your notes with no account or CLI. Each path is a file, a folder searched for `*.md` with hidden folders such as `.obsidian` skipped, or a glob. Moving lines around changes nothing, and a task closes once it's ticked `[x]` in its file. One you delete stays open under "gone without a close", for you to close. Two files with the same path inside their folders, such as two vaults' `Inbox.md`, need a block each. Links and symlinked folders that point outside a path are skipped, and a note over 8 MB fails the poll until it shrinks or moves out. Add `trusted = true` when the notes are your own words.
 
 ```toml
 [connectors.notes]
