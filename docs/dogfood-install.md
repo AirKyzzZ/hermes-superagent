@@ -202,11 +202,9 @@ Claude Code's settings watcher normally picks up the new hooks in sessions that 
 
 The VPS reads every other machine over ssh through the tailnet: each poll runs `ssh <alias> <python> -` with the probe on stdin, and a relaunch sends its script the same way. Each machine needs an ssh server the VPS can log in to without a prompt, a `python3`, and the hook. Below, `mac` is the Mac's tailnet name, `pc-wsl` the WSL node on the PC, and `you` the user on each. Use the names `tailscale status` shows, in `~/.ssh/config` on the VPS only.
 
-**The Mac.** Tailscale SSH only runs on a Mac with the open source `tailscaled`, not with the Tailscale app, so use macOS's own sshd over the tailnet. In System Settings > General > Sharing, turn on Remote Login for your user only, then add the VPS's key:
+**The Mac.** Tailscale SSH only runs on a Mac with the open source `tailscaled`, not with the Tailscale app, so use macOS's own sshd over the tailnet. In System Settings > General > Sharing, turn on Remote Login for your user only, then check the Python the VPS will use. The VPS's key gets added from the VPS below.
 
 ```bash
-mkdir -p ~/.ssh && chmod 700 ~/.ssh
-echo 'PASTE_THE_VPS_PUBLIC_KEY' >> ~/.ssh/authorized_keys && chmod 600 ~/.ssh/authorized_keys
 /usr/bin/python3 --version            # if it offers the Command Line Tools, install them
 ```
 
@@ -239,7 +237,7 @@ If the VPS is tagged, tag the WSL node too and name both tags in the rule.
 **The VPS.** One key with no passphrase for the Mac, and an alias per machine. Tailscale SSH needs no key.
 
 ```bash
-ssh-keygen -t ed25519 -N '' -f ~/.ssh/superagent -C superagent && cat ~/.ssh/superagent.pub
+ssh-keygen -t ed25519 -N '' -f ~/.ssh/superagent -C superagent
 cat >> ~/.ssh/config <<'EOF'
 Host mac
   HostName mac
@@ -250,6 +248,7 @@ Host pc
   HostName pc-wsl
   User you
 EOF
+ssh-copy-id -i ~/.ssh/superagent.pub mac    # asks for your Mac password once
 ssh -o StrictHostKeyChecking=accept-new mac /usr/bin/python3 --version
 ssh -o StrictHostKeyChecking=accept-new pc python3 --version
 ```
