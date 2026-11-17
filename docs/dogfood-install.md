@@ -243,6 +243,32 @@ loginctl enable-linger "$USER"
 
 Fill the `PATH` with `dirname "$(command -v hermes)"`, `dirname "$(command -v td)"` and `dirname "$(command -v node)"`: `td` starts with `#!/usr/bin/env node`, so the timer needs both. If `td` runs on a token rather than its own login, put `TODOIST_API_TOKEN=...` in a file only this user can read (`chmod 600`) and add `EnvironmentFile=` with its path to the service, so the token isn't in a world-readable unit. Run step 4 once through the unit too, with `systemctl --user start superagent-tick.service`, then read `journalctl --user -u superagent-tick`. ssh agents and tool credentials can work from a shell and still fail under the timer's smaller environment.
 
+### Keep the panel open
+
+The panel serves a page on `127.0.0.1` only, so it runs next to the database and you reach it through ssh or your tailnet.
+
+```ini
+# ~/.config/systemd/user/superagent-panel.service
+[Unit]
+Description=hermes-superagent side panel
+
+[Service]
+ExecStart=/full/path/to/hermes superagent --home %h/superagent panel
+Restart=on-failure
+Environment=PATH=/full/path/to/hermes/bin:/usr/local/bin:/usr/bin:/bin
+
+[Install]
+WantedBy=default.target
+```
+
+```bash
+systemctl --user daemon-reload
+systemctl --user enable --now superagent-panel.service
+journalctl --user -u superagent-panel -n 5
+```
+
+The journal shows the URL with its token, which stays the same across restarts because it's saved in `~/superagent/.superagent.panel-token`. From your laptop, `ssh -N -L 8765:127.0.0.1:8765 your-server` and open that URL. On a tailnet, `tailscale serve --bg 8765` on the server and add `--allow-host your-server.your-tailnet.ts.net` to `ExecStart` instead, then open `https://your-server.your-tailnet.ts.net/#<token>`. Never `tailscale funnel`.
+
 ## 6. The live-model run
 
 CI runs everything on real Hermes with a fake model. This run swaps in the real one. Part A needs none of sections 1 to 5: it uses two throwaway profiles and a made-up task, so its transcript holds nothing private and can be published. Part B installs the plugin in the live profile and writes a brief for one of the owner's real items, and its output stays private.

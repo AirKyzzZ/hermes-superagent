@@ -269,6 +269,8 @@ Without Hermes, write `superagent` instead of `hermes superagent` in that line. 
 hermes superagent --home ~/superagent panel
 ```
 
+![The panel on example data: what needs you, a card per project with its workers, sessions and pull requests, and today's flow from sources to relay](assets/panel.png)
+
 It prints a URL on `127.0.0.1:8765` to open beside your chat, in a browser split or a cmux browser pane. The page refreshes every 5 seconds. Projects come first after what needs you, one card each with its workers, Claude Code sessions, pull requests and open items, the ones waiting on you on top. Click a card for that project's blockers, workers, sessions and pull requests, and click a worker for its whole conversation: the goal, what people sent it, every report, the watchdog's moves, the messages relayed back, the brief it started from and the last lines of its output. A worker belongs to the project the router names when it dispatches, or to a known project its goal mentions. The overview also shows what needs you first (escalations from the last day until someone asks again on that thread, blocked workers with their question, Claude Code sessions waiting or stuck, failing sources, overdue items), then the flow from sources to relay with today's counts, what runs now, every worker with its silence against the stall threshold, the sessions board, the ledger, sources and a feed. It reads the database in one read-only transaction, so it never holds up a tick. Text is redacted like the brief, and nothing on the page acts yet. When the database lives on a server, run it there and tunnel the port with `ssh -L 8765:127.0.0.1:8765 your-server`. `--port` picks another port, and `--json` prints one snapshot instead of serving the page.
 
 The token is saved in `home` with mode 0600, so the link keeps working across restarts and can live in your bookmarks, and `--new-token` replaces it when it leaked. On a [Tailscale](https://tailscale.com/kb/1312/serve) tailnet you can skip the ssh tunnel and reach it from your laptop or phone over HTTPS, still only inside your tailnet:
@@ -278,7 +280,7 @@ tailscale serve --bg 8765
 hermes superagent --home ~/superagent panel --allow-host your-server.your-tailnet.ts.net
 ```
 
-`--allow-host` only adds a name the panel answers to, it still listens on `127.0.0.1`. Don't put it behind `tailscale funnel` or any public proxy: the token is the only thing standing between the internet and your work.
+`--allow-host` only adds a name the panel answers to, it still listens on `127.0.0.1`. Don't put it behind `tailscale funnel` or any public proxy: the token is the only thing standing between the internet and your work. [The shadow install guide](docs/dogfood-install.md#keep-the-panel-open) has a systemd unit that keeps it running.
 
 ### Run it with Hermes
 
