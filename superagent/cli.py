@@ -22,7 +22,7 @@ from .digest import build_digest, send_digest
 from .doctor import Status, diagnose
 from .domain import ReportState, Trigger
 from .ledger import Item, ItemState, Ledger, LedgerError
-from .panel import DEFAULT_PORT, serve, snapshot
+from .panel import DEFAULT_PORT, allowed_hosts, panel_token, serve, snapshot
 from .parity import PastTask, PastTaskError, compare, load_past_tasks
 from .reporting import identity_from_workdir, submit_report
 from .router import Assessor, chat_safe
@@ -105,6 +105,14 @@ def setup_parser(parser: argparse.ArgumentParser) -> None:
     panel = commands.add_parser("panel", help="serve a live page of what needs you, workers, sessions and sources")
     panel.add_argument("--port", type=int, default=DEFAULT_PORT, help="port on 127.0.0.1")
     panel.add_argument("--json", action="store_true", help="print one snapshot instead of serving the page")
+    panel.add_argument(
+        "--allow-host",
+        action="append",
+        default=[],
+        metavar="NAME",
+        help="also answer to this Host, such as a tailscale serve name on your tailnet",
+    )
+    panel.add_argument("--new-token", action="store_true", help="replace the saved token, so old links stop working")
     report = commands.add_parser("report", help="report status from a worker directory, for agents outside Hermes")
     report.add_argument("--state", required=True, choices=_WORKER_STATES)
     report.add_argument("--summary", required=True)
@@ -116,7 +124,17 @@ def run_panel(args: argparse.Namespace, home: Path) -> int:
         print(json.dumps(snapshot(home, load_config(home)), indent=1))
         return 0
     try:
-        serve(home, args.port)
+        allowed_hosts(args.port, args.allow_host)
+    except ValueError as error:
+        print(error, file=sys.stderr)
+        return 2
+    try:
+        token = panel_token(home, renew=args.new_token)
+    except OSError as error:
+        print(f"could not read or write the panel token in {home}: {error}", file=sys.stderr)
+        return 1
+    try:
+        serve(home, args.port, token, args.allow_host)
     except OSError as error:
         print(f"could not listen on 127.0.0.1:{args.port}: {error}. Pass --port with a free one", file=sys.stderr)
         return 1

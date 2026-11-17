@@ -271,6 +271,15 @@ hermes superagent --home ~/superagent panel
 
 It prints a URL on `127.0.0.1:8765` to open beside your chat, in a browser split or a cmux browser pane. The page refreshes every 5 seconds. Projects come first after what needs you, one card each with its workers, Claude Code sessions, pull requests and open items, the ones waiting on you on top. Click a card for that project's blockers, workers, sessions and pull requests, and click a worker for its whole conversation: the goal, what people sent it, every report, the watchdog's moves, the messages relayed back, the brief it started from and the last lines of its output. A worker belongs to the project the router names when it dispatches, or to a known project its goal mentions. The overview also shows what needs you first (escalations from the last day until someone asks again on that thread, blocked workers with their question, Claude Code sessions waiting or stuck, failing sources, overdue items), then the flow from sources to relay with today's counts, what runs now, every worker with its silence against the stall threshold, the sessions board, the ledger, sources and a feed. It reads the database in one read-only transaction, so it never holds up a tick. Text is redacted like the brief, and nothing on the page acts yet. When the database lives on a server, run it there and tunnel the port with `ssh -L 8765:127.0.0.1:8765 your-server`. `--port` picks another port, and `--json` prints one snapshot instead of serving the page.
 
+The token is saved in `home` with mode 0600, so the link keeps working across restarts and can live in your bookmarks, and `--new-token` replaces it when it leaked. On a [Tailscale](https://tailscale.com/kb/1312/serve) tailnet you can skip the ssh tunnel and reach it from your laptop or phone over HTTPS, still only inside your tailnet:
+
+```bash
+tailscale serve --bg 8765
+hermes superagent --home ~/superagent panel --allow-host your-server.your-tailnet.ts.net
+```
+
+`--allow-host` only adds a name the panel answers to, it still listens on `127.0.0.1`. Don't put it behind `tailscale funnel` or any public proxy: the token is the only thing standing between the internet and your work.
+
 ### Run it with Hermes
 
 Needs Hermes 0.22.7 or newer on macOS or Linux. These steps haven't been run end to end yet, see the warning above.
@@ -491,7 +500,7 @@ If the gate itself fails, the message is dropped and logged, so a person gets si
 - **Spends model tokens:** ticks call the watchdog profile's model through `ctx.llm` when there's a new report to judge or a candidate event to assess, and `hermes superagent briefs` makes three calls per new brief, six at most with retries, within `daily_limit`. Router and workers use their own profiles' models as usual.
 - **Writes files:** `superagent.db`, a lock file, a last-good copy of the config and per-worker directories under `home`, each with a brief, a private identity file and the worker's log, and it reads `superagent.toml` from there.
 - **Leaves approvals to Hermes:** workers start non-interactively from an environment allowlist, so they inherit no YOLO or approval-bypass setting. Hermes's approval rules apply to them as usual, which means that in a sandbox with no host mounts Hermes skips its dangerous-command prompts and the sandbox is the boundary.
-- **Listens only while you ask:** `superagent panel` serves its page on `127.0.0.1` until you stop it, and checks the `Host` header. The snapshot needs the token from the URL it prints, the page loads nothing from outside, and it only reads the database.
+- **Listens only while you ask:** `superagent panel` serves its page on `127.0.0.1` until you stop it, and checks the `Host` header against `localhost` and the names you pass to `--allow-host`. Its token is saved in `home` with mode 0600. The snapshot needs the token from the URL it prints, the page loads nothing from outside, and it only reads the database.
 - **Doesn't:** open outbound network connections in its own code, send telemetry, or store your accounts' credentials. Connectors go through your tools' own logins, and `anki` posts to AnkiConnect through `curl`. The scripts in `assets/art` that fetched the source image are build tools the plugin never runs.
 
 ## Roadmap
