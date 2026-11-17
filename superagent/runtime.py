@@ -63,7 +63,7 @@ class TickResult:
 def open_runtime(home: Path) -> Runtime:
     config = load_config(home)
     db_path = home / DB_FILENAME
-    backend = SubprocessBackend(config.worker_argv, home / WORKDIRS_DIRNAME)
+    backend = SubprocessBackend(config.worker_argv, home / WORKDIRS_DIRNAME, on_behalf_of=config.on_behalf_of)
     connectors = {spec.name: build_connector(spec) for spec in config.connectors}
     return Runtime(
         home, config, Router(Store(db_path), config.rules, backend, config.max_running), Ledger(db_path), connectors

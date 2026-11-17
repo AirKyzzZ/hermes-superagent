@@ -11,7 +11,7 @@ from pathlib import Path
 import pytest
 
 from superagent.domain import Assignment, AssignmentStatus, Mandate, Strength, Ticket, TicketStatus
-from superagent.worker import IDENTITY_FILENAME, SubprocessBackend, WorkerStopError, write_identity
+from superagent.worker import IDENTITY_FILENAME, SubprocessBackend, WorkerStopError, render_brief, write_identity
 
 STUBBORN = (
     "import signal, time\nsignal.signal(signal.SIGTERM, signal.SIG_IGN)\nopen('ready', 'w').close()\ntime.sleep(60)\n"
@@ -210,3 +210,17 @@ def test_last_output_is_the_tail_of_the_worker_log_without_terminal_codes(tmp_pa
     assert "\x1b" not in output
     assert len(output) <= 4000
     assert SubprocessBackend(["worker"], tmp_path / "none").last_output(assignment()) == ""
+
+
+def test_the_brief_says_who_relays_for_whom() -> None:
+    brief = render_brief(ticket("fix the login bug"), attempt=2, on_behalf_of="Sam")
+    assert "Relayed by Hermes, the router, for Sam from chat. Ticket tk-1, attempt 2." in brief
+    assert brief.index("## Goal\nfix the login bug") < brief.index("## Done means") < brief.index("## Reporting")
+    assert "subagents" in brief
+
+
+def test_the_brief_names_the_sender_when_no_name_is_set() -> None:
+    assert "for alice from chat" in render_brief(ticket(), "the last worker asked about Postgres")
+    assert "## Context\nthe last worker asked about Postgres" in render_brief(
+        ticket(), "the last worker asked about Postgres"
+    )
