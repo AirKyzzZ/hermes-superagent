@@ -23,6 +23,7 @@ from superagent.panel import (
     TOKEN_FILENAME,
     TOKEN_HEADER,
     allowed_hosts,
+    host_allowed,
     panel_handler,
     panel_token,
     snapshot,
@@ -306,6 +307,31 @@ def test_a_name_passed_to_allow_host_is_answered_on_any_port_unless_one_is_given
         assert fetch(port, "/", {"Host": host})[0] == status
 
 
+@pytest.mark.parametrize(
+    "host",
+    [
+        "localhost.",
+        "127.0.0.1.",
+        "[::1]:{port}",
+        "name@panel.example.ts.net",
+        "panel.example.ts.net:08443",
+        "panel.example.ts.net:65536",
+        "panel.example.ts.net:0",
+    ],
+)
+def test_a_hostile_host_is_refused(tmp_path: Path, host: str) -> None:
+    with panel_server(tmp_path, ["panel.example.ts.net"]) as port:
+        assert fetch(port, "/", {"Host": host.format(port=port)})[0] == 421
+
+
+def test_a_name_with_the_panel_port_is_answered_on_that_port_only() -> None:
+    hosts = allowed_hosts(8765, ["panel.example.ts.net:8765"])
+    assert host_allowed("panel.example.ts.net:8765", hosts)
+    assert host_allowed("localhost:8765", hosts)
+    assert not host_allowed("panel.example.ts.net", hosts)
+    assert not host_allowed("panel.example.ts.net:8443", hosts)
+
+
 def test_a_name_with_a_port_is_not_answered_on_the_panel_port(tmp_path: Path) -> None:
     with panel_server(tmp_path, ["panel.example.ts.net:8443"]) as port:
         assert fetch(port, "/", {"Host": f"panel.example.ts.net:{port}"})[0] == 421
@@ -339,6 +365,12 @@ def test_a_refused_host_is_named_next_to_the_names_the_panel_answers_to(tmp_path
 )
 def test_allow_host_refuses_anything_but_a_name_or_a_name_and_a_port(entry: str) -> None:
     with pytest.raises(ValueError, match="allow-host"):
+        allowed_hosts(8765, [entry])
+
+
+@pytest.mark.parametrize("entry", ["127.0.0.1", "10.0.0.1", "10.0.0.1:8443", "100.64.0.1"])
+def test_allow_host_refuses_an_ip_address(entry: str) -> None:
+    with pytest.raises(ValueError, match="never an IP address"):
         allowed_hosts(8765, [entry])
 
 

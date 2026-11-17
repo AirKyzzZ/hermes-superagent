@@ -37,7 +37,10 @@ DEFAULT_PORT = 8765
 TOKEN_HEADER = "X-Superagent-Token"
 TOKEN_FILENAME = ".superagent.panel-token"
 _SAVED_TOKEN = re.compile(r"[A-Za-z0-9_-]{32}")
-_HOST_NAME = re.compile(r"[a-z0-9](?:[a-z0-9-]*[a-z0-9])?(?:\.[a-z0-9](?:[a-z0-9-]*[a-z0-9])?)+")
+_HOST_NAME = re.compile(
+    r"[a-z0-9](?:[a-z0-9-]*[a-z0-9])?(?:\.[a-z0-9](?:[a-z0-9-]*[a-z0-9])?)*"
+    r"\.(?=[a-z0-9-]*[a-z])[a-z0-9](?:[a-z0-9-]*[a-z0-9])?"
+)
 _PORT = re.compile(r"[1-9][0-9]{0,4}")
 HOST_SHOWN_CHARS = 100
 _CLOSED = (ItemState.DONE.value, ItemState.IGNORED.value)
@@ -598,7 +601,8 @@ def allowed_hosts(port: int, extra: Sequence[str] = ()) -> tuple[str, ...]:
         if not _HOST_NAME.fullmatch(name) or (colon and not _is_port(given)):
             raise ValueError(
                 "--allow-host takes a host name such as panel.your-tailnet.ts.net, or a name and a port "
-                f"from 1 to 65535 such as panel.your-tailnet.ts.net:8443, not {entry!r}"
+                "from 1 to 65535 such as panel.your-tailnet.ts.net:8443, and never an IP address, "
+                f"not {entry!r}"
             )
         hosts.append(host)
     return tuple(dict.fromkeys(hosts))
