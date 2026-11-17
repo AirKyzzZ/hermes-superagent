@@ -7,7 +7,8 @@ import signal
 import subprocess
 import threading
 import time
-from collections.abc import Mapping, Sequence
+from collections.abc import Mapping, Sequence, Set
+from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
 from typing import Protocol
@@ -24,6 +25,8 @@ _PID_START_TOLERANCE_SECONDS = 10
 _STOP_GRACE_SECONDS = 5.0
 _STOP_POLL_SECONDS = 0.2
 _KILL_GRACE_SECONDS = 2.0
+_KILL_SWEEPS = 5
+_PS_TIMEOUT_SECONDS = 10.0
 _LEADERLESS_GROUP_MAX_AGE_SECONDS = 6 * 3600.0
 _OUTPUT_TAIL_BYTES = 4000
 _TERMINAL_ESCAPES = re.compile(r"\x1b\[[0-9;?]*[A-Za-z]")
@@ -31,6 +34,20 @@ _TERMINAL_ESCAPES = re.compile(r"\x1b\[[0-9;?]*[A-Za-z]")
 
 class WorkerStopError(RuntimeError):
     pass
+
+
+@dataclass(frozen=True)
+class _Process:
+    pid: int
+    ppid: int
+    pgid: int
+    zombie: bool
+
+
+@dataclass(frozen=True)
+class _Sweep:
+    targets: dict[int, int]
+    members: frozenset[int]
 
 
 class WorkerBackend(Protocol):
@@ -74,14 +91,23 @@ def write_identity(workdir: Path, ticket_id: str, assignment_id: str, token: str
         json.dump({"assignment": assignment_id, "ticket": ticket_id, "token": token, "attempt": attempt}, file)
 
 
-def _process_started_at(pid: int) -> float | None:
-    result = subprocess.run(
-        ["ps", "-o", "lstart=", "-p", str(pid)],
+def _ps(argv: Sequence[str]) -> subprocess.CompletedProcess[str]:
+    return subprocess.run(
+        argv,
         capture_output=True,
         text=True,
+        errors="replace",
         check=False,
+        timeout=_PS_TIMEOUT_SECONDS,
         env={**os.environ, "LC_ALL": "C"},
     )
+
+
+def _process_started_at(pid: int) -> float | None:
+    try:
+        result = _ps(["ps", "-o", "lstart=", "-p", str(pid)])
+    except subprocess.TimeoutExpired as error:
+        raise WorkerStopError(f"ps timed out reading the start time of process {pid}") from error
     started = " ".join(result.stdout.split())
     if not started:
         return None
@@ -98,30 +124,77 @@ def _pid_exists(pid: int) -> bool:
     return True
 
 
-def _group_has_live_member(group: int) -> bool:
-    result = subprocess.run(
-        ["ps", "-A", "-o", "pgid=,stat="],
-        capture_output=True,
-        text=True,
-        check=False,
-        env={**os.environ, "LC_ALL": "C"},
-    )
+def _list_processes() -> list[_Process]:
+    try:
+        result = _ps(["ps", "-A", "-o", "pid=,ppid=,pgid=,stat="])
+    except subprocess.TimeoutExpired as error:
+        raise WorkerStopError(f"could not list processes: ps timed out after {_PS_TIMEOUT_SECONDS:g}s") from error
     if result.returncode != 0:
         raise WorkerStopError(f"could not list processes: {result.stderr.strip()}")
+    processes = []
     for line in result.stdout.splitlines():
         fields = line.split()
-        if len(fields) == 2 and fields[0] == str(group) and "Z" not in fields[1]:
-            return True
-    return False
+        if len(fields) == 4:
+            processes.append(_Process(int(fields[0]), int(fields[1]), int(fields[2]), "Z" in fields[3]))
+    return processes
 
 
-def _group_exited_within(group: int, seconds: float) -> bool:
+def _sweep(group: int | None, earlier: Mapping[int, int], foreign: Set[int]) -> _Sweep:
+    processes = _list_processes()
+    own_pid, own_group = os.getpid(), os.getpgrp()
+    signalable = {
+        process.pid
+        for process in processes
+        if process.pid > 1 and process.pid != own_pid and process.pgid != own_group and not process.zombie
+    }
+    children: dict[int, list[int]] = {}
+    for process in processes:
+        children.setdefault(process.ppid, []).append(process.pid)
+    members = [process.pid for process in processes if process.pgid == group]
+    still_there = [process.pid for process in processes if earlier.get(process.pid) == process.pgid]
+    pending = members + still_there
+    tree: set[int] = set()
+    while pending:
+        pid = pending.pop()
+        if pid in signalable and pid not in tree:
+            tree.add(pid)
+            pending.extend(children.get(pid, []))
+    targets = {process.pid: process.pgid for process in processes if process.pid in tree and process.pid not in foreign}
+    return _Sweep(targets, frozenset(members))
+
+
+def _send(sweep: _Sweep, signum: int) -> set[int]:
+    foreign = set()
+    for pid in sweep.targets:
+        try:
+            os.kill(pid, signum)
+        except ProcessLookupError:
+            continue
+        except PermissionError:
+            if pid not in sweep.members:
+                foreign.add(pid)
+    return foreign
+
+
+def _wait_for_exit(pids: Set[int], seconds: float) -> None:
     deadline = time.monotonic() + seconds
-    while time.monotonic() < deadline:
-        if not _group_has_live_member(group):
-            return True
+    while any(process.pid in pids and not process.zombie for process in _list_processes()):
+        if time.monotonic() >= deadline:
+            return
         time.sleep(_STOP_POLL_SECONDS)
-    return not _group_has_live_member(group)
+
+
+def _worker_group(leader: int, started_at: float) -> int | None:
+    leader_started_at = _process_started_at(leader)
+    if leader_started_at is not None:
+        return leader if abs(leader_started_at - started_at) <= _PID_START_TOLERANCE_SECONDS else None
+    if _pid_exists(leader):
+        raise WorkerStopError(f"could not read the start time of process {leader}")
+    if not any(process.pgid == leader and not process.zombie for process in _list_processes()):
+        return None
+    if time.time() - started_at > _LEADERLESS_GROUP_MAX_AGE_SECONDS:
+        raise WorkerStopError(f"process group {leader} has no leader and is too old to identify")
+    return leader
 
 
 def is_same_process(pid: int, started_at: float) -> bool:
@@ -186,28 +259,22 @@ class SubprocessBackend:
     def stop(self, assignment: Assignment) -> None:
         if assignment.pid is None:
             return
-        group = assignment.pid
-        leader_started_at = _process_started_at(group)
-        if leader_started_at is None:
-            if _pid_exists(group):
-                raise WorkerStopError(f"could not read the start time of process {group}")
-            if not _group_has_live_member(group):
-                return
-            if time.time() - assignment.started_at > _LEADERLESS_GROUP_MAX_AGE_SECONDS:
-                raise WorkerStopError(f"process group {group} has no leader and is too old to identify")
-        elif abs(leader_started_at - assignment.started_at) > _PID_START_TOLERANCE_SECONDS:
-            return
-        try:
-            os.killpg(group, signal.SIGTERM)
-            if _group_exited_within(group, _STOP_GRACE_SECONDS):
-                return
-            os.killpg(group, signal.SIGKILL)
-        except ProcessLookupError:
-            return
-        # macOS raises EPERM for a group holding only zombies, and any OS raises it for another user's processes.
-        except PermissionError as error:
-            if _group_has_live_member(group):
-                raise WorkerStopError(f"process group {group} is still running: {error}") from error
-            return
-        if not _group_exited_within(group, _KILL_GRACE_SECONDS):
-            raise WorkerStopError(f"process group {group} survived SIGKILL")
+        group = _worker_group(assignment.pid, assignment.started_at)
+        foreign: set[int] = set()
+        sweep = _sweep(group, {}, foreign)
+        if sweep.targets:
+            foreign |= _send(sweep, signal.SIGTERM)
+            _wait_for_exit(sweep.targets.keys() - foreign, _STOP_GRACE_SECONDS)
+            sweep = _sweep(group, sweep.targets, foreign)
+        killed: set[int] = set()
+        for _ in range(_KILL_SWEEPS):
+            if not sweep.targets.keys() - killed:
+                break
+            foreign |= _send(sweep, signal.SIGKILL)
+            killed |= sweep.targets.keys()
+            _wait_for_exit(sweep.targets.keys() - foreign, _KILL_GRACE_SECONDS)
+            sweep = _sweep(group, sweep.targets, foreign)
+        if sweep.targets:
+            raise WorkerStopError(
+                f"processes still running after SIGKILL: {', '.join(map(str, sorted(sweep.targets)))}"
+            )
