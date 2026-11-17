@@ -36,7 +36,7 @@ ESCALATIONS_SHOWN_SECONDS = 86400.0
 DEFAULT_PORT = 8765
 TOKEN_HEADER = "X-Superagent-Token"
 TOKEN_FILENAME = ".superagent.panel-token"
-_SAVED_TOKEN = re.compile(r"[A-Za-z0-9_-]{32,}")
+_SAVED_TOKEN = re.compile(r"[A-Za-z0-9_-]{32}")
 _HOST_NAME = re.compile(r"[a-z0-9](?:[a-z0-9-]*[a-z0-9])?(?:\.[a-z0-9](?:[a-z0-9-]*[a-z0-9])?)+")
 _CLOSED = (ItemState.DONE.value, ItemState.IGNORED.value)
 _ATTENTION_STATES = {state.value for state in ATTENTION_STATES}
@@ -571,9 +571,10 @@ def panel_token(home: Path, renew: bool = False) -> str:
     if not renew:
         try:
             saved = path.read_text(encoding="utf-8").strip()
-        except FileNotFoundError:
-            saved = ""
-        if _SAVED_TOKEN.fullmatch(saved):
+            private = not path.stat().st_mode & 0o077
+        except (FileNotFoundError, UnicodeDecodeError):
+            saved, private = "", False
+        if private and _SAVED_TOKEN.fullmatch(saved):
             return saved
     token = make_token()
     path.unlink(missing_ok=True)

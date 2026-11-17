@@ -294,3 +294,37 @@ def test_allow_host_refuses_anything_but_a_host_name() -> None:
         allowed_hosts(8765, ["evil.example.com/path"])
     with pytest.raises(ValueError, match="allow-host"):
         allowed_hosts(8765, ["*"])
+
+
+@pytest.mark.parametrize("saved", [b"\xff\xfe not text", b"a" * 31, b"a" * 40])
+def test_a_broken_or_weak_saved_token_is_replaced(tmp_path: Path, saved: bytes) -> None:
+    (tmp_path / TOKEN_FILENAME).write_bytes(saved)
+    (tmp_path / TOKEN_FILENAME).chmod(0o600)
+    token = panel_token(tmp_path)
+    assert len(token) == 32 and token.encode() != saved
+
+
+def test_a_token_others_can_read_is_replaced(tmp_path: Path) -> None:
+    first = panel_token(tmp_path)
+    (tmp_path / TOKEN_FILENAME).chmod(0o644)
+    assert panel_token(tmp_path) != first
+    assert stat.S_IMODE((tmp_path / TOKEN_FILENAME).stat().st_mode) == 0o600
+
+
+def panel_cli(home: Path, *argv: str) -> int:
+    parser = argparse.ArgumentParser()
+    setup_parser(parser)
+    return run(parser.parse_args(["--home", str(home), "panel", *argv]))
+
+
+def test_a_bad_host_leaves_the_saved_token_alone(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
+    token = panel_token(tmp_path)
+    assert panel_cli(tmp_path, "--allow-host", "*", "--new-token") == 2
+    assert panel_token(tmp_path) == token
+    assert "allow-host" in capsys.readouterr().err
+
+
+def test_a_token_that_cant_be_written_says_so(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
+    (tmp_path / TOKEN_FILENAME).mkdir()
+    assert panel_cli(tmp_path, "--new-token") == 1
+    assert "panel token" in capsys.readouterr().err
