@@ -6,6 +6,7 @@ Notable changes to hermes-superagent. The format follows [Keep a Changelog](http
 
 ### Added
 
+- The panel can act: answer a parked worker, cancel a task, accept a held-back snapshot or snooze an overdue item until tomorrow, with the same token as the page. An answer reaches the worker like a message in its thread and resumes it. `superagent panel --read-only` hides the buttons and refuses every action.
 - A `markdown` connector reads open `- [ ]` tasks from your notes, such as an Obsidian vault or a `TODO.md`, with no account or CLI. A task closes once it's ticked in its file, and moving lines around changes nothing.
 - The panel's token is saved across restarts (`--new-token` replaces it), and `--allow-host` lets it answer behind `tailscale serve` on your tailnet.
 - The panel groups work by project, with a card per project, a drawer with its blockers, workers, sessions and pull requests, and each worker's full conversation one click further. `superagent_dispatch` takes an optional `project`.

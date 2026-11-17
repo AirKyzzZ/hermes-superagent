@@ -113,6 +113,7 @@ def setup_parser(parser: argparse.ArgumentParser) -> None:
         help="also answer to this Host, such as a tailscale serve name on your tailnet",
     )
     panel.add_argument("--new-token", action="store_true", help="replace the saved token, so old links stop working")
+    panel.add_argument("--read-only", action="store_true", help="hide the buttons and refuse every action")
     report = commands.add_parser("report", help="report status from a worker directory, for agents outside Hermes")
     report.add_argument("--state", required=True, choices=_WORKER_STATES)
     report.add_argument("--summary", required=True)
@@ -134,7 +135,7 @@ def run_panel(args: argparse.Namespace, home: Path) -> int:
         print(f"could not read or write the panel token in {home}: {error}", file=sys.stderr)
         return 1
     try:
-        serve(home, args.port, token, args.allow_host)
+        serve(home, args.port, token, args.allow_host, args.read_only)
     except OSError as error:
         print(f"could not listen on 127.0.0.1:{args.port}: {error}. Pass --port with a free one", file=sys.stderr)
         return 1
