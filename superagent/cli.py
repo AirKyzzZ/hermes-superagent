@@ -16,7 +16,7 @@ from pathlib import Path
 from .agents import ATTENTION_STATES, HOOK_SCRIPT, SessionState, settings_block
 from .brief import BriefSettings, build_brief
 from .briefwriter import BriefWriter, Pack, build_pack
-from .config import CONFIG_FILENAME, DB_FILENAME, ConfigError, NotSetUpError, load_config
+from .config import CONFIG_FILENAME, DB_FILENAME, ConfigError, NotSetUpError, ensure_set_up, load_config
 from .connectors import ConnectorError
 from .digest import build_digest, send_digest
 from .doctor import Status, diagnose
@@ -211,6 +211,7 @@ def run_command(
                 print(f"{check.status.value:<5} {check.name:<14} {check.detail}")
         return 1 if any(check.status is Status.FAIL for check in checks) else 0
     if args.superagent_command == "ledger":
+        ensure_set_up(home)
         return run_ledger(args, Ledger(home / DB_FILENAME))
     runtime = open_runtime(home)
     if args.superagent_command == "digest":

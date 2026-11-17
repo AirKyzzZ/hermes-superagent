@@ -70,7 +70,9 @@ def test_doctor_without_a_config_points_to_setup(tmp_path: Path) -> None:
     assert check.status is Status.FAIL and check.detail == setup_first(tmp_path)
 
 
-@pytest.mark.parametrize("command", [["tick"], ["status"], ["brief"], ["panel", "--json"], ["panel"]])
+@pytest.mark.parametrize(
+    "command", [["tick"], ["status"], ["brief"], ["panel", "--json"], ["panel"], ["ledger", "list"]]
+)
 def test_a_command_before_setup_says_to_run_setup_in_one_line(
     tmp_path: Path, capsys: pytest.CaptureFixture[str], command: list[str]
 ) -> None:
@@ -78,6 +80,12 @@ def test_a_command_before_setup_says_to_run_setup_in_one_line(
     assert main(["--home", str(home), *command]) == 2
     assert capsys.readouterr() == ("", setup_first(home) + "\n")
     assert not home.exists()
+
+
+def test_ledger_list_in_an_empty_home_creates_no_database(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
+    assert main(["--home", str(tmp_path), "ledger", "list"]) == 2
+    assert capsys.readouterr() == ("", setup_first(tmp_path) + "\n")
+    assert list(tmp_path.iterdir()) == []
 
 
 def test_doctor_before_setup_fails_its_config_check_with_the_same_line(

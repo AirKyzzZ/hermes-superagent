@@ -240,7 +240,13 @@ def _reject_unknown_keys(data: dict[str, object]) -> None:
         raise ConfigError("; ".join(problems))
 
 
+def ensure_set_up(home: Path) -> None:
+    if not (home / CONFIG_FILENAME).exists() and not (home / LAST_GOOD_FILENAME).is_file():
+        raise NotSetUpError(home)
+
+
 def load_config(home: Path) -> Config:
+    ensure_set_up(home)
     path = home / CONFIG_FILENAME
     last_good = home / LAST_GOOD_FILENAME
     try:
@@ -248,8 +254,6 @@ def load_config(home: Path) -> Config:
         config = parse_config(raw)
     except (OSError, ConfigError) as error:
         if not last_good.is_file():
-            if isinstance(error, FileNotFoundError):
-                raise NotSetUpError(home) from error
             raise ConfigError(f"{path}: {error}") from error
         fallback = parse_config(last_good.read_text(encoding="utf-8"))
         return replace(fallback, problem=f"{path}: {error}. Running on the last good config until it's fixed")
