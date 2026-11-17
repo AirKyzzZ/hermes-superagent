@@ -14,10 +14,10 @@ import pytest
 
 from superagent.cli import run, setup_parser
 from superagent.config import DB_FILENAME, Config, load_config
-from superagent.domain import RepairAction, ReportState, Trigger
+from superagent.domain import Mandate, RepairAction, ReportState, Strength, Trigger
 from superagent.ledger import Ledger, SourceItem
-from superagent.panel import TOKEN_HEADER, panel_handler, snapshot
-from superagent.router import Router
+from superagent.panel import TOKEN_HEADER, panel_handler, snapshot, ticket_detail
+from superagent.router import Router, project_name
 from superagent.store import Store
 
 from .conftest import FakeBackend
@@ -194,3 +194,49 @@ def test_a_database_from_an_older_version_asks_for_a_tick(tmp_path: Path) -> Non
 
 def test_a_token_outside_ascii_is_refused_cleanly(served: int) -> None:
     assert fetch(served, "/api/snapshot", {TOKEN_HEADER: "tökén"})[0] == 403
+
+
+def test_projects_group_workers_sessions_and_repo_items(tmp_path: Path) -> None:
+    config = busy_home(tmp_path)
+    ledger = Ledger(tmp_path / DB_FILENAME)
+    pull = "https://github.com/acme/api/pull/7"
+    ledger.record("tasks", SourceItem("p7", "Add rate limits", url=pull, meta={"repo": "acme/api"}))
+    store = Store(tmp_path / DB_FILENAME)
+    store.create_ticket("tidy the web build", Mandate("v", "x", Strength.EXPLICIT, "alice", "chat", "t-web"), "c", "")
+    shot = snapshot(tmp_path, config)
+    projects = {str(project["name"]): project for project in shot["projects"]}
+    assert len(projects["api"]["sessions"]) == 1
+    assert [item["kind"] for item in projects["api"]["items"]] == ["pr"]
+    workers = {str(worker["goal"]): worker for worker in shot["workers"]}
+    assert workers["tidy the web build"]["project"] == "web"
+    assert "No project" in projects
+
+
+def test_dispatch_keeps_the_project_the_router_names(tmp_path: Path) -> None:
+    assert project_name(" acme/api-gateway/ ") == "api-gateway"
+    assert project_name("x" * 61) == ""
+    assert project_name("two\nlines") == ""
+
+
+def test_ticket_detail_has_the_whole_conversation(tmp_path: Path) -> None:
+    busy_home(tmp_path)
+    store = Store(tmp_path / DB_FILENAME)
+    parked = next(ticket for ticket in store.live_tickets() if ticket.goal == "pick a database")
+    assignment = store.get_assignment(next(a for a in store.ticket_reports(parked.id)).assignment_id)
+    workdir = tmp_path / "workers" / parked.id / assignment.id
+    workdir.mkdir(parents=True)
+    (workdir / "brief.md").write_text("# Task brief\npick a database", encoding="utf-8")
+    (workdir / "worker.log").write_text("\x1b[1mthinking\x1b[0m with Bearer abcdefghijklmnop", encoding="utf-8")
+    detail = ticket_detail(tmp_path, parked.id)
+    assert detail is not None
+    kinds = [event["kind"] for event in detail["timeline"]]
+    assert kinds[0] == "opened" and "blocked" in kinds
+    assert detail["brief"] == "# Task brief\npick a database"
+    assert detail["log"] == "thinking with Bearer [redacted]"
+    assert ticket_detail(tmp_path, "../../etc") is None
+    assert ticket_detail(tmp_path, "tk-00000000") is None
+
+
+def test_the_ticket_endpoint_needs_the_token_and_a_real_ticket(served: int) -> None:
+    assert fetch(served, "/api/ticket?id=tk-00000000")[0] == 403
+    assert fetch(served, "/api/ticket?id=tk-00000000", {TOKEN_HEADER: "the-token"})[0] == 404

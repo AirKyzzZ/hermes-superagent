@@ -63,6 +63,10 @@ DISPATCH_SCHEMA = {
         "properties": {
             "trigger_id": {"type": "string", "description": "Id of the admitted trigger."},
             "goal": {"type": "string", "description": "One clear paragraph describing the task and its limits."},
+            "project": {
+                "type": "string",
+                "description": "The repo or project the task is about, such as api-gateway, when you know it.",
+            },
         },
         "required": ["trigger_id", "goal"],
     },
@@ -232,7 +236,9 @@ class Plugin:
         if self.role != ROLE_ROUTER:
             return _error("superagent_dispatch only works in the router")
         try:
-            ticket = self.runtime().router.dispatch(str(args.get("trigger_id", "")), str(args.get("goal", "")))
+            ticket = self.runtime().router.dispatch(
+                str(args.get("trigger_id", "")), str(args.get("goal", "")), str(args.get("project", ""))
+            )
         except NotAdmittedError as error:
             return _error(str(error))
         except Exception as error:

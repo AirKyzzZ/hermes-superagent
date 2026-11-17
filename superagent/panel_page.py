@@ -93,9 +93,61 @@ td.num { text-align: right; font-family: var(--mono); font-variant-numeric: tabu
   border-top: 1px solid var(--line); }
 .feed .who { color: var(--muted); font-family: var(--mono); font-size: 11px; overflow: hidden;
   text-overflow: ellipsis; }
+.icon { width: 14px; height: 14px; flex: none; stroke: currentColor; fill: none; stroke-width: 2;
+  stroke-linecap: round; stroke-linejoin: round; vertical-align: -2px; }
+.clickable { cursor: pointer; }
+.clickable:hover { border-color: var(--accent); }
+.clickable:focus-visible, button:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.projects { display: grid; grid-template-columns: repeat(auto-fill, minmax(200px, 1fr)); gap: 8px; }
+.project { background: var(--surface); border: 1px solid var(--line); border-radius: 10px; padding: 10px 11px;
+  display: grid; gap: 8px; text-align: left; color: var(--fg); font: inherit; }
+.project.you { border-color: color-mix(in srgb, var(--you) 60%, var(--line)); }
+.mono-badge { width: 30px; height: 30px; border-radius: 8px; display: grid; place-items: center; flex: none;
+  font: 700 12px var(--mono); color: #fff; background: hsl(var(--hue) 55% 42%);
+  box-shadow: inset 0 0 0 1px hsl(var(--hue) 60% 60% / .5); }
+.counts { display: flex; gap: 10px; flex-wrap: wrap; color: var(--muted); font: 11.5px var(--mono); }
+.counts span { display: inline-flex; gap: 4px; align-items: center; }
+.counts .hot { color: var(--you); } .counts .run { color: var(--run); }
+.strip { display: flex; height: 5px; border-radius: 3px; overflow: hidden; background: var(--surface-2); gap: 1px; }
+.strip i { display: block; height: 100%; }
+.strip .run { background: var(--run); } .strip .you { background: var(--you); } .strip .bad { background: var(--bad); }
+.strip .idle { background: var(--muted); } .strip .item { background: var(--line); }
+.badge { font: 600 10.5px var(--mono); color: var(--bg); background: var(--you); border-radius: 999px;
+  padding: 1px 7px; }
+.layer { position: fixed; inset: 0; display: flex; justify-content: flex-end; background: rgb(0 0 0 / .45); }
+.sheet { background: var(--bg); width: min(560px, 100%); height: 100%; overflow-y: auto; padding: 14px;
+  display: grid; gap: 14px; align-content: start; border-left: 1px solid var(--line); }
+.sheet header { display: block; position: sticky; top: 0; background: var(--bg); padding-bottom: 6px; z-index: 1; }
+.sheet h1 { font-size: 15px; }
+.iconbtn { background: var(--surface-2); color: var(--fg); border: 1px solid var(--line); border-radius: 6px;
+  padding: 4px 7px; display: inline-flex; align-items: center; gap: 4px; font: 600 11.5px var(--font);
+  cursor: pointer; }
+.timeline { display: grid; gap: 0; }
+.event { display: grid; grid-template-columns: 52px 92px minmax(0, 1fr); gap: 8px; padding: 6px 0;
+  border-top: 1px solid var(--line); font-size: 12.5px; }
+.event .kind { font: 11px var(--mono); color: var(--accent); }
+.event .when { font: 11px var(--mono); color: var(--muted); }
+.event .text { overflow-wrap: anywhere; white-space: pre-wrap; }
+details { background: var(--surface); border: 1px solid var(--line); border-radius: 8px; padding: 8px 10px; }
+summary { cursor: pointer; font-weight: 600; font-size: 12px; }
+pre { font: 11.5px/1.5 var(--mono); white-space: pre-wrap; overflow-wrap: anywhere; margin: 8px 0 0; color: var(--fg);
+  max-height: 420px; overflow-y: auto; }
 </style>
 </head>
 <body>
+<svg width="0" height="0" style="position:absolute" aria-hidden="true">
+<symbol id="i-worker" viewBox="0 0 24 24"><rect x="5" y="5" width="14" height="14" rx="2"/><path d="M9 9h6v6H9z"/>
+<path d="M9 2v3M15 2v3M9 19v3M15 19v3M2 9h3M2 15h3M19 9h3M19 15h3"/></symbol>
+<symbol id="i-session" viewBox="0 0 24 24"><rect x="3" y="4" width="18" height="16" rx="2"/>
+<path d="m7 9 3 3-3 3M13 15h4"/>
+</symbol>
+<symbol id="i-pr" viewBox="0 0 24 24"><circle cx="6" cy="6" r="2.5"/><circle cx="6" cy="18" r="2.5"/>
+<circle cx="18" cy="18" r="2.5"/><path d="M6 8.5v7M18 15.5V9a3 3 0 0 0-3-3h-4m2-2-2 2 2 2"/></symbol>
+<symbol id="i-item" viewBox="0 0 24 24"><circle cx="12" cy="12" r="8"/><circle cx="12" cy="12" r="2"/></symbol>
+<symbol id="i-alert" viewBox="0 0 24 24"><path d="M12 3 2 20h20L12 3z"/><path d="M12 10v4M12 17v.5"/></symbol>
+<symbol id="i-close" viewBox="0 0 24 24"><path d="M6 6l12 12M18 6 6 18"/></symbol>
+<symbol id="i-back" viewBox="0 0 24 24"><path d="m14 6-6 6 6 6"/></symbol>
+</svg>
 <div class="panel" id="panel"><p class="empty">Loading the panel...</p></div>
 <script src="panel.js"></script>
 </body>
@@ -106,8 +158,13 @@ SCRIPT = r"""
 "use strict";
 const token = decodeURIComponent(location.hash.slice(1));
 const REFRESH_MS = 5000;
+const state = {snapshot: null, project: null, ticket: null, detail: null};
 const esc = (value) => String(value ?? "").replace(/[&<>"']/g,
   (c) => ({"&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;"}[c]));
+const icon = (name) => `<svg class="icon" aria-hidden="true"><use href="#i-${name}"></use></svg>`;
+const safeUrl = (url) => /^https?:\/\//i.test(url || "") ? url : "";
+const link = (url, label) => safeUrl(url)
+  ? `<a href="${esc(url)}" target="_blank" rel="noopener noreferrer">${esc(label)}</a>` : "";
 
 function ago(at, now) {
   if (typeof at !== "number") return "";
@@ -118,23 +175,70 @@ function ago(at, now) {
   return `${Math.round(s / 86400)} d`;
 }
 
-const safeUrl = (url) => /^https?:\/\//i.test(url || "") ? url : "";
+const clock = (at) => typeof at === "number" ? new Date(at * 1000).toTimeString().slice(0, 5) : "--:--";
 const KINDS = {escalation: "Escalated", blocked: "Worker blocked", session: "Claude Code", source: "Source",
   overdue: "Overdue"};
-const tone = (state) => Object.hasOwn(TONES, state) ? TONES[state] : "idle";
 const TONES = {running: "run", starting: "run", queued: "idle", parked: "you", working: "run", background: "run",
   waiting: "you", stuck: "bad", limited: "bad", gone: "bad", idle: "idle", ended: "idle"};
+const tone = (value) => Object.hasOwn(TONES, value) ? TONES[value] : "idle";
+
+function hue(name) {
+  let h = 0;
+  for (const c of String(name)) h = (h * 31 + c.codePointAt(0)) % 360;
+  return h;
+}
+
+function monogram(name) {
+  const letters = String(name).replace(/[^\p{L}\p{N}]+/gu, " ").trim().split(" ").map((w) => w[0]).join("");
+  const label = (letters || "?").slice(0, 2).toUpperCase();
+  return `<span class="mono-badge" style="--hue: ${hue(name)}">${esc(label)}</span>`;
+}
+
+function section(title, count, body) {
+  const counter = count === null ? "" : ` <span class="count">${esc(count)}</span>`;
+  return `<section><h2>${esc(title)}${counter}</h2>${body}</section>`;
+}
+
+const empty = (text) => `<p class="empty">${esc(text)}</p>`;
 
 function attentionCard(card, now) {
-  const url = safeUrl(card.url);
   const ref = card.ticket || card.handle || "";
-  return `<div class="card ${esc(card.tone)}">
+  const open = card.ticket ? ` clickable" role="button" tabindex="0" data-ticket="${esc(card.ticket)}` : "";
+  return `<div class="card ${esc(card.tone)}${open}">
     <div class="row"><span class="chip ${esc(card.tone)}">${esc(KINDS[card.kind] || card.kind)}</span>
       <span class="grow title">${esc(card.title)}</span><span class="age">${esc(ago(card.since, now))}</span></div>
     <div class="sub">${esc(card.detail)}${ref ? ` · <span class="mono">${esc(ref)}</span>` : ""}
-      ${url ? ` · <a href="${esc(url)}" target="_blank" rel="noopener noreferrer">open</a>` : ""}</div>
+      ${card.url ? ` · ${link(card.url, "open")}` : ""}</div>
     ${card.quote ? `<div class="quote">${esc(card.quote)}</div>` : ""}
   </div>`;
+}
+
+function projectStats(project, s) {
+  const workers = s.workers.filter((w) => project.workers.includes(w.ticket));
+  const sessions = s.sessions.filter((x) => project.sessions.includes(x.handle));
+  const prs = project.items.filter((i) => i.kind === "pr");
+  return {workers, sessions, prs, waiting: project.waiting};
+}
+
+function projectCard(project, s, now) {
+  const {workers, sessions, prs, waiting} = projectStats(project, s);
+  const running = workers.filter((w) => w.state === "running").length
+    + sessions.filter((x) => x.state === "working").length;
+  const segments = [...workers.map((w) => tone(w.state)), ...sessions.map((x) => tone(x.state)),
+    ...project.items.slice(0, 12).map(() => "item")];
+  return `<button type="button" class="project clickable${waiting ? " you" : ""}" data-project="${esc(project.name)}">
+    <div class="row">${monogram(project.name)}<span class="grow title">${esc(project.name)}</span>
+      ${waiting ? `<span class="badge">${esc(waiting)}</span>` : ""}</div>
+    <div class="counts">
+      <span class="${running ? "run" : ""}" title="working now">${icon("worker")}${esc(running)}</span>
+      <span class="${waiting ? "hot" : ""}" title="waiting on you">${icon("alert")}${esc(waiting)}</span>
+      <span title="Claude Code sessions">${icon("session")}${esc(sessions.length)}</span>
+      <span title="open pull requests">${icon("pr")}${esc(prs.length)}</span>
+      <span title="open items">${icon("item")}${esc(project.items.length)}</span>
+    </div>
+    <div class="strip">${segments.map((cls) => `<i class="${esc(cls)}" style="flex: 1"></i>`).join("")}</div>
+    <div class="sub">${project.last ? `active ${esc(ago(project.last, now))} ago` : "no activity yet"}</div>
+  </button>`;
 }
 
 function flow(f) {
@@ -175,8 +279,10 @@ function flow(f) {
 function nowRow(entry, now) {
   const worker = entry.kind === "worker";
   const what = worker ? entry.goal : entry.project;
-  const where = worker ? entry.ticket : [entry.host, entry.branch].filter(Boolean).join(" · ");
-  return `<div class="row"><span class="who">${worker ? "worker" : "claude"}</span>
+  const where = worker ? [entry.project, entry.ticket].filter(Boolean).join(" · ")
+    : [entry.host, entry.branch].filter(Boolean).join(" · ");
+  const open = worker ? ` clickable" role="button" tabindex="0" data-ticket="${esc(entry.ticket)}` : "";
+  return `<div class="row${open}"><span class="who">${worker ? "worker" : "claude"}</span>
     <span class="grow">${esc(what)} <span class="sub mono">${esc(where)}</span></span>
     <span class="age">${esc(ago(entry.since, now))}</span></div>`;
 }
@@ -184,87 +290,143 @@ function nowRow(entry, now) {
 function workerCard(w, now) {
   const pct = w.stall_after > 0 ? Math.round(Math.min(1, w.quiet_for / w.stall_after) * 100) : 0;
   const detail = w.state === "parked" ? w.question : w.last;
-  return `<div class="card">
+  return `<div class="card clickable" role="button" tabindex="0" data-ticket="${esc(w.ticket)}">
     <div class="row"><span class="chip ${esc(tone(w.state))}">${esc(w.state)}</span>
       <span class="grow title">${esc(w.goal)}</span><span class="age">${esc(ago(w.since, now))}</span></div>
-    <div class="sub"><span class="mono">${esc(w.ticket)}</span>${w.attempt ? ` · attempt ${esc(w.attempt)}` : ""}
-      ${detail ? ` · ${esc(detail)}` : ""}</div>
+    <div class="sub"><span class="mono">${esc(w.ticket)}</span>${w.project ? ` · ${esc(w.project)}` : ""}
+      ${w.attempt ? ` · attempt ${esc(w.attempt)}` : ""}${detail ? ` · ${esc(detail)}` : ""}</div>
     ${w.state === "running"
       ? `<div class="bar" title="silence against the stall threshold"><i class="${pct > 70 ? "warn" : ""}"
-          style="width:${pct}%"></i></div>`
+          style="width:${esc(pct)}%"></i></div>`
       : ""}
   </div>`;
 }
 
-function sessionsBlock(sessions, now) {
-  if (!sessions.length) return `<p class="empty">No agents connector, or no session in the last 7 days.</p>`;
-  const hosts = [...new Set(sessions.map((s) => s.host))];
-  return `<div class="card">${hosts.map((host) => `<div class="host">${esc(host)}</div>` + sessions
-    .filter((s) => s.host === host)
-    .map((s) => `<div class="row"><span class="chip ${esc(tone(s.state))}">${esc(s.state)}</span>
-      <span class="grow">${esc(s.project)} <span class="sub mono">${esc(s.branch)}</span></span>
-      <span class="age">${esc(ago(s.since, now))}</span></div>`).join("")).join("")}</div>`;
+function sessionRows(sessions, now) {
+  return sessions.map((x) => `<div class="row"><span class="chip ${esc(tone(x.state))}">${esc(x.state)}</span>
+    <span class="grow">${esc(x.project)} <span class="sub mono">${esc(x.branch)}</span></span>
+    <span class="age">${esc(x.host)} · ${esc(ago(x.since, now))}</span></div>`).join("");
 }
 
 function sourcesBlock(sources, now) {
-  if (!sources.length) return `<p class="empty">No connectors in superagent.toml.</p>`;
-  return `<div class="card"><table>${sources.map((s) => {
-    const tone = s.failing ? "bad" : s.warnings.length ? "you" : "ok";
-    return `<tr><td><span class="dot ${tone}"></span>${esc(s.name)}</td>
-      <td class="grow sub">${esc(s.warnings[0] || s.type)}</td><td class="num">${esc(s.open)}</td>
-      <td class="num sub">${esc(s.last_ok ? ago(s.last_ok, now) : "never")}</td></tr>`;
+  if (!sources.length) return empty("No connectors in superagent.toml.");
+  return `<div class="card"><table>${sources.map((x) => {
+    const level = x.failing ? "bad" : x.warnings.length ? "you" : "ok";
+    return `<tr><td><span class="dot ${level}"></span>${esc(x.name)}</td>
+      <td class="grow sub">${esc(x.warnings[0] || x.type)}</td><td class="num">${esc(x.open)}</td>
+      <td class="num sub">${esc(x.last_ok ? ago(x.last_ok, now) : "never")}</td></tr>`;
   }).join("")}</table></div>`;
 }
 
-function section(title, count, body) {
-  const counter = count === null ? "" : ` <span class="count">${esc(count)}</span>`;
-  return `<section><h2>${esc(title)}${counter}</h2>${body}</section>`;
+function itemRows(items, now) {
+  return items.map((i) => `<div class="row">${icon(i.kind === "pr" ? "pr" : "item")}
+    <span class="grow">${safeUrl(i.url) ? link(i.url, i.title) : esc(i.title)}</span>
+    <span class="age">${i.due ? `due ${esc(i.due)} · ` : ""}${esc(i.state)} · ${esc(ago(i.since, now))}</span></div>`)
+    .join("");
 }
 
-function pills(s, you) {
-  const working = s.sessions.filter((x) => x.state === "working").length;
-  return `<div class="pills"><span class="pill you"><b>${you}</b> need you</span>
-    <span class="pill"><b>${s.flow.workers.running}</b> workers</span>
-    <span class="pill"><b>${working}</b> sessions working</span></div>`;
-}
-
-function render(s) {
+function header(s, you) {
   const now = s.generated_at;
   const finished = typeof s.tick.finished === "number" ? s.tick.finished : null;
-  const you = (s.attention || []).length;
-  document.title = you ? `(${you}) superagent` : "superagent";
-  const head = `<header><div class="mark" aria-hidden="true"></div><h1>superagent</h1>
-    <span class="live"></span>
+  const pills = s.missing ? "" : `<div class="pills"><span class="pill you"><b>${esc(you)}</b> need you</span>
+    <span class="pill"><b>${esc(s.flow.workers.running)}</b> workers</span>
+    <span class="pill"><b>${esc(s.sessions.filter((x) => x.state === "working").length)}</b> sessions working</span>
+    </div>`;
+  return `<header><div class="mark" aria-hidden="true"></div><h1>superagent</h1><span class="live"></span>
     <span class="tick">${finished ? `last tick ${esc(ago(finished, now))} ago` : "no tick yet"}</span>
-    <span class="spacer"></span>
-    ${s.missing ? "" : pills(s, you)}
-    </header>${s.problem ? `<div class="banner">${esc(s.problem)}</div>` : ""}`;
-  if (s.missing) {
-    document.getElementById("panel").innerHTML = head + `<div class="banner">${esc(s.missing)}</div>`;
-    return;
-  }
+    <span class="spacer"></span>${pills}</header>${s.problem ? `<div class="banner">${esc(s.problem)}</div>` : ""}`;
+}
+
+function overview(s) {
+  const now = s.generated_at;
   const ledger = s.ledger;
   const stats = [["new", ledger.new], ["waiting", ledger.waiting], ["due today", ledger.due_today],
     ["gone", ledger.gone], ["unseen", ledger.stale]];
-  document.getElementById("panel").innerHTML = head
-    + section("Now", null, `<div class="flow">${flow(s.flow)}<div class="now">${s.now.length
-      ? s.now.map((entry) => nowRow(entry, now)).join("") : `<p class="empty">Nothing running.</p>`}</div></div>`)
-    + `<div class="cols"><div class="col">`
-    + section("Needs you", you, s.attention.length
+  return section("Needs you", s.attention.length, s.attention.length
       ? `<div class="list">${s.attention.map((card) => attentionCard(card, now)).join("")}</div>`
-      : `<p class="empty">Nothing waits on you.</p>`)
+      : empty("Nothing waits on you."))
+    + section("Projects", s.projects.length, s.projects.length
+      ? `<div class="projects">${s.projects.map((p) => projectCard(p, s, now)).join("")}</div>`
+      : empty("No project yet: workers, sessions and repo items show up here."))
+    + section("Now", null, `<div class="flow">${flow(s.flow)}<div class="now">${s.now.length
+      ? s.now.map((entry) => nowRow(entry, now)).join("") : empty("Nothing running.")}</div></div>`)
+    + `<div class="cols"><div class="col">`
     + section("Workers", s.workers.length, s.workers.length
-      ? `<div class="list">${s.workers.map((w) => workerCard(w, now)).join("")}</div>`
-      : `<p class="empty">No open task.</p>`)
+      ? `<div class="list">${s.workers.map((w) => workerCard(w, now)).join("")}</div>` : empty("No open task."))
+    + section("Claude Code sessions", s.sessions.length, s.sessions.length
+      ? `<div class="card">${sessionRows(s.sessions, now)}</div>`
+      : empty("No agents connector, or no session in the last 7 days."))
     + `</div><div class="col">`
-    + section("Claude Code sessions", s.sessions.length, sessionsBlock(s.sessions, now))
     + section("Ledger", null, `<div class="stats">${stats.map(([label, n]) =>
       `<div class="stat"><b>${esc(n)}</b><span>${esc(label)}</span></div>`).join("")}</div>`)
     + section("Sources", s.sources.length, sourcesBlock(s.sources, now))
-    + section("Feed", null, `<div class="feed">${s.feed.map((e) => `<div>
-      <span class="who">${esc(new Date(e.at * 1000).toTimeString().slice(0, 5))}</span>
+    + section("Feed", null, `<div class="feed">${s.feed.map((e) => `<div><span class="who">${esc(clock(e.at))}</span>
       <span class="who">${esc(e.who)}</span><span>${esc(e.text)}</span></div>`).join("")}</div>`)
     + `</div></div>`;
+}
+
+function sheet(title, lead, body, back) {
+  return `<div class="layer" data-close="${back ? "ticket" : "project"}"><div class="sheet" role="dialog"
+    aria-modal="true" aria-label="${esc(title)}"><header><div class="row">${lead}
+    <span class="grow title">${esc(title)}</span>
+    <button type="button" class="iconbtn" data-close="${back ? "ticket" : "project"}">
+      ${icon(back ? "back" : "close")}${back ? "Back" : "Close"}</button></div></header>${body}</div></div>`;
+}
+
+function projectSheet(s) {
+  const project = s.projects.find((p) => p.name === state.project);
+  if (!project) return "";
+  const now = s.generated_at;
+  const {workers, sessions, prs} = projectStats(project, s);
+  const blockers = workers.filter((w) => w.state === "parked");
+  const others = project.items.filter((i) => i.kind !== "pr");
+  return sheet(project.name, monogram(project.name),
+    (blockers.length ? section("Blockers", blockers.length, `<div class="list">${blockers.map((w) => `
+      <div class="card you clickable" role="button" tabindex="0" data-ticket="${esc(w.ticket)}">
+      <div class="title">${esc(w.goal)}</div><div class="quote">${esc(w.question)}</div></div>`).join("")}</div>`) : "")
+    + section("Workers", workers.length, workers.length
+      ? `<div class="list">${workers.map((w) => workerCard(w, now)).join("")}</div>` : empty("No open task here."))
+    + section("Claude Code sessions", sessions.length, sessions.length
+      ? `<div class="card">${sessionRows(sessions, now)}</div>` : empty("No session here."))
+    + section("Pull requests", prs.length, prs.length ? `<div class="card">${itemRows(prs, now)}</div>`
+      : empty("No open pull request in the ledger."))
+    + section("Issues and tasks", others.length, others.length
+      ? `<div class="card">${itemRows(others, now)}</div>` : empty("Nothing else open.")), false);
+}
+
+function ticketSheet(s) {
+  const d = state.detail;
+  const now = s.generated_at;
+  if (!d || d.ticket !== state.ticket) return sheet(state.ticket, icon("worker"), empty("Loading..."), true);
+  if (d.error) return sheet(state.ticket, icon("worker"), `<div class="banner">${esc(d.error)}</div>`, true);
+  const attempts = d.attempts.map((a) => `attempt ${esc(a.attempt)} ${esc(a.status)}`).join(" · ");
+  return sheet(d.goal, icon("worker"),
+    `<div class="sub">${[`<span class="mono">${esc(d.ticket)}</span>`, esc(d.status), esc(d.project), esc(d.channel),
+      attempts].filter(Boolean).join(" · ")}</div>`
+    + section("Conversation", d.timeline.length, `<div class="timeline">${d.timeline.map((e) => `<div class="event">
+      <span class="when" title="${esc(ago(e.at, now))} ago">${esc(clock(e.at))}</span>
+      <span class="kind">${esc(e.kind)}</span><span class="text">${esc(e.text)}</span></div>`).join("")}</div>`)
+    + `<details><summary>Brief the worker started from</summary><pre>${esc(d.brief || "No brief on disk.")}</pre>
+      </details>`
+    + `<details open><summary>Worker output, last lines</summary><pre>${esc(d.log || "No output yet.")}</pre>
+      </details>`, true);
+}
+
+function render() {
+  const s = state.snapshot;
+  if (!s) return;
+  const you = (s.attention || []).length;
+  document.title = you ? `(${you}) superagent` : "superagent";
+  const panel = document.getElementById("panel");
+  if (s.missing) {
+    panel.innerHTML = header(s, you) + `<div class="banner">${esc(s.missing)}</div>`;
+    return;
+  }
+  const scroll = document.querySelector(".sheet")?.scrollTop ?? 0;
+  panel.innerHTML = header(s, you) + overview(s)
+    + (state.project ? projectSheet(s) : "") + (state.ticket ? ticketSheet(s) : "");
+  const sheets = document.querySelectorAll(".sheet");
+  if (sheets.length) sheets[sheets.length - 1].scrollTop = scroll;
 }
 
 function offline(message) {
@@ -280,22 +442,70 @@ function offline(message) {
   banner.textContent = message;
 }
 
-async function refresh() {
-  let body;
+async function getJson(path) {
+  const response = await fetch(path, {headers: {"X-Superagent-Token": token}, cache: "no-store"});
+  if (response.status === 403) throw new Error("Wrong or missing token: open the URL superagent panel printed.");
+  const body = await response.json();
+  if (!response.ok) throw new Error(body.error || `The panel server answered ${response.status}.`);
+  return body;
+}
+
+async function loadTicket() {
+  if (!state.ticket) return;
+  const id = state.ticket;
   try {
-    const response = await fetch("api/snapshot", {headers: {"X-Superagent-Token": token}, cache: "no-store"});
-    if (response.status === 403) return offline("Wrong or missing token: open the URL superagent panel printed.");
-    body = await response.json();
-    if (!response.ok) return offline(body.error || `The panel server answered ${response.status}.`);
+    state.detail = await getJson(`api/ticket?id=${encodeURIComponent(id)}`);
   } catch (error) {
-    return offline("Can't reach the panel server. Is superagent panel still running?");
+    state.detail = {ticket: id, error: error.message};
+  }
+}
+
+async function refresh() {
+  try {
+    state.snapshot = await getJson("api/snapshot");
+    await loadTicket();
+  } catch (error) {
+    return offline(error instanceof TypeError
+      ? "Can't reach the panel server. Is superagent panel still running?" : error.message);
   }
   try {
-    render(body);
+    render();
   } catch (error) {
     offline(`The panel couldn't draw this snapshot: ${error.message}`);
   }
 }
+
+function close(layer) {
+  if (layer === "ticket") {
+    state.ticket = null;
+    state.detail = null;
+  } else {
+    state.project = null;
+  }
+  render();
+}
+
+document.addEventListener("click", async (event) => {
+  const target = event.target.closest("[data-ticket], [data-project], [data-close]");
+  if (!target || event.target.closest("a")) return;
+  if (target.dataset.close && (target.classList.contains("iconbtn") || event.target === target)) {
+    close(target.dataset.close);
+  } else if (target.dataset.ticket) {
+    state.ticket = target.dataset.ticket;
+    state.detail = null;
+    render();
+    await loadTicket();
+    render();
+  } else if (target.dataset.project) {
+    state.project = target.dataset.project;
+    render();
+  }
+});
+
+document.addEventListener("keydown", (event) => {
+  if (event.key === "Escape" && (state.ticket || state.project)) close(state.ticket ? "ticket" : "project");
+  if (event.key === "Enter" && event.target.matches("[role=button]")) event.target.click();
+});
 
 refresh();
 setInterval(refresh, REFRESH_MS);

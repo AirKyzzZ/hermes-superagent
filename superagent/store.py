@@ -92,6 +92,7 @@ _MIGRATIONS = (
     "UPDATE outbox SET failed_at = NULL WHERE sent_at IS NULL AND failed_at IS NOT NULL AND drop_reason IS NULL",
     "ALTER TABLE watchdog_events ADD COLUMN judged TEXT NOT NULL DEFAULT ''",
     "ALTER TABLE tickets ADD COLUMN queued_at REAL",
+    "ALTER TABLE tickets ADD COLUMN project TEXT NOT NULL DEFAULT ''",
 )
 SEND_RETRY_BASE_SECONDS = 60.0
 SEND_RETRY_CAP_SECONDS = 1800.0
@@ -212,12 +213,14 @@ class Store:
             row = connection.execute("SELECT * FROM triggers WHERE id = ?", (trigger_id,)).fetchone()
         return _trigger_from_row(row) if row else None
 
-    def create_ticket(self, goal: str, mandate: Mandate, channel: str, thread: str) -> tuple[Ticket, bool]:
+    def create_ticket(
+        self, goal: str, mandate: Mandate, channel: str, thread: str, project: str = ""
+    ) -> tuple[Ticket, bool]:
         ticket_id = f"tk-{secrets.token_hex(4)}"
         with self._connect() as connection:
             cursor = connection.execute(
-                "INSERT OR IGNORE INTO tickets (id, goal, mandate, channel, status, created_at, trigger_id) "
-                "VALUES (?,?,?,?,?,?,?)",
+                "INSERT OR IGNORE INTO tickets (id, goal, mandate, channel, status, created_at, trigger_id, project) "
+                "VALUES (?,?,?,?,?,?,?,?)",
                 (
                     ticket_id,
                     goal,
@@ -226,6 +229,7 @@ class Store:
                     TicketStatus.OPEN.value,
                     time.time(),
                     mandate.trigger_id,
+                    project,
                 ),
             )
             if cursor.rowcount == 1:

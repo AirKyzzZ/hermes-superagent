@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import hmac
 import json
+import re
 import secrets
 import sqlite3
 import time
@@ -10,18 +11,24 @@ from contextlib import closing, contextmanager
 from datetime import datetime
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path, PurePosixPath
-from urllib.parse import quote, urlsplit
+from urllib.parse import parse_qs, quote, urlsplit
 from zoneinfo import ZoneInfo
 
 from .agents import ATTENTION_STATES, redact
-from .config import DB_FILENAME, Config, load_config
+from .config import DB_FILENAME, WORKDIRS_DIRNAME, Config, load_config
 from .connectors import ConnectorSpec
 from .ledger import Item, ItemState, item_from_row, source_state_from_row
 from .panel_page import PAGE, SCRIPT
 from .polling import FAILURES_BEFORE_WARNING, source_health
+from .router import PROJECT_NAME_LIMIT, project_name
 from .runtime import last_tick
 
 TEXT_LIMIT = 280
+BRIEF_SHOWN_BYTES = 6000
+LOG_SHOWN_BYTES = 6000
+_TICKET_ID = re.compile(r"tk-[0-9a-f]{8}")
+_ASSIGNMENT_ID = re.compile(r"as-[0-9a-f]{8}")
+_TERMINAL_ESCAPES = re.compile(r"\x1b\[[0-9;?]*[A-Za-z]")
 FEED_LIMIT = 20
 ESCALATIONS_SHOWN_SECONDS = 86400.0
 DEFAULT_PORT = 8765
@@ -59,6 +66,7 @@ def snapshot(home: Path, config: Config, now: float | None = None) -> dict[str, 
         sources = _sources(connection, config.connectors, items, moment)
         workers = _workers(connection, config, moment)
         sessions = _sessions(config.connectors, items)
+        _infer_projects(workers, sessions, items, config)
         return {
             **base,
             "flow": _flow(connection, day_start, sources),
@@ -70,6 +78,7 @@ def snapshot(home: Path, config: Config, now: float | None = None) -> dict[str, 
             "ledger": _ledger(items, config, local, moment),
             "sources": sources,
             "feed": _feed(connection),
+            "projects": _projects(workers, sessions, _tracked(items, config)),
         }
 
 
@@ -90,7 +99,8 @@ def _schema_ready(connection: sqlite3.Connection) -> bool:
         for table in ("tickets", "items", "sources")
         for row in connection.execute(f"PRAGMA table_info({table})").fetchall()
     }
-    return {("tickets", "queued_at"), ("items", "last_briefed"), ("sources", "confirm_error")} <= columns
+    needed = {("tickets", "queued_at"), ("tickets", "project"), ("items", "last_briefed"), ("sources", "confirm_error")}
+    return needed <= columns
 
 
 def _text(value: object, limit: int = TEXT_LIMIT) -> str:
@@ -174,6 +184,7 @@ def _workers(connection: sqlite3.Connection, config: Config, moment: float) -> l
                 "kind": "worker",
                 "ticket": ticket["id"],
                 "goal": _text(ticket["goal"], 160),
+                "project": _text(ticket["project"], PROJECT_NAME_LIMIT),
                 "source": _text(json.loads(ticket["mandate"]).get("source", ""), 80),
                 "channel": _text(ticket["channel"], 80),
                 "state": state,
@@ -187,6 +198,91 @@ def _workers(connection: sqlite3.Connection, config: Config, moment: float) -> l
             }
         )
     return workers
+
+
+def item_project(item: Item) -> str:
+    named = item.meta.get("repo") or item.meta.get("project") or ""
+    return _text(project_name(str(named)), PROJECT_NAME_LIMIT)
+
+
+def _infer_projects(
+    workers: Sequence[dict[str, object]], sessions: Sequence[dict[str, object]], items: Sequence[Item], config: Config
+) -> None:
+    known = {str(entry["project"]) for entry in [*workers, *sessions] if entry.get("project")}
+    known |= {item_project(item) for item in items} | {project_name(repo) for repo in config.brief_repos}
+    names = sorted((name for name in known if len(name) >= 3), key=len, reverse=True)
+    for worker in workers:
+        if worker["project"]:
+            continue
+        goal = str(worker["goal"]).lower()
+        worker["project"] = next((name for name in names if re.search(rf"\b{re.escape(name.lower())}\b", goal)), "")
+
+
+def _projects(
+    workers: Sequence[dict[str, object]], sessions: Sequence[dict[str, object]], items: Sequence[Item]
+) -> list[dict[str, object]]:
+    groups: dict[str, dict[str, object]] = {}
+
+    def group(name: str) -> dict[str, object]:
+        key = name.lower() or "~"
+        if key not in groups:
+            groups[key] = {"name": name or "No project", "workers": [], "sessions": [], "items": [], "last": 0.0}
+        return groups[key]
+
+    def touch(entry: dict[str, object], at: object) -> None:
+        entry["last"] = max(_sortable(entry["last"]), _sortable(at))
+
+    for worker in workers:
+        entry = group(str(worker["project"]))
+        _append(entry, "workers", worker["ticket"])
+        touch(entry, worker["last_at"] or worker["since"])
+    for session in sessions:
+        entry = group(str(session["project"]))
+        _append(entry, "sessions", session["handle"])
+        touch(entry, session["since"])
+    for item in sorted(items, key=lambda item: item.last_changed, reverse=True):
+        name = item_project(item)
+        if not name:
+            continue
+        entry = group(name)
+        _append(
+            entry,
+            "items",
+            {
+                "handle": item.handle,
+                "title": _text(item.title, 160),
+                "url": _text(item.url, 500),
+                "state": item.state.value,
+                "due": item.due[:10],
+                "kind": _item_kind(item),
+                "since": item.last_changed,
+            },
+        )
+        touch(entry, item.last_changed)
+    waiting = {str(w["ticket"]) for w in workers if w["state"] == "parked"}
+    waiting |= {str(x["handle"]) for x in sessions if x["state"] in _ATTENTION_STATES}
+    for entry in groups.values():
+        entry["waiting"] = sum(1 for key in ("workers", "sessions") for ref in _listed(entry[key]) if ref in waiting)
+    return sorted(
+        groups.values(),
+        key=lambda entry: (entry["name"] == "No project", -_sortable(entry["waiting"]), -_sortable(entry["last"])),
+    )
+
+
+def _listed(values: object) -> list[str]:
+    return [str(value) for value in values] if isinstance(values, list) else []
+
+
+def _append(entry: dict[str, object], key: str, value: object) -> None:
+    values = entry[key]
+    if isinstance(values, list):
+        values.append(value)
+
+
+def _item_kind(item: Item) -> str:
+    if "/pull/" in item.url or "/merge_requests/" in item.url:
+        return "pr"
+    return "issue" if "/issues/" in item.url else "item"
 
 
 def _sessions(specs: Sequence[ConnectorSpec], items: Sequence[Item]) -> list[dict[str, object]]:
@@ -388,6 +484,75 @@ def _feed(connection: sqlite3.Connection) -> list[dict[str, object]]:
     return sorted(events, key=lambda event: _sortable(event["at"]), reverse=True)[:limit]
 
 
+def ticket_detail(home: Path, ticket_id: str) -> dict[str, object] | None:
+    path = home / DB_FILENAME
+    if not _TICKET_ID.fullmatch(ticket_id) or not path.is_file():
+        return None
+    with _read(path) as connection:
+        if not _schema_ready(connection):
+            return None
+        ticket = connection.execute("SELECT * FROM tickets WHERE id = ?", (ticket_id,)).fetchone()
+        if ticket is None:
+            return None
+        attempts = connection.execute(
+            "SELECT id, attempt, status, started_at, ended_at FROM assignments WHERE ticket_id = ? ORDER BY started_at",
+            (ticket_id,),
+        ).fetchall()
+        timeline = [{"at": ticket["created_at"], "kind": "opened", "text": _text(ticket["goal"], 2000)}]
+        timeline += [
+            {"at": row["delivered_at"], "kind": "to worker", "text": f"{_text(row['label'], 80)}: {_text(row['text'])}"}
+            for row in connection.execute(
+                "SELECT label, text, delivered_at FROM inputs WHERE ticket_id = ? ORDER BY seq", (ticket_id,)
+            )
+        ]
+        timeline += [
+            {
+                "at": row["at"],
+                "kind": row["state"],
+                "text": _text(row["summary"], 2000) + (f"\nAsked: {_text(row['question'])}" if row["question"] else ""),
+            }
+            for row in connection.execute(
+                "SELECT state, summary, question, at FROM reports WHERE ticket_id = ? ORDER BY seq", (ticket_id,)
+            )
+        ]
+        timeline += [
+            {"at": row["at"], "kind": f"watchdog {row['action']}", "text": _text(row["reason"])}
+            for row in connection.execute(
+                "SELECT action, reason, at FROM watchdog_events WHERE ticket_id = ? AND action != 'none' ORDER BY seq",
+                (ticket_id,),
+            )
+        ]
+        timeline += [
+            {"at": row["sent_at"], "kind": "to people", "text": _text(row["text"], 2000)}
+            for row in connection.execute(
+                "SELECT text, sent_at FROM outbox WHERE ticket_id = ? ORDER BY seq", (ticket_id,)
+            )
+        ]
+    latest = attempts[-1]["id"] if attempts else ""
+    workdir = home / WORKDIRS_DIRNAME / ticket_id / latest if _ASSIGNMENT_ID.fullmatch(latest) else None
+    return {
+        "ticket": ticket_id,
+        "goal": _text(ticket["goal"], 2000),
+        "project": _text(ticket["project"], PROJECT_NAME_LIMIT),
+        "status": ticket["status"],
+        "channel": _text(ticket["channel"], 80),
+        "attempts": [dict(row) for row in attempts],
+        "timeline": sorted(timeline, key=lambda event: (event["at"] is None, _sortable(event["at"]))),
+        "brief": _tail(workdir / "brief.md", BRIEF_SHOWN_BYTES) if workdir else "",
+        "log": _tail(workdir / "worker.log", LOG_SHOWN_BYTES) if workdir else "",
+    }
+
+
+def _tail(path: Path, limit: int) -> str:
+    try:
+        with path.open("rb") as file:
+            file.seek(max(0, path.stat().st_size - limit))
+            text = file.read().decode("utf-8", errors="replace")
+    except OSError:
+        return ""
+    return redact(_TERMINAL_ESCAPES.sub("", text)).strip()
+
+
 def make_token() -> str:
     return secrets.token_urlsafe(24)
 
@@ -405,12 +570,25 @@ def panel_handler(home: Path, token: str) -> type[BaseHTTPRequestHandler]:
                 self._send(200, "text/html", PAGE.encode())
             elif url.path == "/panel.js":
                 self._send(200, "text/javascript", SCRIPT.encode())
-            elif url.path != "/api/snapshot":
+            elif url.path not in ("/api/snapshot", "/api/ticket"):
                 self._send(404, "text/plain", b"not found")
             elif not hmac.compare_digest(self.headers.get(TOKEN_HEADER, "").encode(), token.encode()):
                 self._send(403, "text/plain", b"missing or wrong token, use the URL superagent panel printed")
+            elif url.path == "/api/ticket":
+                self._ticket(parse_qs(url.query).get("id", [""])[0])
             else:
                 self._snapshot()
+
+        def _ticket(self, ticket_id: str) -> None:
+            try:
+                detail = ticket_detail(home, ticket_id)
+            except Exception as error:
+                self._send(500, "application/json", json.dumps({"error": f"{type(error).__name__}: {error}"}).encode())
+                return
+            if detail is None:
+                self._send(404, "application/json", json.dumps({"error": f"no ticket {ticket_id!r}"}).encode())
+                return
+            self._send(200, "application/json", json.dumps(detail).encode())
 
         def _snapshot(self) -> None:
             try:
