@@ -13,6 +13,7 @@ hermes superagent --home ~/superagent doctor
 | [GitHub](#github) | `github` | `gh` logged in | an open issue or PR assigned to you, asking for your review, or mentioning you | tracked |
 | [GitLab](#gitlab) | `gitlab` | `glab` logged in | an assigned issue or merge request, a review request, a pending todo | tracked |
 | [Todoist](#todoist) | `todoist` | `td` logged in | an active task | tracked |
+| [Markdown](#markdown) | `markdown` | Markdown files, such as an Obsidian vault or a `TODO.md` | an open `- [ ]` task | tracked |
 | [Gmail](#gmail) | `gmail` | `gog` logged in | an inbox thread, closed once it's archived or trashed | tracked |
 | [WhatsApp](#whatsapp) | `whatsapp` | `wacli` linked and syncing | a chat with a listed contact whose last message isn't yours | tracked |
 | [Claude Code](#claude-code) | `agents` | the hook from `superagent agents --hook-script` | a session and its state: working, waiting, stuck, rate-limited, gone | tracked |
@@ -50,6 +51,17 @@ every = "10m"
 ```toml
 [connectors.todoist]
 type = "todoist"
+every = "5m"
+```
+
+## Markdown
+
+Reads open tasks, such as `- [ ] Call the bank 📅 2026-11-20`, from your notes with no account or CLI. Each path is a file, a folder searched for `*.md` with hidden folders such as `.obsidian` skipped, or a glob. Moving lines around changes nothing, and a task closes once it's ticked `[x]` in its file. One you delete stays open under "gone without a close", for you to close. Two files with the same path inside their folders, such as two vaults' `Inbox.md`, need a block each. Add `trusted = true` when the notes are your own words.
+
+```toml
+[connectors.notes]
+type = "markdown"
+paths = ["~/Notes", "~/code/*/TODO.md"]
 every = "5m"
 ```
 
