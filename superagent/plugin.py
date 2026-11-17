@@ -10,7 +10,7 @@ from typing import Any
 
 from .briefwriter import BriefWriter
 from .cli import run, setup_parser
-from .config import load_config
+from .config import ConfigError, load_config
 from .digest import DigestError, build_digest, send_digest
 from .domain import ReportState, Ticket, Trigger
 from .framing import frame_trigger
@@ -336,7 +336,8 @@ class Plugin:
     def _owner(self) -> str:
         try:
             return load_config(self.home()).on_behalf_of or ANYONE_ALLOWED
-        except Exception:
+        except (ConfigError, OSError) as error:
+            logger.warning("router prompt falls back to a generic owner: %s", error)
             return ANYONE_ALLOWED
 
     def run_cli(self, args: Any) -> int:
