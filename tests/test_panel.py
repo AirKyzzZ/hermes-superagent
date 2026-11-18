@@ -7,8 +7,9 @@ import os
 import sqlite3
 import stat
 import threading
-from collections.abc import Iterator, Sequence
+from collections.abc import Iterator
 from contextlib import closing, contextmanager
+from datetime import UTC, datetime, timedelta
 from http.server import ThreadingHTTPServer
 from pathlib import Path
 
@@ -16,9 +17,10 @@ import pytest
 
 from superagent.cli import run, setup_parser
 from superagent.config import DB_FILENAME, Config, load_config
-from superagent.domain import Mandate, RepairAction, ReportState, Strength, Trigger
-from superagent.ledger import Ledger, SourceItem
+from superagent.domain import Mandate, RepairAction, ReportState, Strength, TicketStatus, Trigger
+from superagent.ledger import ItemState, Ledger, SourceItem
 from superagent.panel import (
+    ACTION_BODY_LIMIT,
     HOST_SHOWN_CHARS,
     TOKEN_FILENAME,
     TOKEN_HEADER,
@@ -40,7 +42,7 @@ policy = "explicit_only"
 allow = ["alice"]
 
 [worker]
-argv = ["w", "{brief}"]
+argv = ["true", "{brief}"]
 
 [connectors.vps]
 type = "agents"
@@ -136,8 +138,8 @@ def test_text_from_reports_is_redacted(tmp_path: Path) -> None:
 
 
 @contextmanager
-def panel_server(home: Path, extra_hosts: Sequence[str] = ()) -> Iterator[int]:
-    server = ThreadingHTTPServer(("127.0.0.1", 0), panel_handler(home, "the-token", extra_hosts))
+def serving(home: Path, *hosts: str, read_only: bool = False) -> Iterator[int]:
+    server = ThreadingHTTPServer(("127.0.0.1", 0), panel_handler(home, "the-token", hosts, read_only))
     threading.Thread(target=server.serve_forever, kwargs={"poll_interval": 0.01}, daemon=True).start()
     try:
         yield server.server_port
@@ -149,7 +151,7 @@ def panel_server(home: Path, extra_hosts: Sequence[str] = ()) -> Iterator[int]:
 @pytest.fixture
 def served(tmp_path: Path) -> Iterator[int]:
     busy_home(tmp_path)
-    with panel_server(tmp_path) as port:
+    with serving(tmp_path) as port:
         yield port
 
 
@@ -178,6 +180,7 @@ def test_the_snapshot_needs_the_token(served: int) -> None:
     status, _, body = fetch(served, "/api/snapshot", {TOKEN_HEADER: "the-token"})
     assert status == 200
     assert len(json.loads(body)["workers"]) == 2
+    assert json.loads(body)["actions"] is True
 
 
 def test_a_request_for_another_host_is_refused(served: int) -> None:
@@ -303,7 +306,7 @@ def test_the_token_survives_a_restart_until_renewed(tmp_path: Path) -> None:
 def test_a_name_passed_to_allow_host_is_answered_on_any_port_unless_one_is_given(
     tmp_path: Path, allowed: str, host: str, status: int
 ) -> None:
-    with panel_server(tmp_path, [allowed]) as port:
+    with serving(tmp_path, allowed) as port:
         assert fetch(port, "/", {"Host": host})[0] == status
 
 
@@ -320,7 +323,7 @@ def test_a_name_passed_to_allow_host_is_answered_on_any_port_unless_one_is_given
     ],
 )
 def test_a_hostile_host_is_refused(tmp_path: Path, host: str) -> None:
-    with panel_server(tmp_path, ["panel.example.ts.net"]) as port:
+    with serving(tmp_path, "panel.example.ts.net") as port:
         assert fetch(port, "/", {"Host": host.format(port=port)})[0] == 421
 
 
@@ -333,13 +336,13 @@ def test_a_name_with_the_panel_port_is_answered_on_that_port_only() -> None:
 
 
 def test_a_name_with_a_port_is_not_answered_on_the_panel_port(tmp_path: Path) -> None:
-    with panel_server(tmp_path, ["panel.example.ts.net:8443"]) as port:
+    with serving(tmp_path, "panel.example.ts.net:8443") as port:
         assert fetch(port, "/", {"Host": f"panel.example.ts.net:{port}"})[0] == 421
         assert fetch(port, "/", {"Host": f"localhost:{port}"})[0] == 200
 
 
 def test_a_refused_host_is_named_next_to_the_names_the_panel_answers_to(tmp_path: Path) -> None:
-    with panel_server(tmp_path, ["panel.example.ts.net", "other.example.ts.net:8443"]) as port:
+    with serving(tmp_path, "panel.example.ts.net", "other.example.ts.net:8443") as port:
         status, headers, body = fetch(port, "/", {"Host": "evil.example:80"})
         assert status == 421
         assert headers["Content-Type"] == "text/plain; charset=utf-8"
@@ -406,3 +409,206 @@ def test_a_token_that_cant_be_written_says_so(tmp_path: Path, capsys: pytest.Cap
     (tmp_path / TOKEN_FILENAME).mkdir()
     assert panel_cli(tmp_path, "--new-token") == 1
     assert "panel token" in capsys.readouterr().err
+
+
+GOOD = {TOKEN_HEADER: "the-token", "Content-Type": "application/json"}
+
+
+def send(port: int, data: bytes, headers: dict[str, str]) -> tuple[int, dict[str, object]]:
+    connection = http.client.HTTPConnection("127.0.0.1", port, timeout=30)
+    try:
+        connection.request("POST", "/api/action", body=data, headers=headers)
+        response = connection.getresponse()
+        return response.status, json.loads(response.read())
+    finally:
+        connection.close()
+
+
+def post(port: int, body: object, headers: dict[str, str] = GOOD) -> tuple[int, dict[str, object]]:
+    return send(port, json.dumps(body).encode(), headers)
+
+
+def ticket_of(home: Path, number: int) -> str:
+    ticket = Store(home / DB_FILENAME).ticket_for_trigger(f"t{number}")
+    assert ticket is not None
+    return ticket.id
+
+
+def status_of(home: Path, ticket_id: str) -> TicketStatus:
+    return Store(home / DB_FILENAME).get_ticket(ticket_id).status
+
+
+def inputs_of(home: Path, ticket_id: str) -> list[tuple[str, str, int]]:
+    with closing(sqlite3.connect(home / DB_FILENAME)) as connection:
+        return connection.execute(
+            "SELECT label, text, trusted FROM inputs WHERE ticket_id = ? ORDER BY seq", (ticket_id,)
+        ).fetchall()
+
+
+def attention_of(home: Path) -> list[dict[str, object]]:
+    attention = snapshot(home, load_config(home))["attention"]
+    assert isinstance(attention, list)
+    return attention
+
+
+def test_an_answer_from_the_panel_resumes_the_parked_worker_with_it(served: int, tmp_path: Path) -> None:
+    parked = ticket_of(tmp_path, 2)
+    status, reply = post(served, {"action": "answer", "ticket": parked, "text": "  SQLite,\nkeep it simple "})
+    assert (status, reply) == (200, {"ticket": parked, "status": "open"})
+    [(label, text, trusted)] = inputs_of(tmp_path, parked)
+    assert (label, trusted) == ("the panel", 1)
+    assert "<untrusted-data label='panel answer from the panel'" in text and "SQLite,\nkeep it simple\n" in text
+    store = Store(tmp_path / DB_FILENAME)
+    [resumed] = [assignment for assignment in store.running_assignments() if assignment.ticket_id == parked]
+    assert resumed.attempt == 2
+    brief = (tmp_path / "workers" / parked / resumed.id / "brief.md").read_text(encoding="utf-8")
+    assert "keep it simple" in brief
+
+
+def test_a_follow_up_to_a_running_task_waits_for_its_worker(tmp_path: Path) -> None:
+    router, backend, _, _ = build(tmp_path)
+    router.ingest(request(1, "fix the login bug"))
+    ticket, _ = latest(router, 1)
+    assert router.answer(ticket, "the bug is in auth.py", "Sam").status is TicketStatus.OPEN
+    assert len(backend.started) == 1
+    assert [(label, trusted) for _, label, _, trusted in router.store.pending_inputs(ticket)] == [("Sam", True)]
+
+
+def test_cancel_from_the_panel_ends_the_task_in_the_owner_name(served: int, tmp_path: Path) -> None:
+    config = CONFIG.replace("[worker]\n", '[worker]\non_behalf_of = "Sam"\n')
+    (tmp_path / "superagent.toml").write_text(config, encoding="utf-8")
+    parked = ticket_of(tmp_path, 2)
+    assert post(served, {"action": "answer", "ticket": parked, "text": "SQLite"})[0] == 200
+    assert [label for label, _, _ in inputs_of(tmp_path, parked)] == ["Sam"]
+    status, reply = post(served, {"action": "cancel", "ticket": parked})
+    assert (status, reply) == (200, {"ticket": parked, "status": "ended"})
+    texts = [message.text for message in Store(tmp_path / DB_FILENAME).pending_outbox()]
+    assert any(text.startswith("Cancelled") and text.endswith("by Sam") for text in texts)
+
+
+def test_an_ended_or_unknown_ticket_is_refused(served: int, tmp_path: Path) -> None:
+    ended = ticket_of(tmp_path, 3)
+    for action in ("answer", "cancel"):
+        status, reply = post(served, {"action": action, "ticket": ended, "text": "try again"})
+        assert status == 409 and "ended" in str(reply["error"])
+        status, reply = post(served, {"action": action, "ticket": "tk-00000000", "text": "hello"})
+        assert (status, reply) == (404, {"error": "no ticket tk-00000000"})
+        assert post(served, {"action": action, "ticket": "../../etc", "text": "hello"})[0] == 400
+    assert inputs_of(tmp_path, ended) == []
+
+
+@pytest.mark.parametrize(
+    ("text", "error"),
+    [(" \n ", "write an answer"), ("x" * 2001, "2000 characters"), ("red \x1b[31m", "printable"), (7, "write")],
+)
+def test_an_answer_is_short_printable_text(served: int, tmp_path: Path, text: object, error: str) -> None:
+    parked = ticket_of(tmp_path, 2)
+    status, reply = post(served, {"action": "answer", "ticket": parked, "text": text})
+    assert status == 400 and error in str(reply["error"])
+    assert status_of(tmp_path, parked) is TicketStatus.WAITING
+
+
+def test_accept_applies_a_held_snapshot_on_the_next_poll(served: int, tmp_path: Path) -> None:
+    ledger = Ledger(tmp_path / DB_FILENAME)
+    ledger.begin_poll("tasks")
+    ledger.poll_succeeded("tasks", count=1, new_items=0, cursor="", applied=False, held=True)
+    [card] = [card for card in attention_of(tmp_path) if card["kind"] == "source"]
+    assert (card["connector"], card["held"]) == ("tasks", True)
+    status, reply = post(served, {"action": "accept", "connector": "tasks"})
+    assert (status, reply) == (200, {"accepted": "tasks", "applies": "on its next poll"})
+    assert ledger.source("tasks").accept_next
+    [card] = [card for card in attention_of(tmp_path) if card["kind"] == "source"]
+    assert card["held"] is False
+    assert post(served, {"action": "accept", "connector": "vps"})[0] == 409
+    unknown = post(served, {"action": "accept", "connector": "nope"})
+    assert unknown == (404, {"error": "no connector nope in superagent.toml"})
+    assert post(served, {"action": "accept", "connector": "Bad Name"})[0] == 400
+
+
+def test_snooze_hides_an_overdue_item_until_then(served: int, tmp_path: Path) -> None:
+    ledger = Ledger(tmp_path / DB_FILENAME)
+    item = ledger.record("tasks", SourceItem("x1", "renew the domain", due="2020-01-01"))
+    ledger.move(item.id, ItemState.TRIAGED, "owner", "")
+    assert [card["handle"] for card in attention_of(tmp_path) if card["kind"] == "overdue"] == [item.handle]
+    tomorrow = (datetime.now(UTC) + timedelta(days=1)).isoformat(timespec="milliseconds").replace("+00:00", "Z")
+    status, reply = post(served, {"action": "snooze", "item": item.handle, "until": tomorrow})
+    assert status == 200 and reply["item"] == item.handle
+    assert "overdue" not in [card["kind"] for card in attention_of(tmp_path)]
+    status, reply = post(served, {"action": "snooze", "item": item.handle, "until": "2020-01-01"})
+    assert status == 400 and "future" in str(reply["error"])
+    assert post(served, {"action": "snooze", "item": item.handle, "until": "next week"})[0] == 400
+    unknown = post(served, {"action": "snooze", "item": "it-zzzz", "until": tomorrow})
+    assert unknown == (404, {"error": "no item it-zzzz"})
+    assert post(served, {"action": "snooze", "item": "it-; drop", "until": tomorrow})[0] == 400
+
+
+@pytest.mark.parametrize(
+    ("headers", "status"),
+    [
+        ({"Content-Type": "application/json"}, 403),
+        ({TOKEN_HEADER: "wrong", "Content-Type": "application/json"}, 403),
+        ({TOKEN_HEADER: "the-token", "Content-Type": "text/plain"}, 415),
+        ({TOKEN_HEADER: "the-token", "Content-Type": "application/x-www-form-urlencoded"}, 415),
+        ({TOKEN_HEADER: "the-token"}, 415),
+        ({**GOOD, "Origin": "https://attacker.example"}, 403),
+        ({**GOOD, "Origin": "null"}, 403),
+        ({**GOOD, "Origin": "http://127.0.0.1:1"}, 403),
+        ({**GOOD, "Host": "attacker.example"}, 421),
+    ],
+)
+def test_an_action_needs_the_token_json_and_the_panel_origin(
+    served: int, tmp_path: Path, headers: dict[str, str], status: int
+) -> None:
+    parked = ticket_of(tmp_path, 2)
+    got, reply = post(served, {"action": "cancel", "ticket": parked}, headers)
+    assert got == status and reply["error"]
+    assert status_of(tmp_path, parked) is TicketStatus.WAITING
+
+
+def test_the_panel_own_origins_may_act(tmp_path: Path) -> None:
+    busy_home(tmp_path)
+    parked = ticket_of(tmp_path, 2)
+    with serving(tmp_path, "panel.example.ts.net") as port:
+        tailnet = {**GOOD, "Host": "panel.example.ts.net"}
+        cancel = {"action": "cancel", "ticket": parked}
+        assert post(port, cancel, {**tailnet, "Origin": "https://other.example.ts.net"})[0] == 403
+        assert post(port, cancel, {**tailnet, "Origin": "https://panel.example.ts.net:99999"})[0] == 403
+        assert post(port, cancel, {**tailnet, "Origin": "https://user@panel.example.ts.net"})[0] == 403
+        answer = {"action": "answer", "ticket": parked, "text": "SQLite"}
+        assert post(port, answer, {**GOOD, "Origin": f"http://localhost:{port}"})[0] == 200
+        assert post(port, cancel, {**tailnet, "Origin": "https://panel.example.ts.net"})[0] == 200
+
+
+def test_an_action_on_a_named_port_comes_from_that_port(tmp_path: Path) -> None:
+    busy_home(tmp_path)
+    parked = ticket_of(tmp_path, 2)
+    with serving(tmp_path, "panel.example.ts.net:8443") as port:
+        named = {**GOOD, "Host": "panel.example.ts.net:8443"}
+        cancel = {"action": "cancel", "ticket": parked}
+        assert post(port, cancel, {**named, "Origin": "https://panel.example.ts.net"})[0] == 403
+        status, reply = post(port, cancel, {**GOOD, "Host": "panel.example.ts.net"})
+        assert status == 421 and '"panel.example.ts.net"' in str(reply["error"])
+        assert post(port, cancel, {**named, "Origin": "https://panel.example.ts.net:8443"})[0] == 200
+
+
+def test_an_oversized_or_malformed_action_is_refused(served: int, tmp_path: Path) -> None:
+    too_big = {**GOOD, "Content-Length": str(ACTION_BODY_LIMIT + 1)}
+    assert send(served, b"", too_big)[0] == 413
+    assert send(served, b"{not json", GOOD)[0] == 400
+    assert post(served, ["cancel"])[0] == 400
+    assert post(served, {"action": "delete", "ticket": ticket_of(tmp_path, 2)})[0] == 400
+    assert fetch(served, "/api/action", GOOD)[0] == 404
+
+
+def test_read_only_hides_the_buttons_and_refuses_every_action(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    busy_home(tmp_path)
+    parked = ticket_of(tmp_path, 2)
+    with serving(tmp_path, read_only=True) as port:
+        assert json.loads(fetch(port, "/api/snapshot", {TOKEN_HEADER: "the-token"})[2])["actions"] is False
+        status, reply = post(port, {"action": "cancel", "ticket": parked})
+        assert status == 403 and "--read-only" in str(reply["error"])
+    assert status_of(tmp_path, parked) is TicketStatus.WAITING
+    calls: list[tuple[object, ...]] = []
+    monkeypatch.setattr("superagent.cli.serve", lambda *args: calls.append(args))
+    assert panel_cli(tmp_path, "--read-only") == 0
+    assert calls[0][-1] is True
