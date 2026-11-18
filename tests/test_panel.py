@@ -21,9 +21,11 @@ from superagent.domain import Mandate, RepairAction, ReportState, Strength, Tick
 from superagent.ledger import ItemState, Ledger, SourceItem
 from superagent.panel import (
     ACTION_BODY_LIMIT,
+    HOST_SHOWN_CHARS,
     TOKEN_FILENAME,
     TOKEN_HEADER,
     allowed_hosts,
+    host_allowed,
     panel_handler,
     panel_token,
     snapshot,
@@ -138,7 +140,7 @@ def test_text_from_reports_is_redacted(tmp_path: Path) -> None:
 @contextmanager
 def serving(home: Path, *hosts: str, read_only: bool = False) -> Iterator[int]:
     server = ThreadingHTTPServer(("127.0.0.1", 0), panel_handler(home, "the-token", hosts, read_only))
-    threading.Thread(target=server.serve_forever, daemon=True).start()
+    threading.Thread(target=server.serve_forever, kwargs={"poll_interval": 0.01}, daemon=True).start()
     try:
         yield server.server_port
     finally:
@@ -285,18 +287,98 @@ def test_the_token_survives_a_restart_until_renewed(tmp_path: Path) -> None:
     assert panel_token(tmp_path) == renewed
 
 
-def test_a_host_passed_to_allow_host_is_answered(tmp_path: Path) -> None:
-    busy_home(tmp_path)
-    with serving(tmp_path, "Panel.Example.ts.net") as port:
-        assert fetch(port, "/", {"Host": "panel.example.ts.net"})[0] == 200
-        assert fetch(port, "/", {"Host": "other.example.ts.net"})[0] == 421
+@pytest.mark.parametrize(
+    ("allowed", "host", "status"),
+    [
+        ("Panel.Example.ts.net", "panel.example.ts.net", 200),
+        ("panel.example.ts.net", "Panel.Example.ts.net:8443", 200),
+        ("panel.example.ts.net", "other.example.ts.net", 421),
+        ("panel.example.ts.net", "panel.example.ts.net:abc", 421),
+        ("panel.example.ts.net:8443", "panel.example.ts.net:8443", 200),
+        ("panel.example.ts.net:8443", "panel.example.ts.net:9443", 421),
+        ("panel.example.ts.net:8443", "panel.example.ts.net", 421),
+        ("panel.example.ts.net:443", "panel.example.ts.net", 200),
+        ("panel.example.ts.net", "localhost:8443", 421),
+        ("panel.example.ts.net", "127.0.0.1:8443", 421),
+        ("panel.example.ts.net", "localhost", 421),
+    ],
+)
+def test_a_name_passed_to_allow_host_is_answered_on_any_port_unless_one_is_given(
+    tmp_path: Path, allowed: str, host: str, status: int
+) -> None:
+    with serving(tmp_path, allowed) as port:
+        assert fetch(port, "/", {"Host": host})[0] == status
 
 
-def test_allow_host_refuses_anything_but_a_host_name() -> None:
+@pytest.mark.parametrize(
+    "host",
+    [
+        "localhost.:{port}",
+        "127.0.0.1.:{port}",
+        "panel.example.ts.net.",
+        "panel.example.ts.net.:8443",
+        "[::1]:{port}",
+        "name@panel.example.ts.net",
+        "panel.example.ts.net:08443",
+        "panel.example.ts.net:65536",
+        "panel.example.ts.net:0",
+    ],
+)
+def test_a_hostile_host_is_refused(tmp_path: Path, host: str) -> None:
+    with serving(tmp_path, "panel.example.ts.net") as port:
+        assert fetch(port, "/", {"Host": host.format(port=port)})[0] == 421
+
+
+def test_a_name_with_the_panel_port_is_answered_on_that_port_only() -> None:
+    hosts = allowed_hosts(8765, ["panel.example.ts.net:8765"])
+    assert host_allowed("panel.example.ts.net:8765", hosts)
+    assert host_allowed("localhost:8765", hosts)
+    assert not host_allowed("panel.example.ts.net", hosts)
+    assert not host_allowed("panel.example.ts.net:8443", hosts)
+
+
+def test_a_name_with_a_port_is_not_answered_on_the_panel_port(tmp_path: Path) -> None:
+    with serving(tmp_path, "panel.example.ts.net:8443") as port:
+        assert fetch(port, "/", {"Host": f"panel.example.ts.net:{port}"})[0] == 421
+        assert fetch(port, "/", {"Host": f"localhost:{port}"})[0] == 200
+
+
+def test_a_refused_host_is_named_without_the_names_the_panel_answers_to(tmp_path: Path) -> None:
+    with serving(tmp_path, "panel.example.ts.net", "other.example.ts.net:8443") as port:
+        status, headers, body = fetch(port, "/", {"Host": "evil.example:80"})
+        assert status == 421
+        assert headers["Content-Type"] == "text/plain; charset=utf-8"
+        assert body.decode() == (
+            'this panel doesn\'t answer to "evil.example:80". '
+            "Open a URL superagent panel printed, or pass that name to --allow-host."
+        )
+        assert b'answer to "evil\\".example"' in fetch(port, "/", {"Host": 'evil".example'})[2]
+        assert b'answer to "' + b"a" * HOST_SHOWN_CHARS + b'"' in fetch(port, "/", {"Host": "a" * 500})[2]
+
+
+@pytest.mark.parametrize(
+    "entry",
+    [
+        "evil.example.com/path",
+        "*",
+        "https://panel.example.ts.net",
+        "panel.example.ts.net:0",
+        "panel.example.ts.net:99999",
+        "panel.example.ts.net:abc",
+        "panel.example.ts.net:",
+    ],
+)
+def test_allow_host_refuses_anything_but_a_name_or_a_name_and_a_port(entry: str) -> None:
     with pytest.raises(ValueError, match="allow-host"):
-        allowed_hosts(8765, ["evil.example.com/path"])
-    with pytest.raises(ValueError, match="allow-host"):
-        allowed_hosts(8765, ["*"])
+        allowed_hosts(8765, [entry])
+
+
+@pytest.mark.parametrize(
+    "entry", ["127.0.0.1", "10.0.0.1", "10.0.0.1:8443", "100.64.0.1", "10.0.0.0x1", "0x7f.0x1", "1.0x7f"]
+)
+def test_allow_host_refuses_an_ip_address(entry: str) -> None:
+    with pytest.raises(ValueError, match="never an IP address"):
+        allowed_hosts(8765, [entry])
 
 
 @pytest.mark.parametrize("saved", [b"\xff\xfe not text", b"a" * 31, b"a" * 40])
@@ -475,6 +557,8 @@ def test_snooze_hides_an_overdue_item_until_then(served: int, tmp_path: Path) ->
         ({**GOOD, "Origin": "https://attacker.example"}, 403),
         ({**GOOD, "Origin": "null"}, 403),
         ({**GOOD, "Origin": "http://127.0.0.1:1"}, 403),
+        ({**GOOD, "Origin": "http://["}, 403),
+        ({**GOOD, "Origin": "http://[::1"}, 403),
         ({**GOOD, "Host": "attacker.example"}, 421),
     ],
 )
@@ -493,10 +577,29 @@ def test_the_panel_own_origins_may_act(tmp_path: Path) -> None:
     with serving(tmp_path, "panel.example.ts.net") as port:
         tailnet = {**GOOD, "Host": "panel.example.ts.net"}
         cancel = {"action": "cancel", "ticket": parked}
-        assert post(port, cancel, {**tailnet, "Origin": "http://panel.example.ts.net"})[0] == 403
+        assert post(port, cancel, {**tailnet, "Origin": "https://other.example.ts.net"})[0] == 403
+        for odd in (":99999", ":0", ":08443", ":", "/", "."):
+            assert post(port, cancel, {**tailnet, "Origin": f"https://panel.example.ts.net{odd}"})[0] == 403
+        assert post(port, cancel, {**tailnet, "Origin": "https://panel.exa\tmple.ts.net"})[0] == 403
+        assert post(port, cancel, {**tailnet, "Origin": "https://user@panel.example.ts.net"})[0] == 403
+        sibling = {**GOOD, "Host": "panel.example.ts.net:8443", "Origin": "https://panel.example.ts.net:8443"}
+        assert post(port, {"action": "none"}, sibling)[0] == 400
+        assert post(port, {"action": "none"}, {**tailnet, "Origin": "http://panel.example.ts.net"})[0] == 400
         answer = {"action": "answer", "ticket": parked, "text": "SQLite"}
         assert post(port, answer, {**GOOD, "Origin": f"http://localhost:{port}"})[0] == 200
         assert post(port, cancel, {**tailnet, "Origin": "https://panel.example.ts.net"})[0] == 200
+
+
+def test_an_action_on_a_named_port_comes_from_that_port(tmp_path: Path) -> None:
+    busy_home(tmp_path)
+    parked = ticket_of(tmp_path, 2)
+    with serving(tmp_path, "panel.example.ts.net:8443") as port:
+        named = {**GOOD, "Host": "panel.example.ts.net:8443"}
+        cancel = {"action": "cancel", "ticket": parked}
+        assert post(port, cancel, {**named, "Origin": "https://panel.example.ts.net"})[0] == 403
+        status, reply = post(port, cancel, {**GOOD, "Host": "panel.example.ts.net"})
+        assert status == 421 and '"panel.example.ts.net"' in str(reply["error"])
+        assert post(port, cancel, {**named, "Origin": "https://panel.example.ts.net:8443"})[0] == 200
 
 
 def test_an_oversized_or_malformed_action_is_refused(served: int, tmp_path: Path) -> None:

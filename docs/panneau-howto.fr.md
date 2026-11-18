@@ -86,7 +86,7 @@ Sans rôle posé dans le profil, il n'y a ni router ni workers. Le panneau montr
 
 | Ce que tu vois | Ce qu'il faut faire |
 | --- | --- |
-| `421` ou « open the panel on 127.0.0.1 » | Le nom dans `--allow-host` ne correspond pas exactement à celui de l'URL |
+| `421` ou « this panel doesn't answer to … » | Le `Host` cité entre guillemets n'est pas accepté : passe son nom à `--allow-host`, avec `:port` seulement pour n'accepter que ce port |
 | « Wrong or missing token » | Il manque le `#JETON` à la fin de l'URL, ou le jeton a été changé |
 | « run a tick to update it » | La base date d'une version plus ancienne, un `tick` la met à jour |
 | `502` de Tailscale | Le service est arrêté : `systemctl --user status superagent-panel` |
