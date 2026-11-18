@@ -9,7 +9,7 @@ from .agents import ATTENTION_STATES, redact
 from .connectors import ConnectorSpec
 from .ledger import Item, ItemState, Ledger
 from .polling import source_health
-from .router import chat_safe
+from .router import inert, plain_links
 
 UNTRACKED_ACTOR = "rule:untracked"
 REOPENED_NOTE = "reopened at the source"
@@ -52,7 +52,7 @@ def build_brief(
     sections = [
         (
             "Sources",
-            [f"! {problem}" for problem in problems]
+            [f"! {plain_links(problem)}" for problem in problems]
             + [f"{name}: {count} open" for name, count in counts.items() if name not in untracked],
         ),
     ]
@@ -95,12 +95,12 @@ def build_brief(
         ("Ignored since the last brief", [_line(item, f"because {_flat(event.note)}") for item, event in ignored])
     )
     today = [item for item in ledger.items() if item.connector in untracked and item.last_changed > since]
-    sections.append(("Today", [_flat(redact(item.title))[:TITLE_LIMIT] for item in today]))
+    sections.append(("Today", [plain_links(_flat(redact(item.title))[:TITLE_LIMIT]) for item in today]))
     lines = [f"Brief for {day}: {len(shown)} items. Shadow mode, so nothing below was acted on."]
     for title, rows in sections:
         if rows:
             lines += ["", f"{title} ({len(rows)})", *rows]
-    return Brief(chat_safe("\n".join(lines)), tuple(shown))
+    return Brief(inert("\n".join(lines)), tuple(shown))
 
 
 def _due(item: Item, now: float, stale_after: float, live_tickets: Collection[str]) -> bool:
@@ -120,6 +120,6 @@ def _flat(text: str) -> str:
 
 
 def _line(item: Item, note: str) -> str:
-    suffix = f" [{_flat(note)}]" if note else ""
+    suffix = f" [{plain_links(_flat(note))}]" if note else ""
     where = f"{item.connector} ({item.area})" if item.area else item.connector
-    return f"{item.handle} {where}: {_flat(redact(item.title))[:TITLE_LIMIT]}{suffix}"
+    return f"{item.handle} {where}: {plain_links(_flat(redact(item.title))[:TITLE_LIMIT])}{suffix}"

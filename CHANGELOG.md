@@ -16,6 +16,7 @@ Notable changes to hermes-superagent. The format follows [Keep a Changelog](http
 ### Changed
 
 - The router's prompt is delegation-first: its context is kept for talking and deciding, anything with more than one step goes to a worker, and each goal is written as a complete brief in English. The worker brief now says who relays for whom, then lists goal, context, what done means, constraints and how to report. `[worker] on_behalf_of` sets the name both use.
+- Links in text a model or a stranger wrote, such as a worker's report, an escalation, a session's question, a worker brief or an item's title, reach chat unclickable. A masked `[text](url)` shows its address, and `https://` or `mailto:` get a zero-width space after the colon so the app neither links nor previews them. A bare domain such as `example.com` is left as it is, and some apps still link it.
 
 ### Fixed
 

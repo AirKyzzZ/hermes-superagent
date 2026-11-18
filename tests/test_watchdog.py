@@ -170,6 +170,20 @@ def test_semantic_drift_triggers_a_repair(router: Router, backend: FakeBackend) 
     assert (result.verdict, result.action) == (Verdict.DRIFTING, RepairAction.NUDGE)
 
 
+def test_an_escalation_reaches_chat_with_the_judges_links_unclickable(router: Router, backend: FakeBackend) -> None:
+    class LinkingJudge:
+        def judge(self, goal: str, reports: tuple[Report, ...]) -> Judgement:
+            return Judgement(Verdict.DRIFTING, "it left the goal, see [the log](https://evil.example/log)")
+
+    router.ingest(REQUEST)
+    report(router, backend, "refactoring the billing module")
+    policy = WatchdogPolicy(nudge_budget=0, restart_budget=0)
+    assert check_once(router, judge=LinkingJudge(), policy=policy)[0].action is RepairAction.ESCALATE
+    assert [unlabelled(text) for _, _, text in router.relay()] == [
+        "Needs you: it left the goal, see the log (https:​//evil.example/log)"
+    ]
+
+
 def test_judge_only_runs_on_new_reports(router: Router, backend: FakeBackend) -> None:
     calls: list[str] = []
 

@@ -189,6 +189,16 @@ def test_titles_cannot_forge_lines_attach_files_or_ping_everyone(tmp_path: Path)
     assert "@everyone" not in text and "<@&" not in text
 
 
+def test_links_in_titles_and_notes_are_unclickable_and_the_brief_keeps_its_own_words(tmp_path: Path) -> None:
+    ledger = Ledger(tmp_path / "s.db")
+    item = ledger.record("tasks", SourceItem("t1", "Review [your PR](https://evil.example/pr)"))
+    noise = ledger.record("tasks", SourceItem("t2", "Promo"))
+    ledger.move(noise.id, ItemState.IGNORED, "owner", "sent by mailto:deals@evil.example")
+    text = brief(ledger, [TASKS]).text
+    assert f"\n{item.handle} tasks: Review your PR (https:​//evil.example/pr)\n" in text
+    assert f"\n{noise.handle} tasks: Promo [because sent by mailto:​deals@evil.example]" in text
+
+
 def config(tmp_path: Path, extra: str = "") -> None:
     sent = tmp_path / "sent.tsv"
     (tmp_path / "superagent.toml").write_text(

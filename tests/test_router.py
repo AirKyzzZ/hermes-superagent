@@ -543,6 +543,34 @@ def test_relayed_text_carries_no_send_directive(text: str) -> None:
     assert "media:" not in safe.lower()
 
 
+@pytest.mark.parametrize(
+    ("text", "safe"),
+    [
+        ("Opened [your PR](https://evil.example/pr)", "Opened your PR (https:​//evil.example/pr)"),
+        ("see https://evil.example/x for details", "see https:​//evil.example/x for details"),
+        ("see <https://evil.example/x>", "see <https:​//evil.example/x>"),
+        ("write to mailto:help@evil.example", "write to mailto:​help@evil.example"),
+        ("HTTPS://EVIL.EXAMPLE/X", "HTTPS:​//EVIL.EXAMPLE/X"),
+        ("done (https://evil.example/x), next.", "done (https:​//evil.example/x), next."),
+    ],
+)
+def test_relayed_links_show_their_address_and_cannot_be_clicked(text: str, safe: str) -> None:
+    assert chat_safe(text) == safe
+
+
+def test_relayed_text_without_a_link_is_left_byte_for_byte() -> None:
+    text = "Fixed config.py on evil.example: 3:1 tests pass, see [notes] (below) and host:8080//x. Ça marche"
+    assert chat_safe(text) == text
+
+
+def test_a_report_reaches_chat_with_its_links_unclickable(router: Router, backend: FakeBackend) -> None:
+    router.ingest(event())
+    assignment_id, _ = only_assignment(router.store)
+    summary = "Opened [your PR](https://evil.example/pr)"
+    router.store.add_report(assignment_id, backend.started[0][2], ReportState.READY, summary)
+    assert [unlabelled(text) for _, _, text in router.relay()] == ["Done: Opened your PR (https:​//evil.example/pr)"]
+
+
 def test_the_person_who_asked_can_cancel_their_ticket(router: Router, backend: FakeBackend) -> None:
     ticket_id = running_ticket(router)
     router.ingest(event("t9", thread="", text="stop, wrong repo"), auto_dispatch=False)
