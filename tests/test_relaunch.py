@@ -197,7 +197,7 @@ def test_nothing_is_typed_unless_the_pane_is_waiting_at_an_empty_prompt(
 
 
 def test_a_claude_in_the_background_of_its_terminal_is_left_alone(host: dict[str, Path], tmp_path: Path) -> None:
-    process = subprocess.Popen([str(fake_claude(tmp_path)), *SLEEPING])
+    process = subprocess.Popen([str(fake_claude(tmp_path)), *SLEEPING], process_group=0)
     try:
         stage(host, Claude(process.pid, "/dev/ttys000"))
         since = session_log(host, "s-bg-0001", *failure(time.time(), TMUX_PANE, process.pid))
