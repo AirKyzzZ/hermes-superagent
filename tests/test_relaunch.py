@@ -73,8 +73,9 @@ SLEEPING = ("-c", "import time; time.sleep(120)")
 def fake_claude(directory: Path) -> Path:
     named = directory / "bin" / "claude"
     named.parent.mkdir(exist_ok=True)
-    # uutils coreutils picks the tool from argv[0], so a sleep renamed claude exits at once
-    named.symlink_to(sys.executable)
+    app = Path(sys.base_prefix, "Resources", "Python.app", "Contents", "MacOS", "Python")
+    # uutils sleep dispatches on argv[0], and a macOS framework python re-execs as Python.app
+    named.symlink_to(app if app.exists() else sys.executable)
     return named
 
 
