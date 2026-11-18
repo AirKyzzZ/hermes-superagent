@@ -67,18 +67,29 @@ class Claude:
     tty: str
 
 
+SLEEPING = ("-c", "import time; time.sleep(120)")
+
+
+def fake_claude(directory: Path) -> Path:
+    named = directory / "bin" / "claude"
+    named.parent.mkdir(exist_ok=True)
+    # uutils coreutils picks the tool from argv[0], so a sleep renamed claude exits at once
+    named.symlink_to(sys.executable)
+    return named
+
+
 @pytest.fixture
 def claude(tmp_path: Path) -> Iterator[Claude]:
-    named = tmp_path / "bin" / "claude"
-    named.parent.mkdir()
-    named.symlink_to(shutil.which("sleep") or "/bin/sleep")
+    named = fake_claude(tmp_path)
     leader, follower = os.openpty()
 
     def attach() -> None:
         os.setsid()
         fcntl.ioctl(0, termios.TIOCSCTTY, 0)
 
-    process = subprocess.Popen([str(named), "120"], stdin=follower, stdout=follower, stderr=follower, preexec_fn=attach)
+    process = subprocess.Popen(
+        [str(named), *SLEEPING], stdin=follower, stdout=follower, stderr=follower, preexec_fn=attach
+    )
     seen = subprocess.run(["ps", "-o", "tty=,tpgid=,pgid=", "-p", str(process.pid)], capture_output=True, text=True)
     fields = seen.stdout.split()
     if len(fields) != 3 or fields[1] != fields[2]:
@@ -186,10 +197,7 @@ def test_nothing_is_typed_unless_the_pane_is_waiting_at_an_empty_prompt(
 
 
 def test_a_claude_in_the_background_of_its_terminal_is_left_alone(host: dict[str, Path], tmp_path: Path) -> None:
-    named = tmp_path / "bin" / "claude"
-    named.parent.mkdir(exist_ok=True)
-    named.symlink_to(shutil.which("sleep") or "/bin/sleep")
-    process = subprocess.Popen([str(named), "120"])
+    process = subprocess.Popen([str(fake_claude(tmp_path)), *SLEEPING])
     try:
         stage(host, Claude(process.pid, "/dev/ttys000"))
         since = session_log(host, "s-bg-0001", *failure(time.time(), TMUX_PANE, process.pid))
