@@ -18,24 +18,28 @@ from zoneinfo import ZoneInfo
 
 from .agents import ATTENTION_STATES, redact
 from .config import DB_FILENAME, WORKDIRS_DIRNAME, Config, load_config
-from .connectors import ConnectorSpec
-from .ledger import Item, ItemState, item_from_row, source_state_from_row
+from .connectors import CONNECTOR_NAME, ConnectorSpec
+from .ledger import Item, ItemState, LedgerError, item_from_row, source_state_from_row
 from .panel_page import PAGE, SCRIPT
 from .polling import FAILURES_BEFORE_WARNING, source_health
 from .router import PROJECT_NAME_LIMIT, project_name
-from .runtime import last_tick
+from .runtime import last_tick, open_runtime
 
 TEXT_LIMIT = 280
 BRIEF_SHOWN_BYTES = 6000
 LOG_SHOWN_BYTES = 6000
 _TICKET_ID = re.compile(r"tk-[0-9a-f]{8}")
 _ASSIGNMENT_ID = re.compile(r"as-[0-9a-f]{8}")
+_ITEM_HANDLE = re.compile(r"it-[a-z2-7]{4,52}")
 _TERMINAL_ESCAPES = re.compile(r"\x1b\[[0-9;?]*[A-Za-z]")
 FEED_LIMIT = 20
 ESCALATIONS_SHOWN_SECONDS = 86400.0
 DEFAULT_PORT = 8765
 TOKEN_HEADER = "X-Superagent-Token"
 TOKEN_FILENAME = ".superagent.panel-token"
+ACTION_BODY_LIMIT = 16 * 1024
+ANSWER_LIMIT = 2000
+UNTIL_LIMIT = 40
 _SAVED_TOKEN = re.compile(r"[A-Za-z0-9_-]{32}")
 _HOST_NAME = re.compile(r"[a-z0-9](?:[a-z0-9-]*[a-z0-9])?(?:\.[a-z0-9](?:[a-z0-9-]*[a-z0-9])?)+")
 _CLOSED = (ItemState.DONE.value, ItemState.IGNORED.value)
@@ -329,6 +333,7 @@ def _sources(
                 "failures": state.failures,
                 "failing": state.failures >= FAILURES_BEFORE_WARNING,
                 "held": state.held_count is not None,
+                "accepted": state.accept_next,
                 "warnings": warnings,
             }
         )
@@ -419,6 +424,8 @@ def _attention(
             "detail": f"{source['failures']} failed polls" if source["failing"] else "needs a look",
             "quote": _joined(source["warnings"]),
             "since": source["last_ok"],
+            "connector": source["name"],
+            "held": bool(source["held"]) and not source["accepted"],
         }
         for source in sources
         if source["warnings"]
@@ -436,7 +443,10 @@ def _attention(
             "since": item.last_changed,
         }
         for item in _tracked(items, config)
-        if item.due and item.due[:10] < today and item.state is not ItemState.NEW
+        if item.due
+        and item.due[:10] < today
+        and item.state is not ItemState.NEW
+        and (item.snoozed_until is None or item.snoozed_until < moment)
     ]
     return sorted(cards, key=lambda card: (_ATTENTION_ORDER.index(str(card["kind"])), _sortable(card["since"])))
 
@@ -562,6 +572,97 @@ def _tail(path: Path, limit: int) -> str:
     return redact(_TERMINAL_ESCAPES.sub("", text)).strip()
 
 
+class ActionError(Exception):
+    def __init__(self, status: int, message: str) -> None:
+        super().__init__(message)
+        self.status = status
+
+
+def act(home: Path, request: dict[str, object]) -> dict[str, object]:
+    action = request.get("action")
+    if action not in ("answer", "cancel", "accept", "snooze"):
+        raise ActionError(400, "action must be answer, cancel, accept or snooze")
+    if not (home / DB_FILENAME).is_file():
+        raise ActionError(409, f"no {DB_FILENAME} in {home} yet, run a tick first")
+    if action == "answer":
+        return _ticket_action(home, action, _field(request, "ticket", _TICKET_ID, "tk-1a2b3c4d"), _answer(request))
+    if action == "cancel":
+        return _ticket_action(home, action, _field(request, "ticket", _TICKET_ID, "tk-1a2b3c4d"), "")
+    if action == "accept":
+        return _accept(home, _field(request, "connector", CONNECTOR_NAME, "github"))
+    return _snooze(home, _field(request, "item", _ITEM_HANDLE, "it-7f3k"), _until(request))
+
+
+def _field(request: dict[str, object], name: str, pattern: re.Pattern[str], example: str) -> str:
+    value = request.get(name)
+    if not isinstance(value, str) or not pattern.fullmatch(value):
+        raise ActionError(400, f"{name} must look like {example}")
+    return value
+
+
+def _answer(request: dict[str, object]) -> str:
+    text = request.get("text")
+    if not isinstance(text, str) or not text.strip():
+        raise ActionError(400, "write an answer first")
+    answer = text.strip()
+    if len(answer) > ANSWER_LIMIT:
+        raise ActionError(400, f"an answer is {ANSWER_LIMIT} characters at most, this one has {len(answer)}")
+    if not all(char.isprintable() or char == "\n" for char in answer):
+        raise ActionError(400, "an answer takes printable text and line breaks only")
+    return answer
+
+
+def _until(request: dict[str, object]) -> float:
+    until = request.get("until")
+    hint = "until takes an ISO date, or a date and time, such as 2026-11-18"
+    if not isinstance(until, str) or len(until) > UNTIL_LIMIT:
+        raise ActionError(400, hint)
+    try:
+        return datetime.fromisoformat(until).timestamp()
+    except (ValueError, OverflowError, OSError) as error:
+        raise ActionError(400, f"{hint}, not {until!r}") from error
+
+
+def _ticket_action(home: Path, action: str, ticket_id: str, text: str) -> dict[str, object]:
+    runtime = open_runtime(home)
+    by = runtime.config.on_behalf_of or "the panel"
+    try:
+        runtime.store.get_ticket(ticket_id)
+    except KeyError as error:
+        raise ActionError(404, f"no ticket {ticket_id}") from error
+    try:
+        if action == "answer":
+            ticket = runtime.router.answer(ticket_id, text, by)
+        else:
+            ticket = runtime.router.cancel(ticket_id, by)
+    except ValueError as error:
+        raise ActionError(409, str(error)) from error
+    return {"ticket": ticket.id, "status": ticket.status.value}
+
+
+def _accept(home: Path, connector: str) -> dict[str, object]:
+    runtime = open_runtime(home)
+    if connector not in {spec.name for spec in runtime.config.connectors}:
+        raise ActionError(404, f"no connector {connector} in superagent.toml")
+    if runtime.ledger.source(connector).held_count is None:
+        raise ActionError(409, f"{connector} has no held-back snapshot to accept")
+    runtime.ledger.accept_next_snapshot(connector)
+    return {"accepted": connector, "applies": "on its next poll"}
+
+
+def _snooze(home: Path, reference: str, until: float) -> dict[str, object]:
+    runtime = open_runtime(home)
+    try:
+        runtime.ledger.get(reference)
+    except LedgerError as error:
+        raise ActionError(404, str(error)) from error
+    try:
+        item = runtime.ledger.snooze(reference, until, "owner")
+    except LedgerError as error:
+        raise ActionError(400, str(error)) from error
+    return {"item": item.handle, "state": item.state.value, "snoozed_until": item.snoozed_until}
+
+
 def make_token() -> str:
     return secrets.token_urlsafe(24)
 
@@ -591,14 +692,22 @@ def allowed_hosts(port: int, extra: Sequence[str] = ()) -> frozenset[str]:
     return frozenset({f"127.0.0.1:{port}", f"localhost:{port}"} | named | {f"{name}:{port}" for name in named})
 
 
-def panel_handler(home: Path, token: str, extra_hosts: Sequence[str] = ()) -> type[BaseHTTPRequestHandler]:
+def allowed_origins(port: int, extra: Sequence[str] = ()) -> frozenset[str]:
+    named = {name.strip().lower() for name in extra}
+    hosts = {"127.0.0.1", "localhost"} | named
+    served = {f"{scheme}://{host}:{port}" for scheme in ("http", "https") for host in hosts}
+    return frozenset(served | {f"https://{name}" for name in named})
+
+
+def panel_handler(
+    home: Path, token: str, extra_hosts: Sequence[str] = (), read_only: bool = False
+) -> type[BaseHTTPRequestHandler]:
     class PanelHandler(BaseHTTPRequestHandler):
         server_version = "superagent-panel"
 
         def do_GET(self) -> None:
             url = urlsplit(self.path)
-            hosts = allowed_hosts(getattr(self.server, "server_port", 0), extra_hosts)
-            if self.headers.get("Host", "").lower() not in hosts:
+            if not self._host_allowed():
                 self._send(
                     421, "text/plain", b"open the panel on 127.0.0.1, localhost or a host passed to --allow-host"
                 )
@@ -608,31 +717,84 @@ def panel_handler(home: Path, token: str, extra_hosts: Sequence[str] = ()) -> ty
                 self._send(200, "text/javascript", SCRIPT.encode())
             elif url.path not in ("/api/snapshot", "/api/ticket"):
                 self._send(404, "text/plain", b"not found")
-            elif not hmac.compare_digest(self.headers.get(TOKEN_HEADER, "").encode(), token.encode()):
+            elif not self._token_matches():
                 self._send(403, "text/plain", b"missing or wrong token, use the URL superagent panel printed")
             elif url.path == "/api/ticket":
                 self._ticket(parse_qs(url.query).get("id", [""])[0])
             else:
                 self._snapshot()
 
+        def do_POST(self) -> None:
+            origin = self.headers.get("Origin")
+            port = getattr(self.server, "server_port", 0)
+            if not self._host_allowed():
+                self._json(421, {"error": "open the panel on 127.0.0.1, localhost or a host passed to --allow-host"})
+            elif urlsplit(self.path).path != "/api/action":
+                self._json(404, {"error": "not found"})
+            elif not self._token_matches():
+                self._json(403, {"error": "missing or wrong token, use the URL superagent panel printed"})
+            elif read_only:
+                self._json(403, {"error": "this panel was started with --read-only, so it changes nothing"})
+            elif self.headers.get_content_type() != "application/json":
+                self._json(415, {"error": "send the action as Content-Type: application/json"})
+            elif origin is not None and origin.lower() not in allowed_origins(port, extra_hosts):
+                self._json(403, {"error": f"actions from {origin!r} are refused, open the panel from its own URL"})
+            else:
+                self._action()
+
+        def _host_allowed(self) -> bool:
+            hosts = allowed_hosts(getattr(self.server, "server_port", 0), extra_hosts)
+            return self.headers.get("Host", "").lower() in hosts
+
+        def _token_matches(self) -> bool:
+            return hmac.compare_digest(self.headers.get(TOKEN_HEADER, "").encode(), token.encode())
+
+        def _action(self) -> None:
+            try:
+                length = int(self.headers.get("Content-Length", ""))
+            except ValueError:
+                length = -1
+            if length < 0:
+                self._json(411, {"error": "send the action with a Content-Length"})
+                return
+            if length > ACTION_BODY_LIMIT:
+                self._json(413, {"error": f"an action is {ACTION_BODY_LIMIT // 1024} KB at most"})
+                return
+            try:
+                request = json.loads(self.rfile.read(length))
+            except ValueError:
+                request = None
+            if not isinstance(request, dict):
+                self._json(400, {"error": "send one JSON object with an action in it"})
+                return
+            try:
+                self._json(200, act(home, request))
+            except ActionError as error:
+                self._json(error.status, {"error": str(error)})
+            except Exception as error:
+                self._json(500, {"error": f"{type(error).__name__}: {error}"})
+
         def _ticket(self, ticket_id: str) -> None:
             try:
                 detail = ticket_detail(home, ticket_id)
             except Exception as error:
-                self._send(500, "application/json", json.dumps({"error": f"{type(error).__name__}: {error}"}).encode())
+                self._json(500, {"error": f"{type(error).__name__}: {error}"})
                 return
             if detail is None:
-                self._send(404, "application/json", json.dumps({"error": f"no ticket {ticket_id!r}"}).encode())
+                self._json(404, {"error": f"no ticket {ticket_id!r}"})
                 return
-            self._send(200, "application/json", json.dumps(detail).encode())
+            self._json(200, detail)
 
         def _snapshot(self) -> None:
             try:
-                body = json.dumps(snapshot(home, load_config(home)))
+                body = {**snapshot(home, load_config(home)), "actions": not read_only}
             except Exception as error:
-                self._send(500, "application/json", json.dumps({"error": f"{type(error).__name__}: {error}"}).encode())
+                self._json(500, {"error": f"{type(error).__name__}: {error}"})
                 return
-            self._send(200, "application/json", body.encode())
+            self._json(200, body)
+
+        def _json(self, status: int, body: dict[str, object]) -> None:
+            self._send(status, "application/json", json.dumps(body).encode())
 
         def _send(self, status: int, content_type: str, body: bytes) -> None:
             self.send_response(status)
@@ -649,13 +811,17 @@ def panel_handler(home: Path, token: str, extra_hosts: Sequence[str] = ()) -> ty
     return PanelHandler
 
 
-def serve(home: Path, port: int = DEFAULT_PORT, token: str = "", extra_hosts: Sequence[str] = ()) -> None:
+def serve(
+    home: Path, port: int = DEFAULT_PORT, token: str = "", extra_hosts: Sequence[str] = (), read_only: bool = False
+) -> None:
     secret = token or panel_token(home)
     allowed_hosts(port, extra_hosts)
-    server = ThreadingHTTPServer(("127.0.0.1", port), panel_handler(home, secret, extra_hosts))
+    server = ThreadingHTTPServer(("127.0.0.1", port), panel_handler(home, secret, extra_hosts, read_only))
     print(f"superagent panel on http://127.0.0.1:{server.server_port}/#{secret}", flush=True)
     for name in extra_hosts:
         print(f"and through your proxy on https://{name}/#{secret}", flush=True)
+    if read_only:
+        print("Read-only: the page has no buttons and every action is refused.", flush=True)
     print("Open it next to your chat. Ctrl-C stops it.", flush=True)
     try:
         server.serve_forever()

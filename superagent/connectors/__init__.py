@@ -12,6 +12,7 @@ DEFAULT_EVERY_SECONDS = 300.0
 DEFAULT_NOTIFY = ("waiting", "stuck", "limited", "gone")
 UNTRUSTABLE = frozenset({"github", "gitlab", "gmail", "gcal", "whatsapp", "agents"})
 INFO_ONLY = frozenset({"gcal", "codexbar", "anki"})
+CONNECTOR_NAME = re.compile(r"[a-z0-9][a-z0-9_-]*")
 _DURATION = re.compile(r"^(\d+(?:\.\d+)?)([smhd])$")
 _UNITS = {"s": 1.0, "m": 60.0, "h": 3600.0, "d": 86400.0}
 COMMON_KEYS = frozenset(
@@ -105,7 +106,7 @@ def parse_specs(section: object) -> tuple[ConnectorSpec, ...]:
     for name, body in section.items():
         if not isinstance(body, Mapping):
             raise ConnectorConfigError(f"[connectors.{name}] must be a table")
-        if not re.fullmatch(r"[a-z0-9][a-z0-9_-]*", name):
+        if not CONNECTOR_NAME.fullmatch(name):
             raise ConnectorConfigError(f"connector names use lowercase letters, digits, - and _, got {name!r}")
         kind = body.get("type")
         if kind not in types:

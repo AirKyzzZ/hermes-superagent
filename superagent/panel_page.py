@@ -132,6 +132,18 @@ details { background: var(--surface); border: 1px solid var(--line); border-radi
 summary { cursor: pointer; font-weight: 600; font-size: 12px; }
 pre { font: 11.5px/1.5 var(--mono); white-space: pre-wrap; overflow-wrap: anywhere; margin: 8px 0 0; color: var(--fg);
   max-height: 420px; overflow-y: auto; }
+.actions { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+.btn { background: var(--surface-2); color: var(--fg); border: 1px solid var(--line); border-radius: 6px;
+  padding: 5px 10px; font: 600 12px var(--font); cursor: pointer; }
+.btn:hover:not(:disabled) { border-color: var(--accent); }
+.btn:disabled { opacity: .5; cursor: default; }
+.btn.primary { background: var(--accent); border-color: var(--accent); color: #fff; }
+.btn.danger { color: var(--bad); border-color: var(--bad); }
+textarea { width: 100%; min-height: 84px; resize: vertical; background: var(--surface-2); color: var(--fg);
+  border: 1px solid var(--line); border-radius: 6px; padding: 7px 8px; font: 12.5px/1.45 var(--font); }
+textarea:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+.notice { margin: 0; padding: 6px 10px; border-radius: 6px; border: 1px solid currentColor; font-size: 12px; }
+.notice.ok { color: var(--good); } .notice.bad { color: var(--bad); }
 </style>
 </head>
 <body>
@@ -158,7 +170,10 @@ SCRIPT = r"""
 "use strict";
 const token = decodeURIComponent(location.hash.slice(1));
 const REFRESH_MS = 5000;
-const state = {snapshot: null, project: null, ticket: null, detail: null, open: {brief: false, log: true}};
+const NOTICE_MS = 8000;
+const ANSWER_LIMIT = 2000;
+const state = {snapshot: null, project: null, ticket: null, detail: null, open: {brief: false, log: true},
+  drafts: {}, confirm: null, busy: false, notice: null};
 const esc = (value) => String(value ?? "").replace(/[&<>"']/g,
   (c) => ({"&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;"}[c]));
 const icon = (name) => `<svg class="icon" aria-hidden="true"><use href="#i-${name}"></use></svg>`;
@@ -200,16 +215,30 @@ function section(title, count, body) {
 }
 
 const empty = (text) => `<p class="empty">${esc(text)}</p>`;
+const actionsOn = () => Boolean(state.snapshot && state.snapshot.actions);
+const button = (act, label, cls, value = "") => `<button type="button" class="btn ${esc(cls)}"
+  data-act="${esc(act)}" data-value="${esc(value)}"${state.busy ? " disabled" : ""}>${esc(label)}</button>`;
+const notice = () => state.notice
+  ? `<p class="notice ${esc(state.notice.tone)}">${esc(state.notice.text)}</p>` : "";
+
+function cardAction(card) {
+  if (!actionsOn()) return "";
+  if (card.kind === "source" && card.held) return button("accept", "Accept", "primary", card.connector);
+  if (card.kind === "overdue" && card.handle) return button("snooze", "Snooze until tomorrow", "", card.handle);
+  return "";
+}
 
 function attentionCard(card, now) {
   const ref = card.ticket || card.handle || "";
   const open = card.ticket ? ` clickable" role="button" tabindex="0" data-ticket="${esc(card.ticket)}` : "";
+  const action = cardAction(card);
   return `<div class="card ${esc(card.tone)}${open}">
     <div class="row"><span class="chip ${esc(card.tone)}">${esc(KINDS[card.kind] || card.kind)}</span>
       <span class="grow title">${esc(card.title)}</span><span class="age">${esc(ago(card.since, now))}</span></div>
     <div class="sub">${esc(card.detail)}${ref ? ` · <span class="mono">${esc(ref)}</span>` : ""}
       ${card.url ? ` · ${link(card.url, "open")}` : ""}</div>
     ${card.quote ? `<div class="quote">${esc(card.quote)}</div>` : ""}
+    ${action ? `<div class="actions">${action}</div>` : ""}
   </div>`;
 }
 
@@ -334,7 +363,8 @@ function header(s, you) {
     </div>`;
   return `<header><div class="mark" aria-hidden="true"></div><h1>superagent</h1><span class="live"></span>
     <span class="tick">${finished ? `last tick ${esc(ago(finished, now))} ago` : "no tick yet"}</span>
-    <span class="spacer"></span>${pills}</header>${s.problem ? `<div class="banner">${esc(s.problem)}</div>` : ""}`;
+    <span class="spacer"></span>${pills}</header>${s.problem ? `<div class="banner">${esc(s.problem)}</div>` : ""}
+    ${notice()}`;
 }
 
 function overview(s) {
@@ -370,7 +400,8 @@ function sheet(title, lead, body, back) {
     aria-modal="true" aria-label="${esc(title)}"><header><div class="row">${lead}
     <span class="grow title">${esc(title)}</span>
     <button type="button" class="iconbtn" data-close="${back ? "ticket" : "project"}">
-      ${icon(back ? "back" : "close")}${back ? "Back" : "Close"}</button></div></header>${body}</div></div>`;
+      ${icon(back ? "back" : "close")}${back ? "Back" : "Close"}</button></div></header>
+    ${notice()}${body}</div></div>`;
 }
 
 function projectSheet(s) {
@@ -399,6 +430,18 @@ function folded(key, title, text) {
     <pre data-key="${esc(key)}">${esc(text)}</pre></details>`;
 }
 
+function ticketActions(d) {
+  if (!actionsOn() || !["open", "waiting"].includes(d.status)) return "";
+  const answer = d.status === "waiting" ? `<textarea data-answer="${esc(d.ticket)}" maxlength="${ANSWER_LIMIT}"
+    rows="4" aria-label="Your answer" placeholder="Your answer, the worker resumes with it"></textarea>
+    <div class="actions">${button("answer", "Send answer", "primary")}</div>` : "";
+  const cancel = state.confirm === d.ticket
+    ? `<span class="sub">Stop this task and its worker?</span>${button("cancel", "Yes, cancel it", "danger")}
+      ${button("keep", "Keep it", "")}`
+    : button("ask-cancel", "Cancel task", "danger");
+  return section("Actions", null, `<div class="card">${answer}<div class="actions">${cancel}</div></div>`);
+}
+
 function ticketSheet(s) {
   const d = state.detail;
   const now = s.generated_at;
@@ -411,6 +454,7 @@ function ticketSheet(s) {
     + section("Conversation", d.timeline.length, `<div class="timeline">${d.timeline.map((e) => `<div class="event">
       <span class="when" title="${esc(ago(e.at, now))} ago">${esc(clock(e.at))}</span>
       <span class="kind">${esc(e.kind)}</span><span class="text">${esc(e.text)}</span></div>`).join("")}</div>`)
+    + ticketActions(d)
     + folded("brief", "Brief the worker started from", d.brief || "No brief on disk.")
     + folded("log", "Worker output, last lines", d.log || "No output yet."), true);
 }
@@ -427,8 +471,18 @@ function render() {
   }
   const scrolls = new Map([...document.querySelectorAll(".layer[data-close] .sheet, pre[data-key]")]
     .map((el) => [el.closest(".layer").dataset.close + (el.dataset.key || ""), el.scrollTop]));
+  const typing = document.activeElement && document.activeElement.matches("textarea[data-answer]");
+  const caret = typing ? [document.activeElement.selectionStart, document.activeElement.selectionEnd] : null;
   panel.innerHTML = header(s, you) + overview(s)
     + (state.project ? projectSheet(s) : "") + (state.ticket ? ticketSheet(s) : "");
+  const box = document.querySelector("textarea[data-answer]");
+  if (box) {
+    box.value = state.drafts[box.dataset.answer] || "";
+    if (caret) {
+      box.focus({preventScroll: true});
+      box.setSelectionRange(caret[0], caret[1]);
+    }
+  }
   for (const el of document.querySelectorAll(".layer[data-close] .sheet, pre[data-key]")) {
     const key = el.closest(".layer").dataset.close + (el.dataset.key || "");
     if (scrolls.has(key)) el.scrollTop = scrolls.get(key);
@@ -456,6 +510,14 @@ async function getJson(path) {
   return body;
 }
 
+async function postJson(path, body) {
+  const response = await fetch(path, {method: "POST", cache: "no-store", body: JSON.stringify(body),
+    headers: {"X-Superagent-Token": token, "Content-Type": "application/json"}});
+  const reply = await response.json().catch(() => ({}));
+  if (!response.ok) throw new Error(reply.error || `The panel server answered ${response.status}.`);
+  return reply;
+}
+
 async function loadTicket() {
   if (!state.ticket) return;
   const id = state.ticket;
@@ -481,10 +543,71 @@ async function refresh() {
   }
 }
 
+function say(text, tone) {
+  const current = {text, tone};
+  state.notice = current;
+  setTimeout(() => {
+    if (state.notice !== current) return;
+    state.notice = null;
+    render();
+  }, NOTICE_MS);
+}
+
+function tomorrow() {
+  const day = new Date();
+  day.setDate(day.getDate() + 1);
+  day.setHours(0, 0, 0, 0);
+  return day.toISOString();
+}
+
+const DONE = {answer: "Sent", cancel: "Cancelled", accept: "Accepted, it applies on the next poll",
+  snooze: "Snoozed until tomorrow"};
+
+async function act(body, done = () => {}) {
+  if (state.busy) return;
+  state.busy = true;
+  render();
+  try {
+    await postJson("api/action", body);
+    done();
+    say(DONE[body.action], "ok");
+  } catch (error) {
+    say(error instanceof TypeError ? "Can't reach the panel server." : error.message, "bad");
+  } finally {
+    state.busy = false;
+  }
+  render();
+  await refresh();
+}
+
+async function onAction(target) {
+  const kind = target.dataset.act;
+  const ticket = state.ticket;
+  if (kind === "ask-cancel" || kind === "keep") {
+    state.confirm = kind === "ask-cancel" ? ticket : null;
+    render();
+  } else if (kind === "cancel") {
+    state.confirm = null;
+    await act({action: "cancel", ticket});
+  } else if (kind === "answer") {
+    const text = (state.drafts[ticket] || "").trim();
+    if (!text) {
+      say("Write an answer first.", "bad");
+      return render();
+    }
+    await act({action: "answer", ticket, text}, () => delete state.drafts[ticket]);
+  } else if (kind === "accept") {
+    await act({action: "accept", connector: target.dataset.value});
+  } else if (kind === "snooze") {
+    await act({action: "snooze", item: target.dataset.value, until: tomorrow()});
+  }
+}
+
 function close(layer) {
   if (layer === "ticket") {
     state.ticket = null;
     state.detail = null;
+    state.confirm = null;
   } else {
     state.project = null;
   }
@@ -492,6 +615,8 @@ function close(layer) {
 }
 
 document.addEventListener("click", async (event) => {
+  const action = event.target.closest("[data-act]");
+  if (action) return onAction(action);
   const target = event.target.closest("[data-ticket], [data-project], [data-close]");
   if (!target || event.target.closest("a")) return;
   if (target.dataset.close && (target.classList.contains("iconbtn") || event.target === target)) {
@@ -499,6 +624,7 @@ document.addEventListener("click", async (event) => {
   } else if (target.dataset.ticket) {
     state.ticket = target.dataset.ticket;
     state.detail = null;
+    state.confirm = null;
     render();
     await loadTicket();
     render();
@@ -506,6 +632,10 @@ document.addEventListener("click", async (event) => {
     state.project = target.dataset.project;
     render();
   }
+});
+
+document.addEventListener("input", (event) => {
+  if (event.target.matches("textarea[data-answer]")) state.drafts[event.target.dataset.answer] = event.target.value;
 });
 
 document.addEventListener("toggle", (event) => {
