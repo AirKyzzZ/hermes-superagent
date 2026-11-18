@@ -463,11 +463,21 @@ cmux = "/Applications/cmux.app/Contents/Resources/bin/cmux"
 
 `tmux` and `cmux` need full paths when ssh's `PATH` doesn't have them, which is the case for Homebrew on a Mac. A session stopped on an API error gets one `continue` after 10 minutes, and one stopped by a rate limit gets it once Claude Code says its auto-resume went stale. Every other case is posted to the agents channel as needing the owner, with the reason. A session whose process died is never restarted by the plugin, since cmux restores its own sessions and a closed tab looks the same as a crash: its line carries the `claude --resume` command instead.
 
+## Update
+
+```bash
+hermes plugins update hermes-superagent
+systemctl --user restart superagent-panel.service
+hermes superagent --home ~/superagent doctor
+```
+
+The tick starts a fresh process each time, so its next run has the new code. The panel keeps serving the old code until it restarts. `update` runs the same scan as the install and stops at the same verdicts. The gateway still doesn't need a restart.
+
 ## Undo
 
 ```bash
-systemctl --user disable --now superagent-tick.timer
+systemctl --user disable --now superagent-tick.timer superagent-panel.service
 hermes plugins disable hermes-superagent
 ```
 
-Then remove the hooks block from `~/.claude/settings.json` on each machine. The ledger in `~/superagent` stays until you delete it.
+If the tick runs from cron instead, delete its line with `crontab -e`. Then remove the hooks block from `~/.claude/settings.json` on each machine. `disable` keeps the plugin's files, so `hermes plugins enable hermes-superagent` brings it back as it was. `hermes plugins remove hermes-superagent` takes it off the machine. Either way the ledger in `~/superagent` stays until you delete it.
