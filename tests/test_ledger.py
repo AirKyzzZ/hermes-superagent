@@ -154,6 +154,7 @@ def test_handles_stay_unique_across_many_items(ledger: Ledger) -> None:
 
 
 def test_the_cli_lists_shows_closes_and_ignores(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
+    (tmp_path / "superagent.toml").write_text("", encoding="utf-8")
     ledger = Ledger(tmp_path / "superagent.db")
     first = ledger.record("todoist", task("t1"))
     second = ledger.record("todoist", task("t2", title="Call the bank"))
