@@ -49,9 +49,9 @@ def test_the_digest_covers_results_questions_escalations_and_rules(router: Route
 
 
 def test_the_digest_shows_a_reports_links_unclickable(router: Router, backend: FakeBackend) -> None:
-    ticket_with(router, backend, "t1", ReportState.READY, "merged, see [your PR](https://evil.example/pr)")
+    ticket_with(router, backend, "t1", ReportState.READY, "merged, see [your PR](https://evil.com/pr)")
     digest = build_digest(router.store, time.time() - HOUR, 1)
-    assert "merged, see your PR (https:​//evil.example/pr)" in digest and "https://" not in digest
+    assert "merged, see [your PR] (https:\u200b//evil\u200b.com/pr)" in digest and "https://" not in digest
 
 
 def test_an_empty_digest_says_so(router: Router) -> None:

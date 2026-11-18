@@ -395,10 +395,10 @@ def test_the_cli_sends_a_chat_safe_brief_only_with_a_channel(
 
 def test_a_sent_brief_carries_no_clickable_link(tmp_path: Path) -> None:
     home, handle = briefs_home(tmp_path, '[channels]\nbriefs = "discord:5"\n')
-    linked = draft(line("acceptance", "Pay at [the portal](https://evil.example/pay)", "p2"))
+    linked = draft(line("acceptance", "Pay at [the portal](https://evil.com/pay)", "p2"))
     assert cli(home, "briefs", handle, "--send", llm=scripted(linked)) == 0
     [message] = open_runtime(home).store.pending_outbox()
-    assert "the portal (https:​//evil.example/pay)" in message.text and "https://" not in message.text
+    assert "[the portal] (https:\u200b//evil\u200b.com/pay)" in message.text and "https://" not in message.text
 
 
 def test_a_broken_model_reply_fails_loudly_and_saves_nothing(

@@ -248,11 +248,11 @@ notify_detail = true
 """,
         encoding="utf-8",
     )
-    asked = "Merge [your PR](https://evil.example/pr)?"
+    asked = "Merge [your PR](https://evil.com/pr)?"
     hook(event("Stop", session="b", cwd="/work/site", last_assistant_message=asked, background_tasks=[]))
     tick(open_runtime(tmp_path))
     tick(open_runtime(tmp_path))
-    assert "is waiting: Merge your PR (https:​//evil.example/pr)? (it-" in sent.read_text(encoding="utf-8")
+    assert "is waiting: Merge [your PR] (https:\u200b//evil\u200b.com/pr)? (it-" in sent.read_text(encoding="utf-8")
 
 
 def test_the_cli_prints_the_hook_and_its_settings(capsys: pytest.CaptureFixture[str], tmp_path: Path) -> None:

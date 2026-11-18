@@ -26,7 +26,7 @@ from .guard import (
 )
 from .judges import LlmAssessor, LlmDriftJudge
 from .reporting import NotAWorkerError, WorkerIdentity, identity_from_workdir, record_tool_activity, submit_report
-from .router import NotAdmittedError, Outcome
+from .router import NotAdmittedError, Outcome, plain_links
 from .runtime import Runtime, open_runtime, tick
 from .store import StaleAssignmentError, Store
 from .worker import IDENTITY_FILENAME, ROLE_ROUTER, ROLE_WATCHDOG, ROLE_WORKER, WorkerStopError
@@ -297,7 +297,11 @@ class Plugin:
     def status_tool(self, args: Mapping[str, Any], **kwargs: Any) -> str:
         try:
             runtime = self.runtime()
-            return json.dumps({"tickets": runtime.router.status(), "undelivered": runtime.store.undelivered_count()})
+            tickets = [
+                {**line, "goal": plain_links(line["goal"]), "question": plain_links(line["question"])}
+                for line in runtime.router.status()
+            ]
+            return json.dumps({"tickets": tickets, "undelivered": runtime.store.undelivered_count()})
         except Exception as error:
             logger.exception("status failed")
             return _error(f"status failed: {error}")

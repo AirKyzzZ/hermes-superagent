@@ -543,32 +543,56 @@ def test_relayed_text_carries_no_send_directive(text: str) -> None:
     assert "media:" not in safe.lower()
 
 
-@pytest.mark.parametrize(
-    ("text", "safe"),
-    [
-        ("Opened [your PR](https://evil.example/pr)", "Opened your PR (https:​//evil.example/pr)"),
-        ("see https://evil.example/x for details", "see https:​//evil.example/x for details"),
-        ("see <https://evil.example/x>", "see <https:​//evil.example/x>"),
-        ("write to mailto:help@evil.example", "write to mailto:​help@evil.example"),
-        ("HTTPS://EVIL.EXAMPLE/X", "HTTPS:​//EVIL.EXAMPLE/X"),
-        ("done (https://evil.example/x), next.", "done (https:​//evil.example/x), next."),
-    ],
-)
+LINK_CASES = [
+    ("Opened [your PR](https://evil.com/pr)", "Opened [your PR] (https:\u200b//evil\u200b.com/pr)"),
+    ("see https://evil.com/x for details", "see https:\u200b//evil\u200b.com/x for details"),
+    ("see <https://evil.com/x>", "see <\u200bhttps:\u200b//evil\u200b.com/x>"),
+    ("write to mailto:help@evil.com", "write to mailto:\u200bhelp@evil\u200b.com"),
+    ("HTTPS://EVIL.COM/X", "HTTPS:\u200b//EVIL\u200b.COM/X"),
+    ("done (https://evil.com/x), next.", "done (https:\u200b//evil\u200b.com/x), next."),
+    ('<a href="evil.com/login">your PR</a>', '<\u200ba href="evil.com/login">your PR<\u200b/a>'),
+    ('<a href="https&#58;//evil.com">your PR</a>', '<\u200ba href="https&#58;//evil.com">your PR<\u200b/a>'),
+    ("[your PR](evil.com/pr_(1))", "[your PR] (evil.com/pr_(1))"),
+    ("[your PR]( evil.com/pr )", "[your PR] ( evil.com/pr )"),
+    ("[[a](b)](evil.com/x)", "[ [a] (b)] (evil.com/x)"),
+    ("[see [docs]](https:\\/\\/evil.com)", "[see [docs]] (https:\u200b\\/\\/evil\u200b.com)"),
+    ("https:/\\evil.com", "https:\u200b/\\evil\u200b.com"),
+    ("https:\\\\evil.com", "https:\u200b\\\\evil\u200b.com"),
+    ("https:evil.com", "https:\u200bevil\u200b.com"),
+    ("<https:evil.com|your PR>", "<\u200bhttps:\u200bevil\u200b.com|your PR>"),
+]
+
+
+@pytest.mark.parametrize(("text", "safe"), LINK_CASES)
 def test_relayed_links_show_their_address_and_cannot_be_clicked(text: str, safe: str) -> None:
     assert chat_safe(text) == safe
 
 
+@pytest.mark.parametrize(("text", "safe"), LINK_CASES)
+def test_making_relayed_text_safe_twice_changes_nothing(text: str, safe: str) -> None:
+    assert chat_safe(safe) == safe
+
+
 def test_relayed_text_without_a_link_is_left_byte_for_byte() -> None:
-    text = "Fixed config.py on evil.example: 3:1 tests pass, see [notes] (below) and host:8080//x. Ça marche"
+    text = "Fixed config.py on evil.com: 3:1 tests pass, see [notes] (below) and host:8080//x. Ça marche"
     assert chat_safe(text) == text
+
+
+@pytest.mark.parametrize("text", ["a" * 200_000, "a." * 200_000])
+def test_a_long_text_is_made_safe_in_linear_time(text: str) -> None:
+    started = time.perf_counter()
+    chat_safe(text)
+    assert time.perf_counter() - started < 0.2
 
 
 def test_a_report_reaches_chat_with_its_links_unclickable(router: Router, backend: FakeBackend) -> None:
     router.ingest(event())
     assignment_id, _ = only_assignment(router.store)
-    summary = "Opened [your PR](https://evil.example/pr)"
+    summary = "Opened [your PR](https://evil.com/pr)"
     router.store.add_report(assignment_id, backend.started[0][2], ReportState.READY, summary)
-    assert [unlabelled(text) for _, _, text in router.relay()] == ["Done: Opened your PR (https:​//evil.example/pr)"]
+    assert [unlabelled(text) for _, _, text in router.relay()] == [
+        "Done: Opened [your PR] (https:\u200b//evil\u200b.com/pr)"
+    ]
 
 
 def test_the_person_who_asked_can_cancel_their_ticket(router: Router, backend: FakeBackend) -> None:
