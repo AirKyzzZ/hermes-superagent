@@ -498,7 +498,7 @@ Event content is attacker-controlled, so who can start or steer work is enforced
 | Router tricked into executing | `pre_tool_call` allowlist, plus toolsets you remove from the profile |
 | Stranger steering a worker | Bots never reach workers. Strangers don't either unless a source opts in, and a stranger can't resume a parked ticket |
 | Forged or late reports | Per-assignment token, hashed in the database and handed over in a private file in the worker's directory. A session anywhere else gets no tools, and a worker is fenced before it's stopped |
-| A report exfiltrating files | Relay is code. `MEDIA:` tags are neutralised and text is capped at 100 words |
+| A report exfiltrating files | Relay is code. `MEDIA:` tags are neutralised, links are shown as plain text so the chat app neither opens nor previews them, and text is capped at 100 words |
 | Watchdog fooled | The judge has no tools and returns one of two values, so the most it can do is spend the repair budget and escalate |
 
 If the gate itself fails, the message is dropped and logged, so a person gets silence rather than a bypass. An allowed person's `/` commands skip the gate and go straight to Hermes unrecorded, even on an `ignore` source. They can reach the model as skills but can't start work, because dispatch needs a recorded trigger. The full threat model, with residual risks and known limits, is in [DESIGN.md](DESIGN.md#threat-model).
