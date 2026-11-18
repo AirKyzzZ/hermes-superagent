@@ -46,6 +46,8 @@ _HOST_NAME = re.compile(
     r"\.(?=[a-z0-9-]*[a-z])[a-z0-9](?:[a-z0-9-]*[a-z0-9])?"
 )
 _PORT = re.compile(r"[1-9][0-9]{0,4}")
+_HEX_LABEL = re.compile(r"0x[0-9a-f]*")
+_ORIGIN = re.compile(r"(https?)://([^:/?#@\[\]\s]+)(?::([^/?#]+))?")
 HOST_SHOWN_CHARS = 100
 _CLOSED = (ItemState.DONE.value, ItemState.IGNORED.value)
 _ATTENTION_STATES = {state.value for state in ATTENTION_STATES}
@@ -699,7 +701,11 @@ def allowed_hosts(port: int, extra: Sequence[str] = ()) -> tuple[str, ...]:
     for entry in extra:
         host = entry.strip().lower()
         name, colon, given = host.partition(":")
-        if not _HOST_NAME.fullmatch(name) or (colon and not _is_port(given)):
+        if (
+            not _HOST_NAME.fullmatch(name)
+            or _HEX_LABEL.fullmatch(name.rpartition(".")[2])
+            or (colon and not _is_port(given))
+        ):
             raise ValueError(
                 "--allow-host takes a host name such as panel.your-tailnet.ts.net, or a name and a port "
                 "from 1 to 65535 such as panel.your-tailnet.ts.net:8443, and never an IP address, "
@@ -717,21 +723,19 @@ def host_allowed(host: str, allowed: Sequence[str]) -> bool:
     return _is_port(port) and (host in allowed or name in allowed)
 
 
-def _wrong_host(host: str, allowed: Sequence[str]) -> str:
-    names = ", ".join(allowed[:-1]) + f" and {allowed[-1]}"
+def _wrong_host(host: str) -> str:
     shown = json.dumps(host[:HOST_SHOWN_CHARS])
-    return f"this panel answers to {names}, not {shown}. --allow-host adds a name."
+    return (
+        f"this panel doesn't answer to {shown}. Open a URL superagent panel printed, or pass that name to --allow-host."
+    )
 
 
 def origin_allowed(origin: str, allowed: Sequence[str]) -> bool:
-    parts = urlsplit(origin.lower())
-    if parts.scheme not in ("http", "https") or "@" in parts.netloc or parts.path or parts.query or parts.fragment:
+    match = _ORIGIN.fullmatch(origin.lower())
+    if not match:
         return False
-    try:
-        port = parts.port or (443 if parts.scheme == "https" else 80)
-    except ValueError:
-        return False
-    return parts.hostname is not None and host_allowed(f"{parts.hostname}:{port}", allowed)
+    scheme, name, port = match.groups()
+    return host_allowed(f"{name}:{port or (443 if scheme == 'https' else 80)}", allowed)
 
 
 def panel_handler(
@@ -780,7 +784,7 @@ def panel_handler(
         def _host_refused(self) -> str:
             hosts = self._hosts()
             host = self.headers.get("Host", "")
-            return "" if host_allowed(host, hosts) else _wrong_host(host, hosts)
+            return "" if host_allowed(host, hosts) else _wrong_host(host)
 
         def _token_matches(self) -> bool:
             return hmac.compare_digest(self.headers.get(TOKEN_HEADER, "").encode(), token.encode())

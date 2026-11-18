@@ -313,8 +313,10 @@ def test_a_name_passed_to_allow_host_is_answered_on_any_port_unless_one_is_given
 @pytest.mark.parametrize(
     "host",
     [
-        "localhost.",
-        "127.0.0.1.",
+        "localhost.:{port}",
+        "127.0.0.1.:{port}",
+        "panel.example.ts.net.",
+        "panel.example.ts.net.:8443",
         "[::1]:{port}",
         "name@panel.example.ts.net",
         "panel.example.ts.net:08443",
@@ -341,17 +343,17 @@ def test_a_name_with_a_port_is_not_answered_on_the_panel_port(tmp_path: Path) ->
         assert fetch(port, "/", {"Host": f"localhost:{port}"})[0] == 200
 
 
-def test_a_refused_host_is_named_next_to_the_names_the_panel_answers_to(tmp_path: Path) -> None:
+def test_a_refused_host_is_named_without_the_names_the_panel_answers_to(tmp_path: Path) -> None:
     with serving(tmp_path, "panel.example.ts.net", "other.example.ts.net:8443") as port:
         status, headers, body = fetch(port, "/", {"Host": "evil.example:80"})
         assert status == 421
         assert headers["Content-Type"] == "text/plain; charset=utf-8"
         assert body.decode() == (
-            f"this panel answers to 127.0.0.1:{port}, localhost:{port}, panel.example.ts.net and "
-            'other.example.ts.net:8443, not "evil.example:80". --allow-host adds a name.'
+            'this panel doesn\'t answer to "evil.example:80". '
+            "Open a URL superagent panel printed, or pass that name to --allow-host."
         )
-        assert b'not "evil\\".example"' in fetch(port, "/", {"Host": 'evil".example'})[2]
-        assert b'not "' + b"a" * HOST_SHOWN_CHARS + b'"' in fetch(port, "/", {"Host": "a" * 500})[2]
+        assert b'answer to "evil\\".example"' in fetch(port, "/", {"Host": 'evil".example'})[2]
+        assert b'answer to "' + b"a" * HOST_SHOWN_CHARS + b'"' in fetch(port, "/", {"Host": "a" * 500})[2]
 
 
 @pytest.mark.parametrize(
@@ -371,7 +373,9 @@ def test_allow_host_refuses_anything_but_a_name_or_a_name_and_a_port(entry: str)
         allowed_hosts(8765, [entry])
 
 
-@pytest.mark.parametrize("entry", ["127.0.0.1", "10.0.0.1", "10.0.0.1:8443", "100.64.0.1"])
+@pytest.mark.parametrize(
+    "entry", ["127.0.0.1", "10.0.0.1", "10.0.0.1:8443", "100.64.0.1", "10.0.0.0x1", "0x7f.0x1", "1.0x7f"]
+)
 def test_allow_host_refuses_an_ip_address(entry: str) -> None:
     with pytest.raises(ValueError, match="never an IP address"):
         allowed_hosts(8765, [entry])
@@ -553,6 +557,8 @@ def test_snooze_hides_an_overdue_item_until_then(served: int, tmp_path: Path) ->
         ({**GOOD, "Origin": "https://attacker.example"}, 403),
         ({**GOOD, "Origin": "null"}, 403),
         ({**GOOD, "Origin": "http://127.0.0.1:1"}, 403),
+        ({**GOOD, "Origin": "http://["}, 403),
+        ({**GOOD, "Origin": "http://[::1"}, 403),
         ({**GOOD, "Host": "attacker.example"}, 421),
     ],
 )
@@ -572,8 +578,13 @@ def test_the_panel_own_origins_may_act(tmp_path: Path) -> None:
         tailnet = {**GOOD, "Host": "panel.example.ts.net"}
         cancel = {"action": "cancel", "ticket": parked}
         assert post(port, cancel, {**tailnet, "Origin": "https://other.example.ts.net"})[0] == 403
-        assert post(port, cancel, {**tailnet, "Origin": "https://panel.example.ts.net:99999"})[0] == 403
+        for odd in (":99999", ":0", ":08443", ":", "/", "."):
+            assert post(port, cancel, {**tailnet, "Origin": f"https://panel.example.ts.net{odd}"})[0] == 403
+        assert post(port, cancel, {**tailnet, "Origin": "https://panel.exa\tmple.ts.net"})[0] == 403
         assert post(port, cancel, {**tailnet, "Origin": "https://user@panel.example.ts.net"})[0] == 403
+        sibling = {**GOOD, "Host": "panel.example.ts.net:8443", "Origin": "https://panel.example.ts.net:8443"}
+        assert post(port, {"action": "none"}, sibling)[0] == 400
+        assert post(port, {"action": "none"}, {**tailnet, "Origin": "http://panel.example.ts.net"})[0] == 400
         answer = {"action": "answer", "ticket": parked, "text": "SQLite"}
         assert post(port, answer, {**GOOD, "Origin": f"http://localhost:{port}"})[0] == 200
         assert post(port, cancel, {**tailnet, "Origin": "https://panel.example.ts.net"})[0] == 200
