@@ -471,13 +471,14 @@ systemctl --user restart superagent-panel.service
 hermes superagent --home ~/superagent doctor
 ```
 
-The tick starts a fresh process each time, so its next run has the new code. The panel keeps serving the old code until it restarts. `update` runs the same scan as the install and stops at the same verdicts. The gateway still doesn't need a restart.
+The tick starts a fresh process each time, so its next run has the new code. The panel keeps serving the old code until it restarts. Don't restart the gateway, whatever `update` prints. `update` runs the same scan as the install: if it stops at `CAUTION`, read the `HIGH` lines as section 1 says, and when they pass run `hermes plugins update --force hermes-superagent`. The hook on each machine is a copy, so repeat section 3's first command when a release changes `superagent/agents/hook.py`.
 
 ## Undo
 
 ```bash
-systemctl --user disable --now superagent-tick.timer superagent-panel.service
+systemctl --user disable --now superagent-tick.timer
+systemctl --user disable --now superagent-panel.service
 hermes plugins disable hermes-superagent
 ```
 
-If the tick runs from cron instead, delete its line with `crontab -e`. Then remove the hooks block from `~/.claude/settings.json` on each machine. `disable` keeps the plugin's files, so `hermes plugins enable hermes-superagent` brings it back as it was. `hermes plugins remove hermes-superagent` takes it off the machine. Either way the ledger in `~/superagent` stays until you delete it.
+If the tick runs from the README's crontab line instead, delete it with `crontab -e`. Then remove the hooks block from `~/.claude/settings.json` on each machine. `disable` keeps the plugin's files, so `hermes plugins enable hermes-superagent` brings the plugin back, and sections 3 and 5 put the hooks and units back. `hermes plugins remove hermes-superagent` takes it off the machine. Either way the ledger in `~/superagent`, and `~/.superagent` with the hook and its logs on each machine, stay until you delete them.
