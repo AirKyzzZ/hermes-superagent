@@ -462,6 +462,18 @@ def test_forward_tool_reports_an_unknown_ticket(tmp_path: Path) -> None:
     assert "no such ticket" in answer["error"]
 
 
+def test_status_hands_the_router_goals_and_questions_with_their_links_unclickable(tmp_path: Path) -> None:
+    ctx = registered("router", tmp_path)
+    store = Store(tmp_path / DB_FILENAME)
+    mandate = Mandate("v", "g", Strength.EXPLICIT, "a", "chat", "t-1")
+    ticket, _ = store.create_ticket("Merge [your PR](https://evil.com/pr)", mandate, "chat:1", "")
+    assignment, token = store.create_assignment(ticket.id)
+    store.add_report(assignment.id, token, ReportState.BLOCKED, "stuck", 'Use <a href="evil.com">this</a>?')
+    [line] = json.loads(ctx.tools["superagent_status"]["handler"]({}))["tickets"]
+    assert line["goal"] == "Merge [your PR] (https:\u200b//evil\u200b.com/pr)"
+    assert line["question"] == 'Use <\u200ba href="evil.com">this<\u200b/a>?'
+
+
 def test_dispatch_tool_only_works_in_the_router(tmp_path: Path) -> None:
     ctx = registered("watchdog", tmp_path)
     answer = json.loads(ctx.tools["superagent_dispatch"]["handler"]({"trigger_id": "x", "goal": "y"}))
