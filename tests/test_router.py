@@ -573,6 +573,18 @@ def test_making_relayed_text_safe_twice_changes_nothing(text: str, safe: str) ->
     assert chat_safe(safe) == safe
 
 
+@pytest.mark.parametrize(
+    ("text", "safe"),
+    [
+        ("<!subteam^S0123|@oncall> please approve", "<\u200b!subteam^S0123|@oncall> please approve"),
+        ("<@everyone look", "<\u200b@\u200beveryone look"),
+    ],
+)
+def test_a_relayed_group_mention_pings_nobody(text: str, safe: str) -> None:
+    assert chat_safe(text) == safe
+    assert chat_safe(safe) == safe
+
+
 def test_relayed_text_without_a_link_is_left_byte_for_byte() -> None:
     text = "Fixed config.py on evil.com: 3:1 tests pass, see [notes] (below) and host:8080//x. Ça marche"
     assert chat_safe(text) == text

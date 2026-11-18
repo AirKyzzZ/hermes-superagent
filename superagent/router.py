@@ -34,8 +34,8 @@ ASSESS_ATTEMPTS = 3
 OFFER_VALID_SECONDS = 3600.0
 _ATTACHMENT_TAG = re.compile(r"media:", re.IGNORECASE)
 _DIRECTIVE_OPENING = re.compile(r"\[(?=\[)")
-_MENTION = re.compile(r"@(?=everyone|here)|<@|<#")
-_TAG_OPENER = re.compile(r"<(?=/?[a-z])", re.IGNORECASE)
+_MENTION = re.compile(r"@(?=everyone|here)|<(?=[@#])")
+_TAG_OPENER = re.compile(r"<(?=[/!a-z])", re.IGNORECASE)
 _LINK_SCHEME = re.compile(
     r"(?<![a-z0-9+.-])(?:[a-z0-9+.-]+:(?=[/\\])|(?:https?|mailto|tel|sms|javascript|data|vbscript):(?!\u200b))",
     re.IGNORECASE,
