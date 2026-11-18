@@ -241,6 +241,42 @@ def test_the_cli_prints_the_hook_and_its_settings(capsys: pytest.CaptureFixture[
     assert capsys.readouterr().out == HOOK_SCRIPT.read_text()
 
 
+FAKE_SSH = """#!{python}
+import shlex, subprocess, sys
+args = sys.argv[1:]
+while args[0] == "-o":
+    args = args[2:]
+command = " ".join(args[1:])
+with open({log!r}, "a") as log:
+    log.write(command + "\\n")
+argv = shlex.split(command)[2:] if command.startswith("wsl.exe -e ") else ["/bin/sh", "-c", command]
+sys.exit(subprocess.run(argv, env={{"HOME": {home!r}, "PATH": "/usr/bin:/bin"}}).returncode)
+"""
+
+
+@pytest.mark.parametrize(
+    ("options", "remote"), [(["-o", "BatchMode=yes", "mac"], []), (["pc"], ["wsl.exe", "-e"])], ids=["mac", "wsl"]
+)
+def test_a_remote_host_reads_its_own_home_and_gets_only_python_on_its_command_line(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, options: list[str], remote: list[str]
+) -> None:
+    monkeypatch.delenv("SUPERAGENT_SESSIONS_DIR", raising=False)
+    far = tmp_path / "far"
+    (far / ".superagent" / "sessions").mkdir(parents=True)
+    since = time.time()
+    stop = {"event": "Stop", "t": since, "cwd": "/w/app", "text": "Ship it?", "background": 0}
+    (far / ".superagent" / "sessions" / "far-away-1.jsonl").write_text(json.dumps(stop) + "\n")
+    ssh, log = tmp_path / "ssh", tmp_path / "ssh.log"
+    ssh.write_text(FAKE_SSH.format(python=sys.executable, log=str(log), home=str(far)))
+    ssh.chmod(0o755)
+    connector = build_connector(agents_spec(host=[str(ssh), *options, *remote], python=sys.executable))
+    poll = connector.poll("")
+    [item] = poll.items
+    assert poll.complete and item.external_id == "far-away-1" and item.excerpt == "Ship it?"
+    assert connector.act("far-away-1", "nudge", repr(since))[:2] == ("held", "its claude process isn't running")
+    assert log.read_text().splitlines() == [" ".join([*remote, sys.executable, "-"])] * 2
+
+
 @pytest.mark.parametrize("extra", [{"host": "ssh mac"}, {"timeout": 0}, {"stall_after": "soon"}, {"python": ""}])
 def test_bad_agents_settings_are_refused(extra: dict[str, object]) -> None:
     with pytest.raises(Exception, match="connectors.agents-here"):

@@ -90,3 +90,28 @@ Sans rôle posé dans le profil, il n'y a ni router ni workers. Le panneau montr
 | « Wrong or missing token » | Il manque le `#JETON` à la fin de l'URL, ou le jeton a été changé |
 | « run a tick to update it » | La base date d'une version plus ancienne, un `tick` la met à jour |
 | `502` de Tailscale | Le service est arrêté : `systemctl --user status superagent-panel` |
+
+## Voir les sessions du Mac et du PC
+
+Le tableau des agents lit les sessions Claude Code des autres machines par ssh depuis le VPS, à travers le tailnet. Le détail et les raisons sont dans [Sessions on other machines](dogfood-install.md#sessions-on-other-machines), avec les blocs de config. Ci-dessous, `mac`, `pc-wsl` et `you` sont à remplacer par tes noms, dans `~/.ssh/config` du VPS seulement.
+
+1. **Sur le Mac :** active Session à distance (Réglages Système > Général > Partage) pour ton utilisateur seulement, et vérifie que `/usr/bin/python3 --version` répond. S'il propose les outils de ligne de commande, installe-les. Pour que superagent puisse relancer une session dans cmux, mets Réglages cmux > Automation > Socket Control Mode sur « Automation mode ».
+2. **Sur le PC, dans un terminal WSL :** vérifie que `/etc/wsl.conf` contient `systemd=true` sous `[boot]`, puis installe Tailscale dans WSL avec son serveur SSH :
+
+   Installe Tailscale pour Linux dans WSL en suivant [tailscale.com/download/linux](https://tailscale.com/download/linux), puis :
+
+   ```bash
+   sudo tailscale up --ssh --hostname pc-wsl --accept-dns=false
+   ```
+
+   Dans la politique du tailnet, la règle `ssh` doit être en `accept` et non en `check`, sinon le VPS bute sur une connexion par navigateur.
+3. **Sur le VPS, par Hermes :** crée la clé et les alias `mac` et `pc` comme dans le guide, copie la clé sur le Mac avec `ssh-copy-id -o StrictHostKeyChecking=accept-new -i ~/.ssh/superagent.pub mac` (cette ligne demande ton mot de passe du Mac, lance-la toi-même dans un terminal, pas par Hermes), enregistre la clé d'hôte de chaque machine et pose le hook. Hermes fusionne ensuite le bloc imprimé par `hermes superagent agents --hook-settings` dans `~/.claude/settings.json` de chaque machine, en te montrant le diff.
+
+   ```bash
+   ssh -o StrictHostKeyChecking=accept-new mac /usr/bin/python3 --version
+   ssh -o StrictHostKeyChecking=accept-new pc python3 --version
+   hermes superagent agents --hook-script | ssh mac 'mkdir -p ~/.superagent && cat > ~/.superagent/hook.py'
+   hermes superagent agents --hook-script | ssh pc 'mkdir -p ~/.superagent && cat > ~/.superagent/hook.py'
+   ```
+
+4. Ajoute les blocs `agents-mac` et `agents-pc` du guide à `~/superagent/superagent.toml`, puis lance `hermes superagent --home ~/superagent doctor`. Chaque machine doit afficher `ok` suivi de `N items`, ou `warn` tant qu'aucune session n'a eu d'événement depuis la pose du hook. Un `fail` dit pourquoi et donne la commande ssh à essayer à la main.
