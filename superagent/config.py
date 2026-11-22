@@ -79,6 +79,15 @@ class ConfigError(ValueError):
     pass
 
 
+class NotSetUpError(ConfigError):
+    def __init__(self, home: Path) -> None:
+        super().__init__(f"no {CONFIG_FILENAME} in {home} yet")
+        self.home = home
+
+    def hint(self, cli: str) -> str:
+        return f'{self}: run "{cli} --home {self.home} setup" first'
+
+
 def parse_config(raw: str) -> Config:
     try:
         data = tomllib.loads(raw)
@@ -231,7 +240,13 @@ def _reject_unknown_keys(data: dict[str, object]) -> None:
         raise ConfigError("; ".join(problems))
 
 
+def ensure_set_up(home: Path) -> None:
+    if not (home / CONFIG_FILENAME).exists() and not (home / LAST_GOOD_FILENAME).is_file():
+        raise NotSetUpError(home)
+
+
 def load_config(home: Path) -> Config:
+    ensure_set_up(home)
     path = home / CONFIG_FILENAME
     last_good = home / LAST_GOOD_FILENAME
     try:

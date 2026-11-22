@@ -26,6 +26,7 @@ Notable changes to hermes-superagent. The format follows [Keep a Changelog](http
 - `doctor` says "1 minute ago", and setup's hint for the Claude Code hook speaks to you rather than to an agent.
 - Stopping a worker also stops its descendants that left its process group, such as a `setsid` dev server, while their parent chain leads back to the worker, and it never reads other processes' environments. Before, they survived a stop or a restart. A process that left the group and lost its parent first, such as a double-forked daemon, still isn't found.
 - A stop that can't list processes after SIGTERM, because `ps` timed out or failed, still sends SIGKILL, and still reports the worker as possibly running unless a later listing shows it gone.
+- A command such as `tick`, `status`, `brief`, `panel` or `ledger` run before `setup` says in one line to run setup first and exits 2, instead of a traceback, and `doctor` says the same in its failed config check. A broken config with no last good copy to fall back on is a one-line error too.
 - An `agents` host that ssh can't reach or log in to now says so in `doctor` and in poll errors, with the command to try by hand, instead of "the probe exited 255". A missing `python3` and output that isn't JSON, such as a shell banner, are named too.
 - A session on a Windows host is named after its folder on the board and in the panel, not its whole `C:\` path.
 
