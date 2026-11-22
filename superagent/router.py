@@ -34,7 +34,14 @@ ASSESS_ATTEMPTS = 3
 OFFER_VALID_SECONDS = 3600.0
 _ATTACHMENT_TAG = re.compile(r"media:", re.IGNORECASE)
 _DIRECTIVE_OPENING = re.compile(r"\[(?=\[)")
-_MENTION = re.compile(r"@(?=everyone|here)|<@|<#")
+_MENTION = re.compile(r"@(?=everyone|here)|<(?=[@#])")
+_TAG_OPENER = re.compile(r"<(?=[/!a-z])", re.IGNORECASE)
+_LINK_SCHEME = re.compile(
+    r"(?<![a-z0-9+.-])(?:[a-z0-9+.-]+:(?=[/\\])|(?:https?|mailto|tel|sms|javascript|data|vbscript):(?!\u200b))",
+    re.IGNORECASE,
+)
+_LINK_HOST = re.compile(r"(?<![a-z0-9+.-])([a-z0-9+.-]+:\u200b[/\\]*)([^/\\?#\s<]*)", re.IGNORECASE)
+_BARE_DOT = re.compile(r"(?<!\u200b)\.")
 
 
 PROJECT_NAME_LIMIT = 60
@@ -318,8 +325,13 @@ def project_name(value: str) -> str:
 
 
 def chat_safe(text: str) -> str:
-    quiet = _MENTION.sub(lambda match: match.group(0)[0] + "\u200b" + match.group(0)[1:], text)
+    quiet = _MENTION.sub(lambda match: match.group(0)[0] + "\u200b" + match.group(0)[1:], plain_links(text))
     return _DIRECTIVE_OPENING.sub("[ ", _ATTACHMENT_TAG.sub("media ", quiet))
+
+
+def plain_links(text: str) -> str:
+    unlinked = _LINK_SCHEME.sub("\\g<0>\u200b", _TAG_OPENER.sub("<\u200b", text.replace("](", "] (")))
+    return _LINK_HOST.sub(lambda match: match[1] + _BARE_DOT.sub("\u200b.", match[2]), unlinked)
 
 
 def shorten(text: str, limit: int = CHAT_WORD_LIMIT) -> str:

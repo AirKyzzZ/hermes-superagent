@@ -233,6 +233,28 @@ notify_detail = true
     assert any("working" in line and "app" in line for line in board)
 
 
+def test_a_session_question_reaches_chat_with_its_links_unclickable(sessions: Path, tmp_path: Path) -> None:
+    sent = tmp_path / "sent.tsv"
+    (tmp_path / "superagent.toml").write_text(
+        f"""
+[outbound]
+argv = ["{sys.executable}", "{OUTBOUND}", "{sent}", "{{channel}}", "{{text}}"]
+
+[connectors.agents-here]
+type = "agents"
+every = "0s"
+channel = "discord:agents"
+notify_detail = true
+""",
+        encoding="utf-8",
+    )
+    asked = "Merge [your PR](https://evil.com/pr)?"
+    hook(event("Stop", session="b", cwd="/work/site", last_assistant_message=asked, background_tasks=[]))
+    tick(open_runtime(tmp_path))
+    tick(open_runtime(tmp_path))
+    assert "is waiting: Merge [your PR] (https:\u200b//evil\u200b.com/pr)? (it-" in sent.read_text(encoding="utf-8")
+
+
 def test_the_cli_prints_the_hook_and_its_settings(capsys: pytest.CaptureFixture[str], tmp_path: Path) -> None:
     assert main(["--home", str(tmp_path), "agents", "--hook-settings"]) == 0
     settings = json.loads(capsys.readouterr().out)
