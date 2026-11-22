@@ -218,12 +218,7 @@ Set-Service sshd -StartupType Automatic; Start-Service sshd
 python --version; git --version
 ```
 
-For an account in the Administrators group, the default on a personal PC, sshd ignores `~\.ssh\authorized_keys` and reads `C:\ProgramData\ssh\administrators_authorized_keys`, which only Administrators and SYSTEM may be able to read. `ssh-copy-id` can't write it, since it runs a Unix shell on the far side. Paste the VPS's `~/.ssh/superagent.pub` line in from the same PowerShell; the `icacls` line uses SIDs so it works whatever the Windows language:
-
-```powershell
-Add-Content -Encoding ascii C:\ProgramData\ssh\administrators_authorized_keys 'ssh-ed25519 AAAA... superagent'
-icacls C:\ProgramData\ssh\administrators_authorized_keys /inheritance:r /grant '*S-1-5-32-544:F' /grant '*S-1-5-18:F'
-```
+For an account in the Administrators group, the default on a personal PC, Windows's sshd ignores the key list in your profile and reads a shared one under `C:\ProgramData\ssh`, which only Administrators and SYSTEM may be able to read. `ssh-copy-id` can't write it, since it runs a Unix shell on the far side. Add the VPS's `~/.ssh/superagent.pub` line by following the [administrative user steps](https://learn.microsoft.com/en-us/windows-server/administration/openssh/openssh_keymanagement#administrative-user) in Microsoft's guide. On a Windows that isn't in English, the group names in its `icacls` line are translated: use `*S-1-5-32-544` for Administrators and `*S-1-5-18` for SYSTEM.
 
 Windows's sshd runs commands through `cmd.exe`, which is why only `python -` goes on the command line. Set `python = "python"`: a python.org install has no `python3.exe`, and that name falls through to the Microsoft Store stub. Two things don't work on Windows. The probe can't tell whether a Windows `claude` process is still running, so a session closed without `/exit` keeps its last state until it ages off the board after 7 days. And relaunch needs tmux or cmux, so leave `relaunch` off for the PC.
 
