@@ -254,7 +254,7 @@ hermes superagent agents --hook-settings                             # for the M
 hermes superagent agents --hook-settings | sed 's/python3 /python /'  # for the PC
 ```
 
-Before merging the PC's block, check in Git Bash on the PC that the hook starts. This must print `0`: `echo '{}' | python ~/.superagent/hook.py; echo $?`.
+Before merging the PC's block, check in Git Bash on the PC that the hook starts. This must print `0`: `python ~/.superagent/hook.py < /dev/null; echo $?`.
 
 The connector blocks:
 
