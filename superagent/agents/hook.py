@@ -55,6 +55,9 @@ def start_ticks(pid: int) -> str:
 
 
 def ancestor_claude() -> tuple[int, str]:
+    if os.name == "nt":
+        # Windows would run a ps.exe from the session's folder before the one on PATH
+        return 0, ""
     pid = os.getppid()
     env = {**os.environ, "LC_ALL": "C"}
     for _ in range(6):

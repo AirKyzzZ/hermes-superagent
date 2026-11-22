@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import os
+import runpy
 import subprocess
 import sys
 import time
@@ -12,7 +13,7 @@ import pytest
 
 from superagent.agents import HOOK_EVENTS, HOOK_SCRIPT, PROBE_SCRIPT, SessionState, classify
 from superagent.cli import main
-from superagent.connectors import ConnectorSpec, build_connector, parse_specs
+from superagent.connectors import ConnectorError, ConnectorSpec, build_connector, parse_specs
 from superagent.ledger import ItemState, Ledger
 from superagent.polling import poll_sources
 from superagent.runtime import open_runtime, tick
@@ -301,6 +302,31 @@ def test_a_remote_host_reads_its_own_home_and_gets_only_python_on_its_command_li
     assert poll.complete and item.external_id == "far-away-1" and item.excerpt == "Ship it?"
     assert connector.act("far-away-1", "nudge", repr(since))[:2] == ("held", "its claude process isn't running")
     assert log.read_text().splitlines() == [f"{sys.executable} -"] * 2
+
+
+def test_a_host_that_answers_in_its_own_code_page_still_shows_its_error(tmp_path: Path) -> None:
+    host = tmp_path / "pc"
+    host.write_text(
+        f"#!{sys.executable}\nimport sys\nsys.stdin.read()\n"
+        "sys.stderr.buffer.write(b\"'python3' n'est pas reconnu, un programme ex\\x82cutable\")\nsys.exit(1)\n"
+    )
+    host.chmod(0o755)
+    connector = build_connector(agents_spec(host=[str(host)]))
+    with pytest.raises(ConnectorError, match="exited 1: 'python3' n'est pas reconnu"):
+        connector.poll("")
+
+
+def test_on_windows_the_hook_and_probe_never_run_ps_or_signal_a_pid(monkeypatch: pytest.MonkeyPatch) -> None:
+    hook_script, probe = runpy.run_path(str(HOOK_SCRIPT)), runpy.run_path(str(PROBE_SCRIPT))
+
+    def no_subprocess(*args: object, **kwargs: object) -> None:
+        raise AssertionError(f"ran {args}")
+
+    monkeypatch.setattr(subprocess, "run", no_subprocess)
+    monkeypatch.setattr(os, "name", "nt")
+    assert hook_script["ancestor_claude"]() == (0, "")
+    assert probe["processes"]() == {}
+    assert probe["alive"](os.getpid(), "", {}) is None
 
 
 @pytest.mark.parametrize("extra", [{"host": "ssh mac"}, {"timeout": 0}, {"stall_after": "soon"}, {"python": ""}])

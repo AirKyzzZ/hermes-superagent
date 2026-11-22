@@ -36,6 +36,8 @@ def tail_events(path: Path) -> list[dict[str, object]]:
 
 
 def processes() -> dict[int, tuple[int, float, str]]:
+    if os.name == "nt":
+        return {}
     try:
         output = subprocess.run(
             ["ps", "-A", "-o", "pid=,ppid=,etime=,comm="], capture_output=True, text=True, timeout=5, env=C_LOCALE
@@ -75,7 +77,8 @@ def last_pid(events: list[dict[str, object]]) -> tuple[int, str]:
 
 
 def alive(pid: int, expected: str, table: dict[int, tuple[int, float, str]]) -> bool | None:
-    if not pid:
+    # os.kill(pid, 0) on Windows sends a Ctrl+C instead of checking the pid
+    if not pid or os.name == "nt":
         return None
     try:
         os.kill(pid, 0)

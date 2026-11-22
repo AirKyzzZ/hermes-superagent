@@ -124,6 +124,7 @@ class AgentsConnector:
                 input=script,
                 capture_output=True,
                 text=True,
+                errors="replace",
                 timeout=self.timeout,
                 env=env,
                 check=False,
