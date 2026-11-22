@@ -31,6 +31,7 @@ Notable changes to hermes-superagent. The format follows [Keep a Changelog](http
 - A command such as `tick`, `status`, `brief`, `panel` or `ledger` run before `setup` says in one line to run setup first and exits 2, instead of a traceback, and `doctor` says the same in its failed config check. A broken config with no last good copy to fall back on is a one-line error too.
 - An `agents` host that ssh can't reach or log in to now says so in `doctor` and in poll errors, with the command to try by hand, instead of "the probe exited 255". A missing `python3` and output that isn't JSON, such as a shell banner, are named too.
 - A session on a Windows host is named after its folder on the board and in the panel, not its whole `C:\` path.
+- An `agents` host whose errors aren't UTF-8, such as Windows in its own code page, now shows them instead of a decoding error.
 
 ## [0.1.0] - 2026-11-10
 

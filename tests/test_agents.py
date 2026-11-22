@@ -322,11 +322,11 @@ def test_on_windows_the_hook_and_probe_never_run_ps_or_signal_a_pid(monkeypatch:
     def no_subprocess(*args: object, **kwargs: object) -> None:
         raise AssertionError(f"ran {args}")
 
-    monkeypatch.setattr(subprocess, "run", no_subprocess)
-    monkeypatch.setattr(os, "name", "nt")
-    assert hook_script["ancestor_claude"]() == (0, "")
-    assert probe["processes"]() == {}
-    assert probe["alive"](os.getpid(), "", {}) is None
+    with monkeypatch.context() as patched:
+        patched.setattr(subprocess, "run", no_subprocess)
+        patched.setattr(os, "name", "nt")
+        seen = (hook_script["ancestor_claude"](), probe["processes"](), probe["alive"](os.getpid(), "", {}))
+    assert seen == ((0, ""), {}, None)
 
 
 @pytest.mark.parametrize("extra", [{"host": "ssh mac"}, {"timeout": 0}, {"stall_after": "soon"}, {"python": ""}])
