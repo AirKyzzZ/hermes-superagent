@@ -87,7 +87,7 @@ def busy_home(home: Path) -> Config:
     router.store.end_ticket(ticket)
     waiting = {"state": "waiting", "cwd": "/srv/code/api", "branch": "main"}
     ledger.record("vps", SourceItem("s1", "api session", meta=waiting))
-    ledger.record("vps", SourceItem("s2", "web session", meta={"state": "working", "cwd": "/srv/code/web"}))
+    ledger.record("vps", SourceItem("s2", "web session", meta={"state": "working", "cwd": "C:\\Users\\you\\code\\web"}))
     ledger.begin_poll("tasks")
     for _ in range(3):
         ledger.poll_failed("tasks", "export cut short")

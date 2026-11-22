@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import os
+import runpy
 import subprocess
 import sys
 import time
@@ -12,7 +13,7 @@ import pytest
 
 from superagent.agents import HOOK_EVENTS, HOOK_SCRIPT, PROBE_SCRIPT, SessionState, classify
 from superagent.cli import main
-from superagent.connectors import ConnectorSpec, build_connector, parse_specs
+from superagent.connectors import ConnectorError, ConnectorSpec, build_connector, parse_specs
 from superagent.ledger import ItemState, Ledger
 from superagent.polling import poll_sources
 from superagent.runtime import open_runtime, tick
@@ -150,7 +151,15 @@ def agents_spec(**extra: object) -> ConnectorSpec:
 
 def test_the_agents_connector_turns_sessions_into_owned_items(sessions: Path, tmp_path: Path) -> None:
     hook(event("UserPromptSubmit", session="a", cwd="/work/app"))
-    hook(event("Stop", session="b", cwd="/work/site", last_assistant_message="Ship it?", background_tasks=[]))
+    hook(
+        event(
+            "Stop",
+            session="b",
+            cwd="C:\\Users\\you\\work\\site",
+            last_assistant_message="Ship it?",
+            background_tasks=[],
+        )
+    )
     hook(event("SessionEnd", session="c", cwd="/work/old", reason="other"))
     ledger = Ledger(tmp_path / "s.db")
     spec = agents_spec()
@@ -261,6 +270,63 @@ def test_the_cli_prints_the_hook_and_its_settings(capsys: pytest.CaptureFixture[
     assert set(settings["hooks"]) == set(HOOK_EVENTS)
     assert main(["--home", str(tmp_path), "agents", "--hook-script"]) == 0
     assert capsys.readouterr().out == HOOK_SCRIPT.read_text()
+
+
+FAKE_SSH = """#!{python}
+import subprocess, sys
+args = sys.argv[1:]
+while args[0] == "-o":
+    args = args[2:]
+command = " ".join(args[1:])
+with open({log!r}, "a") as log:
+    log.write(command + "\\n")
+sys.exit(subprocess.run(["/bin/sh", "-c", command], env={{"HOME": {home!r}, "PATH": "/usr/bin:/bin"}}).returncode)
+"""
+
+
+def test_a_remote_host_reads_its_own_home_and_gets_only_python_on_its_command_line(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.delenv("SUPERAGENT_SESSIONS_DIR", raising=False)
+    far = tmp_path / "far"
+    (far / ".superagent" / "sessions").mkdir(parents=True)
+    since = time.time()
+    stop = {"event": "Stop", "t": since, "cwd": "/w/app", "text": "Ship it?", "background": 0}
+    (far / ".superagent" / "sessions" / "far-away-1.jsonl").write_text(json.dumps(stop) + "\n")
+    ssh, log = tmp_path / "ssh", tmp_path / "ssh.log"
+    ssh.write_text(FAKE_SSH.format(python=sys.executable, log=str(log), home=str(far)))
+    ssh.chmod(0o755)
+    connector = build_connector(agents_spec(host=[str(ssh), "-o", "BatchMode=yes", "mac"], python=sys.executable))
+    poll = connector.poll("")
+    [item] = poll.items
+    assert poll.complete and item.external_id == "far-away-1" and item.excerpt == "Ship it?"
+    assert connector.act("far-away-1", "nudge", repr(since))[:2] == ("held", "its claude process isn't running")
+    assert log.read_text().splitlines() == [f"{sys.executable} -"] * 2
+
+
+def test_a_host_that_answers_in_its_own_code_page_still_shows_its_error(tmp_path: Path) -> None:
+    host = tmp_path / "pc"
+    host.write_text(
+        f"#!{sys.executable}\nimport sys\nsys.stdin.read()\n"
+        "sys.stderr.buffer.write(b\"'python3' n'est pas reconnu, un programme ex\\x82cutable\")\nsys.exit(1)\n"
+    )
+    host.chmod(0o755)
+    connector = build_connector(agents_spec(host=[str(host)]))
+    with pytest.raises(ConnectorError, match="exited 1: 'python3' n'est pas reconnu"):
+        connector.poll("")
+
+
+def test_on_windows_the_hook_and_probe_never_run_ps_or_signal_a_pid(monkeypatch: pytest.MonkeyPatch) -> None:
+    hook_script, probe = runpy.run_path(str(HOOK_SCRIPT)), runpy.run_path(str(PROBE_SCRIPT))
+
+    def no_subprocess(*args: object, **kwargs: object) -> None:
+        raise AssertionError(f"ran {args}")
+
+    with monkeypatch.context() as patched:
+        patched.setattr(subprocess, "run", no_subprocess)
+        patched.setattr(os, "name", "nt")
+        seen = (hook_script["ancestor_claude"](), probe["processes"](), probe["alive"](os.getpid(), "", {}))
+    assert seen == ((0, ""), {}, None)
 
 
 @pytest.mark.parametrize("extra", [{"host": "ssh mac"}, {"timeout": 0}, {"stall_after": "soon"}, {"python": ""}])

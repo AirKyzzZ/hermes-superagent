@@ -156,3 +156,28 @@ Sans rôle posé dans le profil, il n'y a ni router ni workers. Le panneau montr
 | « Wrong or missing token » | Il manque le `#JETON` à la fin de l'URL, ou le jeton a été changé |
 | « run a tick to update it » | La base date d'une version plus ancienne, un `tick` la met à jour |
 | `502` de Tailscale | Le service est arrêté : `systemctl --user status superagent-panel` |
+
+## Voir les sessions du Mac et du PC
+
+Le tableau des agents lit les sessions Claude Code des autres machines par ssh depuis le VPS, à travers le tailnet. Le détail et les raisons sont dans [Sessions on other machines](dogfood-install.md#sessions-on-other-machines), avec les blocs de config. Ci-dessous, `mac`, `pc` et `you` sont à remplacer par tes noms, dans `~/.ssh/config` du VPS seulement.
+
+1. **Sur le Mac :** active Session à distance (Réglages Système > Général > Partage) pour ton utilisateur seulement, et vérifie que `/usr/bin/python3 --version` répond. S'il propose les outils de ligne de commande, installe-les. Pour que superagent puisse relancer une session dans cmux, mets Réglages cmux > Automation > Socket Control Mode sur « Automation mode ».
+2. **Sur le PC Windows, dans un PowerShell administrateur :** installe et démarre le serveur OpenSSH de Windows (Tailscale SSH ne tourne pas sur Windows), puis vérifie Python et git :
+
+   ```powershell
+   Add-WindowsCapability -Online -Name OpenSSH.Server~~~~0.0.1.0
+   Set-Service sshd -StartupType Automatic; Start-Service sshd
+   python --version; git --version
+   ```
+
+   Si ton compte est administrateur, sshd lit la clé du VPS dans un fichier partagé sous `C:\ProgramData\ssh`, pas dans ton profil. Crée d'abord la clé sur le VPS (étape 3) et affiche-la avec `cat ~/.ssh/superagent.pub`. Les étapes « administrative user » du [guide de Microsoft](https://learn.microsoft.com/en-us/windows-server/administration/openssh/openssh_keymanagement#administrative-user) envoient une clé depuis un client Windows : sur le PC, lance seulement les commandes `Add-Content` et `icacls` de la chaîne `$remotePowershell`, avec la clé du VPS en `-Value` et chaque `""` écrit `"`. Sur un Windows en français, remplace `Administrators` et `SYSTEM` dans la ligne `icacls` par `*S-1-5-32-544` et `*S-1-5-18`. Une fois la connexion par clé vérifiée, remplace la ligne commentée `#PasswordAuthentication yes` de `C:\ProgramData\ssh\sshd_config` par `PasswordAuthentication no` puis `Restart-Service sshd`.
+
+   Claude Code a besoin de Git pour Windows : il lance les hooks dans Git Bash, et sans lui dans PowerShell, où le hook ne démarre pas et bloque chaque prompt. Dans `~/.ssh/config` du VPS, `User` est ton nom d'utilisateur Windows local (`$env:USERNAME`), pas l'email d'un compte Microsoft. Sur Windows, superagent ne voit pas si un `claude` tourne encore, et ne peut pas relancer une session : laisse `relaunch` désactivé pour le PC.
+3. **Sur le VPS, par Hermes :** crée la clé et les alias `mac` et `pc` comme dans le guide, copie la clé sur le Mac avec `ssh-copy-id -o StrictHostKeyChecking=accept-new -i ~/.ssh/superagent.pub mac` (cette ligne demande ton mot de passe du Mac, lance-la toi-même dans un terminal, pas par Hermes), enregistre la clé d'hôte de chaque machine et pose le hook avec les commandes du guide. Vérifie dans Git Bash sur le PC que le hook démarre : `python ~/.superagent/hook.py < /dev/null; echo $?` doit afficher `0`. Hermes fusionne ensuite le bloc imprimé par `hermes superagent agents --hook-settings` dans `~/.claude/settings.json` du Mac, et le même bloc avec `python` au lieu de `python3` dans `%USERPROFILE%\.claude\settings.json` du PC, en te montrant le diff.
+
+   ```bash
+   ssh -o StrictHostKeyChecking=accept-new mac /usr/bin/python3 --version
+   echo 'print(1)' | ssh -o StrictHostKeyChecking=accept-new pc python -    # doit afficher 1
+   ```
+
+4. Ajoute les blocs `agents-mac` et `agents-pc` du guide à `~/superagent/superagent.toml`, puis lance `hermes superagent --home ~/superagent doctor`. Chaque machine doit afficher `ok` suivi de `N items`, ou `warn` tant qu'aucune session n'a eu d'événement depuis la pose du hook. Un `fail` dit pourquoi et donne la commande ssh à essayer à la main.

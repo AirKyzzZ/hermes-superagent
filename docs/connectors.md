@@ -89,7 +89,7 @@ every = "5m"
 
 ## Claude Code
 
-One block per machine. Leave `host` out for this one. `doctor` fails until the hook has written something, see [the shadow install guide](dogfood-install.md).
+One block per machine. Leave `host` out for this one. `doctor` fails until the hook has written something, see [the shadow install guide](dogfood-install.md). For a Mac or a Windows PC, [Sessions on other machines](dogfood-install.md#sessions-on-other-machines) has the ssh setup.
 
 ```toml
 [connectors.agents]

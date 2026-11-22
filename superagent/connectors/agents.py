@@ -3,13 +3,14 @@ from __future__ import annotations
 import json
 import os
 import re
+import shlex
 import subprocess
 import sys
 from collections.abc import Mapping
 from dataclasses import dataclass
 from pathlib import PurePath
 
-from ..agents import PROBE_SCRIPT, RELAUNCH_SCRIPT, SessionState, classify
+from ..agents import PROBE_SCRIPT, RELAUNCH_SCRIPT, SessionState, classify, cwd_name
 from ..ledger import SourceItem, Upstream
 from . import ConnectorConfigError, ConnectorError, ConnectorSpec, Poll, duration
 
@@ -19,6 +20,8 @@ NUDGE_TEXT = re.compile(r"[A-Za-z0-9][A-Za-z0-9 .,!?-]{0,199}")
 ACT_MARGIN_SECONDS = 10.0
 NOT_HOOKED = "no Claude Code hook has written to {where} on this host, install it with superagent agents --hook-script"
 HOOK_SEEN = "hook seen"
+SSH_FAILED = 255
+NOT_FOUND = 127
 _BASE_ENV = ("PATH", "HOME", "LANG", "LC_ALL", "TMPDIR", "USER", "SSH_AUTH_SOCK")
 
 
@@ -59,7 +62,7 @@ class AgentsConnector:
             over = view.state is SessionState.ENDED or (
                 view.state is SessionState.GONE and view.quiet_for > GONE_CLOSES_AFTER_SECONDS
             )
-            project = PurePath(view.cwd).name or "session"
+            project = cwd_name(view.cwd) or "session"
             branch = str(session.get("branch") or "")
             meta = {"state": view.state.value, "cwd": view.cwd, "branch": branch}
             if view.error:
@@ -111,6 +114,7 @@ class AgentsConnector:
         return self._run(PROBE_SCRIPT.read_text(encoding="utf-8"))
 
     def _run(self, script: str) -> Mapping[str, object]:
+        # Keep data off this command line: ssh hands it to a shell, cmd.exe on Windows OpenSSH, so it goes on stdin.
         argv = [*self.host, self.python if self.host else sys.executable, "-"]
         env = {name: os.environ[name] for name in _BASE_ENV if name in os.environ}
         env.update({name: os.environ[name] for name in ("SUPERAGENT_SESSIONS_DIR",) if name in os.environ})
@@ -120,23 +124,35 @@ class AgentsConnector:
                 input=script,
                 capture_output=True,
                 text=True,
+                encoding="utf-8",
+                errors="replace",
                 timeout=self.timeout,
                 env=env,
                 check=False,
             )
         except subprocess.TimeoutExpired as error:
-            raise ConnectorTimeout(f"the script on {' '.join(self.host) or 'this host'} took too long") from error
+            where = " ".join(self.host) or "this host"
+            raise ConnectorTimeout(f"the script on {where} took longer than {self.timeout:g}s") from error
         except OSError as error:
             raise ConnectorError(f"the probe could not run: {error}") from error
         if done.returncode != 0:
-            raise ConnectorError(f"the probe exited {done.returncode}: {done.stderr.strip()[-300:]}")
+            raise ConnectorError(self._failure(done.returncode, done.stderr.strip()[-300:]))
         try:
             report = json.loads(done.stdout)
         except ValueError as error:
-            raise ConnectorError(f"the probe did not print JSON: {error}") from error
+            start = done.stdout.strip()[:80]
+            raise ConnectorError(f"the probe did not print JSON: {error}, its output starts with {start!r}") from error
         if not isinstance(report, dict):
             raise ConnectorError("the probe returned an unexpected shape")
         return report
+
+    def _failure(self, code: int, said: str) -> str:
+        if self.host and code == SSH_FAILED:
+            name, retry = PurePath(self.host[0]).name, shlex.join(self.host)
+            return f"{name} exited 255, its code for a failed connection or login, try `{retry} true`: {said}"
+        if self.host and code == NOT_FOUND:
+            return f"the host couldn't find {self.python} (exit 127), set python to its full path there: {said}"
+        return f"the probe exited {code}: {said}"
 
 
 def auto_resume(events: list[object]) -> str:
