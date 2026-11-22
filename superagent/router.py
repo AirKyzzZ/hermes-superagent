@@ -117,6 +117,14 @@ class Router:
         self._resume_if_waiting(ticket)
         return self.store.get_ticket(ticket_id)
 
+    def answer(self, ticket_id: str, text: str, by: str) -> Ticket:
+        ticket = self.store.get_ticket(ticket_id)
+        if ticket.status is TicketStatus.ENDED:
+            raise ValueError(f"ticket {ticket_id} has ended, dispatch a new one")
+        self.store.add_input(ticket_id, by, frame_untrusted(f"panel answer from {by}", text), trusted=True)
+        self._resume_if_waiting(ticket)
+        return self.store.get_ticket(ticket_id)
+
     def cancel_from(self, trigger_id: str, ticket_id: str) -> Ticket:
         trigger, _ = self._claim_for_ticket(trigger_id, ticket_id, f"cancelled {ticket_id}")
         return self.cancel(ticket_id, trigger.actor or trigger.source)
