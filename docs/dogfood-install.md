@@ -86,6 +86,7 @@ channel = "discord:AGENTS_CHANNEL_ID"
 [connectors.agents-pc]
 type = "agents"
 host = ["ssh", "-o", "BatchMode=yes", "-o", "ConnectTimeout=10", "pc"]
+python = "python"
 every = "90s"
 channel = "discord:AGENTS_CHANNEL_ID"
 ```
@@ -218,11 +219,13 @@ Set-Service sshd -StartupType Automatic; Start-Service sshd
 python --version; git --version
 ```
 
-For an account in the Administrators group, the default on a personal PC, Windows's sshd ignores the key list in your profile and reads a shared one under `C:\ProgramData\ssh`, which only Administrators and SYSTEM may be able to read. `ssh-copy-id` can't write it, since it runs a Unix shell on the far side. Add the VPS's `~/.ssh/superagent.pub` line by following the [administrative user steps](https://learn.microsoft.com/en-us/windows-server/administration/openssh/openssh_keymanagement#administrative-user) in Microsoft's guide. On a Windows that isn't in English, the group names in its `icacls` line are translated: use `*S-1-5-32-544` for Administrators and `*S-1-5-18` for SYSTEM.
+For an account in the Administrators group, the default on a personal PC, Windows's sshd ignores the key list in your profile and reads a shared one under `C:\ProgramData\ssh`, which only Administrators and SYSTEM may be able to read. `ssh-copy-id` can't write it, since it runs a Unix shell on the far side. Make the key first with the VPS step's `ssh-keygen` line and print it with `cat ~/.ssh/superagent.pub`. Microsoft's [administrative user steps](https://learn.microsoft.com/en-us/windows-server/administration/openssh/openssh_keymanagement#administrative-user) push a key from a Windows client, so on the PC run only the `Add-Content` and `icacls` commands inside that script's `$remotePowershell` string, with the VPS key line as `-Value` and each `""` written as `"`. On a Windows that isn't in English, the group names in the `icacls` line are translated: use `*S-1-5-32-544` for Administrators and `*S-1-5-18` for SYSTEM. The account is an administrator, so once the VPS logs in with the key, set `PasswordAuthentication no` in `C:\ProgramData\ssh\sshd_config` and run `Restart-Service sshd`.
 
-Windows's sshd runs commands through `cmd.exe`, which is why only `python -` goes on the command line. Set `python = "python"`: a python.org install has no `python3.exe`, and that name falls through to the Microsoft Store stub. Two things don't work on Windows. The probe can't tell whether a Windows `claude` process is still running, so a session closed without `/exit` keeps its last state until it ages off the board after 7 days. And relaunch needs tmux or cmux, so leave `relaunch` off for the PC.
+Windows's sshd runs commands through `cmd.exe`, so leave it as the default shell: only `python -` goes on the command line. Set `python = "python"`: the classic python.org installer has no `python3.exe`, and that name falls through to the Microsoft Store stub. In `~/.ssh/config` on the VPS, `User` is the local Windows user name that `$env:USERNAME` prints, not a Microsoft account email. Claude Code needs Git for Windows on the PC: it runs hook commands in Git Bash, and without it falls back to PowerShell, where `~` doesn't expand, `python` exits 2 on the missing file, and a hook that exits 2 blocks the prompt.
 
-**The VPS.** One key with no passphrase for both machines, and an alias for each. `ssh-copy-id` asks for the Mac password, so run that line yourself in a terminal, not through an agent. Print the key with `cat ~/.ssh/superagent.pub` for the PC step above.
+Two things don't work on Windows. The probe can't tell whether a Windows `claude` process is still running, so a session whose window was closed without `/exit` isn't shown as gone: it stays waiting or idle, or turns stuck if it was working, until it ages off the board after 7 days. And relaunch needs tmux or cmux, so leave `relaunch` off for the PC.
+
+**The VPS.** One key with no passphrase for both machines, and an alias for each. `ssh-copy-id` asks for the Mac password, so run that line yourself in a terminal, not through an agent.
 
 ```bash
 ssh-keygen -t ed25519 -N '' -f ~/.ssh/superagent -C superagent
@@ -239,7 +242,7 @@ Host pc
 EOF
 ssh-copy-id -o StrictHostKeyChecking=accept-new -i ~/.ssh/superagent.pub mac    # asks for your Mac password
 ssh -o StrictHostKeyChecking=accept-new mac /usr/bin/python3 --version
-ssh -o StrictHostKeyChecking=accept-new pc python --version
+echo 'print(1)' | ssh -o StrictHostKeyChecking=accept-new pc python -    # must print 1
 ```
 
 Then install the hook on both. Claude Code on Windows runs hook commands in Git Bash, so the PC takes the same hooks block with `python` in place of `python3`. Merge each printed block into `~/.claude/settings.json` on its machine, `%USERPROFILE%\.claude\settings.json` on the PC, showing the owner the diff:
@@ -250,6 +253,8 @@ hermes superagent agents --hook-script | ssh pc "python -c \"import pathlib, sys
 hermes superagent agents --hook-settings                             # for the Mac
 hermes superagent agents --hook-settings | sed 's/python3 /python /'  # for the PC
 ```
+
+Before merging the PC's block, check in Git Bash on the PC that the hook starts. This must print `0`: `echo '{}' | python ~/.superagent/hook.py; echo $?`.
 
 The connector blocks:
 
@@ -275,7 +280,8 @@ channel = "discord:AGENTS_CHANNEL_ID"
 | `doctor` says | Fix |
 | --- | --- |
 | `ssh exited 255, its code for a failed connection or login, try ...` | Run the command it prints. The machine is asleep or off, Remote Login or Tailscale is down, the key was refused, or the host key isn't saved yet |
-| `the host couldn't find python3 (exit 127)` | Set `python` to the full path, `/usr/bin/python3` on a Mac. On Windows, set `python = "python"` |
+| `the host couldn't find python3 (exit 127)` | Set `python` to the full path, `/usr/bin/python3` on a Mac |
+| `the probe exited 1: 'python3' is not recognized ...`, in the PC's language | Windows couldn't find that command: set `python = "python"`, or its full path |
 | `the probe did not print JSON ..., its output starts with ...` | A shell startup file on that machine prints text, make it quiet for non-interactive shells |
 | `no Claude Code hook has written to ...` | The hook or its settings aren't there yet, or no session has had an event since |
 | `took longer than 30s` | Add `-o ConnectTimeout=10` to `host`, so an unreachable machine fails fast |
@@ -283,7 +289,7 @@ channel = "discord:AGENTS_CHANNEL_ID"
 A machine that's asleep or off fails its polls like any other source: after three in a row it goes to the alerts channel and the brief, until a poll works again.
 
 
-**Claude Code in WSL instead.** WSL is then a Linux machine of its own: install Tailscale inside it from [tailscale.com/download/linux](https://tailscale.com/download/linux), run `sudo tailscale up --ssh`, and set it up like any Linux host, with `python3` and tmux relaunch. Tailscale SSH follows the tailnet policy's `ssh` rules, and the default `check` action asks for a browser login every so often, which a timer can't do, so give the VPS an `accept` rule to that node.
+**Claude Code in WSL instead.** WSL is then a Linux machine of its own: install Tailscale inside it from [tailscale.com/download/linux](https://tailscale.com/download/linux), run `sudo tailscale up --ssh`, and set it up like any Linux host, with `python3` and tmux relaunch. Tailscale SSH follows the tailnet policy's `ssh` rules, and the default `check` action asks for a browser login every so often, which a timer can't do, so give the VPS an `accept` rule to that node. Point the `pc` alias at the WSL node and drop `python = "python"` from its block.
 
 ## 4. Check it
 

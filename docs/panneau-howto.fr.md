@@ -171,12 +171,14 @@ Le tableau des agents lit les sessions Claude Code des autres machines par ssh d
    python --version; git --version
    ```
 
-   Si ton compte est administrateur, sshd lit la clé du VPS dans un fichier partagé sous `C:\ProgramData\ssh`, pas dans ton profil. Ajoute-y la ligne de `~/.ssh/superagent.pub` du VPS en suivant les étapes « administrative user » du [guide de Microsoft](https://learn.microsoft.com/en-us/windows-server/administration/openssh/openssh_keymanagement#administrative-user). Sur un Windows en français, remplace `Administrators` et `SYSTEM` dans sa ligne `icacls` par `*S-1-5-32-544` et `*S-1-5-18`. Sur Windows, superagent ne voit pas si un `claude` tourne encore, et ne peut pas relancer une session : laisse `relaunch` désactivé pour le PC.
+   Si ton compte est administrateur, sshd lit la clé du VPS dans un fichier partagé sous `C:\ProgramData\ssh`, pas dans ton profil. Crée d'abord la clé sur le VPS (étape 3) et affiche-la avec `cat ~/.ssh/superagent.pub`. Les étapes « administrative user » du [guide de Microsoft](https://learn.microsoft.com/en-us/windows-server/administration/openssh/openssh_keymanagement#administrative-user) envoient une clé depuis un client Windows : sur le PC, lance seulement les commandes `Add-Content` et `icacls` de la chaîne `$remotePowershell`, avec la clé du VPS en `-Value` et chaque `""` écrit `"`. Sur un Windows en français, remplace `Administrators` et `SYSTEM` dans la ligne `icacls` par `*S-1-5-32-544` et `*S-1-5-18`. Une fois la connexion par clé vérifiée, mets `PasswordAuthentication no` dans `C:\ProgramData\ssh\sshd_config` puis `Restart-Service sshd`.
+
+   Claude Code a besoin de Git pour Windows : il lance les hooks dans Git Bash, et sans lui dans PowerShell, où le hook ne démarre pas et bloque chaque prompt. Dans `~/.ssh/config` du VPS, `User` est ton nom d'utilisateur Windows local (`$env:USERNAME`), pas l'email d'un compte Microsoft. Sur Windows, superagent ne voit pas si un `claude` tourne encore, et ne peut pas relancer une session : laisse `relaunch` désactivé pour le PC.
 3. **Sur le VPS, par Hermes :** crée la clé et les alias `mac` et `pc` comme dans le guide, copie la clé sur le Mac avec `ssh-copy-id -o StrictHostKeyChecking=accept-new -i ~/.ssh/superagent.pub mac` (cette ligne demande ton mot de passe du Mac, lance-la toi-même dans un terminal, pas par Hermes), enregistre la clé d'hôte de chaque machine et pose le hook avec les commandes du guide. Hermes fusionne ensuite le bloc imprimé par `hermes superagent agents --hook-settings` dans `~/.claude/settings.json` du Mac, et le même bloc avec `python` au lieu de `python3` dans `%USERPROFILE%\.claude\settings.json` du PC, en te montrant le diff.
 
    ```bash
    ssh -o StrictHostKeyChecking=accept-new mac /usr/bin/python3 --version
-   ssh -o StrictHostKeyChecking=accept-new pc python --version
+   echo 'print(1)' | ssh -o StrictHostKeyChecking=accept-new pc python -    # doit afficher 1
    ```
 
 4. Ajoute les blocs `agents-mac` et `agents-pc` du guide à `~/superagent/superagent.toml`, puis lance `hermes superagent --home ~/superagent doctor`. Chaque machine doit afficher `ok` suivi de `N items`, ou `warn` tant qu'aucune session n'a eu d'événement depuis la pose du hook. Un `fail` dit pourquoi et donne la commande ssh à essayer à la main.
