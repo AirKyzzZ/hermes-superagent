@@ -109,7 +109,7 @@ tailscale serve status
 tailscale serve --bg --https=8765 http://127.0.0.1:8765
 ```
 
-`status` montre d'abord ce qui est déjà servi, pour ne rien écraser. N'importe quel port libre convient : `--allow-host VPS.TAILNET.ts.net` sans port est accepté sur tous les ports. L'adresse devient `https://VPS.TAILNET.ts.net:8765/#JETON`. Le journal du service l'affiche sans `:8765`, ajoute-le à la main. Pour retirer ce partage : `tailscale serve --https=8765 off`.
+`status` montre d'abord ce qui est déjà servi, pour ne rien écraser. 8765 n'est qu'un exemple, n'importe quel port libre convient : `--allow-host VPS.TAILNET.ts.net` sans port est accepté sur tous les ports. Si un autre site répond déjà sur ce nom, mets plutôt `--allow-host VPS.TAILNET.ts.net:8765` dans le service, pour que ses pages ne puissent pas envoyer d'actions au panneau. L'adresse devient `https://VPS.TAILNET.ts.net:8765/#JETON`. Le journal du service l'affiche sans `:8765`, ajoute-le à la main. Pour retirer ce partage : `tailscale serve --https=8765 off`.
 
 Pour vérifier depuis le Mac que la porte est fermée sans jeton :
 
