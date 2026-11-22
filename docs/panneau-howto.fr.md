@@ -109,7 +109,7 @@ tailscale serve status
 tailscale serve --bg --https=8765 http://127.0.0.1:8765
 ```
 
-`status` montre d'abord ce qui est déjà servi, pour ne rien écraser. Garde le même port des deux côtés : le panneau accepte `VPS.TAILNET.ts.net:8765` parce que 8765 est son port, un autre port donnerait un `421`. L'adresse devient `https://VPS.TAILNET.ts.net:8765/#JETON`. Le journal du service l'affiche sans `:8765`, ajoute-le à la main. Pour retirer ce partage : `tailscale serve --https=8765 off`.
+`status` montre d'abord ce qui est déjà servi, pour ne rien écraser. 8765 n'est qu'un exemple, n'importe quel port libre convient : `--allow-host VPS.TAILNET.ts.net` sans port est accepté sur tous les ports. Si un autre site répond déjà sur ce nom, mets plutôt `--allow-host VPS.TAILNET.ts.net:8765` dans le service, pour que ses pages ne puissent pas envoyer d'actions au panneau. L'adresse devient `https://VPS.TAILNET.ts.net:8765/#JETON`. Le journal du service l'affiche sans `:8765`, ajoute-le à la main. Pour retirer ce partage : `tailscale serve --https=8765 off`.
 
 Pour vérifier depuis le Mac que la porte est fermée sans jeton :
 
@@ -152,8 +152,7 @@ Sans rôle posé dans le profil, il n'y a ni router ni workers. Le panneau montr
 | Ce que tu vois | Ce qu'il faut faire |
 | --- | --- |
 | `superagent.toml: [Errno 2] No such file or directory`, ou « no superagent.toml » | La config n'existe pas encore : lance `setup`, étape 1 |
-| `421` ou « open the panel on 127.0.0.1 » | Le nom dans `--allow-host` ne correspond pas exactement à celui de l'URL |
-| `421` sur chaque requête, avec un port dans l'URL | Tailscale sert sur un autre port que celui du panneau. Sers sur le même, étape 4 |
+| `421` ou « this panel doesn't answer to … » | Le `Host` cité entre guillemets n'est pas accepté : passe son nom à `--allow-host`, avec `:port` seulement pour n'accepter que ce port |
 | « Wrong or missing token » | Il manque le `#JETON` à la fin de l'URL, ou le jeton a été changé |
 | « run a tick to update it » | La base date d'une version plus ancienne, un `tick` la met à jour |
 | `502` de Tailscale | Le service est arrêté : `systemctl --user status superagent-panel` |
