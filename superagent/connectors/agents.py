@@ -10,7 +10,7 @@ from collections.abc import Mapping
 from dataclasses import dataclass
 from pathlib import PurePath
 
-from ..agents import PROBE_SCRIPT, RELAUNCH_SCRIPT, SessionState, classify
+from ..agents import PROBE_SCRIPT, RELAUNCH_SCRIPT, SessionState, classify, cwd_name
 from ..ledger import SourceItem, Upstream
 from . import ConnectorConfigError, ConnectorError, ConnectorSpec, Poll, duration
 
@@ -62,7 +62,7 @@ class AgentsConnector:
             over = view.state is SessionState.ENDED or (
                 view.state is SessionState.GONE and view.quiet_for > GONE_CLOSES_AFTER_SECONDS
             )
-            project = PurePath(view.cwd).name or "session"
+            project = cwd_name(view.cwd) or "session"
             branch = str(session.get("branch") or "")
             meta = {"state": view.state.value, "cwd": view.cwd, "branch": branch}
             if view.error:

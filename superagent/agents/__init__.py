@@ -4,7 +4,7 @@ import re
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field
 from enum import StrEnum
-from pathlib import Path
+from pathlib import Path, PureWindowsPath
 
 HOOK_SCRIPT = Path(__file__).with_name("hook.py")
 PROBE_SCRIPT = Path(__file__).with_name("probe.py")
@@ -105,6 +105,11 @@ def _counts(event: Mapping[str, object]) -> bool:
     if name == "SessionStart" and event.get("source") == "compact":
         return False
     return not event.get("agent") or _asks(event)
+
+
+def cwd_name(cwd: str) -> str:
+    # a Windows host sends backslash paths, and PureWindowsPath splits on either separator
+    return PureWindowsPath(cwd).name
 
 
 def classify(

@@ -150,7 +150,15 @@ def agents_spec(**extra: object) -> ConnectorSpec:
 
 def test_the_agents_connector_turns_sessions_into_owned_items(sessions: Path, tmp_path: Path) -> None:
     hook(event("UserPromptSubmit", session="a", cwd="/work/app"))
-    hook(event("Stop", session="b", cwd="/work/site", last_assistant_message="Ship it?", background_tasks=[]))
+    hook(
+        event(
+            "Stop",
+            session="b",
+            cwd="C:\\Users\\you\\work\\site",
+            last_assistant_message="Ship it?",
+            background_tasks=[],
+        )
+    )
     hook(event("SessionEnd", session="c", cwd="/work/old", reason="other"))
     ledger = Ledger(tmp_path / "s.db")
     spec = agents_spec()

@@ -12,11 +12,11 @@ from collections.abc import Iterator, Sequence
 from contextlib import closing, contextmanager
 from datetime import datetime
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
-from pathlib import Path, PurePosixPath
+from pathlib import Path
 from urllib.parse import parse_qs, quote, urlsplit
 from zoneinfo import ZoneInfo
 
-from .agents import ATTENTION_STATES, redact
+from .agents import ATTENTION_STATES, cwd_name, redact
 from .config import DB_FILENAME, WORKDIRS_DIRNAME, Config, load_config
 from .connectors import CONNECTOR_NAME, ConnectorSpec
 from .ledger import Item, ItemState, LedgerError, item_from_row, source_state_from_row
@@ -306,7 +306,7 @@ def _sessions(specs: Sequence[ConnectorSpec], items: Sequence[Item]) -> list[dic
                 "kind": "session",
                 "host": item.connector,
                 "handle": item.handle,
-                "project": _text(PurePosixPath(cwd).name if cwd else item.title, 60),
+                "project": _text(cwd_name(cwd) if cwd else item.title, 60),
                 "branch": _text(item.meta.get("branch", ""), 80),
                 "state": item.meta.get("state", ""),
                 "since": item.last_changed,
