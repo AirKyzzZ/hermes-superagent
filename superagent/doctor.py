@@ -10,7 +10,7 @@ from dataclasses import dataclass
 from enum import StrEnum
 from pathlib import Path
 
-from .config import CONFIG_FILENAME, LAST_GOOD_FILENAME
+from .config import CONFIG_FILENAME, NotSetUpError
 from .connectors import ConnectorSpec
 from .polling import source_health
 from .runtime import TICK_LOCK_FILENAME, Runtime, last_tick, open_runtime
@@ -32,11 +32,11 @@ class Check:
     detail: str
 
 
-def diagnose(home: Path, *, poll: bool = True) -> list[Check]:
-    if not (home / CONFIG_FILENAME).is_file() and not (home / LAST_GOOD_FILENAME).is_file():
-        return [Check("config", Status.FAIL, f"no {CONFIG_FILENAME} in {home}, run superagent setup to write one")]
+def diagnose(home: Path, *, poll: bool = True, cli: str = "superagent") -> list[Check]:
     try:
         runtime = open_runtime(home)
+    except NotSetUpError as error:
+        return [Check("config", Status.FAIL, error.hint(cli))]
     except Exception as error:
         return [Check("config", Status.FAIL, str(error) or type(error).__name__)]
     now = time.time()

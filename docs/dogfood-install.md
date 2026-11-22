@@ -463,11 +463,22 @@ cmux = "/Applications/cmux.app/Contents/Resources/bin/cmux"
 
 `tmux` and `cmux` need full paths when ssh's `PATH` doesn't have them, which is the case for Homebrew on a Mac. A session stopped on an API error gets one `continue` after 10 minutes, and one stopped by a rate limit gets it once Claude Code says its auto-resume went stale. Every other case is posted to the agents channel as needing the owner, with the reason. A session whose process died is never restarted by the plugin, since cmux restores its own sessions and a closed tab looks the same as a crash: its line carries the `claude --resume` command instead.
 
+## Update
+
+```bash
+hermes plugins update hermes-superagent
+systemctl --user restart superagent-panel.service
+hermes superagent --home ~/superagent doctor
+```
+
+The tick starts a fresh process each time, so its next run has the new code. The panel keeps serving the old code until it restarts. Don't restart the gateway, whatever `update` prints. `update` runs the same scan as the install: if it stops at `CAUTION`, read the `HIGH` lines as section 1 says, and when they pass run `hermes plugins update --force hermes-superagent`. The hook on each machine is a copy, so repeat section 3's first command when a release changes `superagent/agents/hook.py`.
+
 ## Undo
 
 ```bash
 systemctl --user disable --now superagent-tick.timer
+systemctl --user disable --now superagent-panel.service
 hermes plugins disable hermes-superagent
 ```
 
-Then remove the hooks block from `~/.claude/settings.json` on each machine. The ledger in `~/superagent` stays until you delete it.
+If the tick runs from the README's crontab line instead, delete it with `crontab -e`. Then remove the hooks block from `~/.claude/settings.json` on each machine. `disable` keeps the plugin's files, so `hermes plugins enable hermes-superagent` brings the plugin back, and sections 3 and 5 put the hooks and units back. `hermes plugins remove hermes-superagent` takes it off the machine. Either way the ledger in `~/superagent`, and `~/.superagent` with the hook and its logs on each machine, stay until you delete them.

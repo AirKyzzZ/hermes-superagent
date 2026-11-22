@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import argparse
 import importlib.util
 import json
 import secrets
@@ -164,6 +165,20 @@ def test_plugin_is_inert_without_a_role(tmp_path: Path) -> None:
     assert not any(tool["check_fn"]() for tool in ctx.tools.values())
     assert ctx.sections["superagent.role"]({}) == ""
     assert not (tmp_path / "superagent.db").exists()
+
+
+def test_hermes_superagent_before_setup_says_to_run_setup(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
+    home = tmp_path / "sa"
+    ctx = FakeContext({"home": str(home)})
+    load_plugin_module().register(ctx)
+    command = ctx.commands["superagent"]
+    parser = argparse.ArgumentParser()
+    command["setup_fn"](parser)
+    hint = f'no superagent.toml in {home} yet: run "hermes superagent --home {home} setup" first'
+    assert command["handler_fn"](parser.parse_args(["tick"])) == 2
+    assert capsys.readouterr() == ("", hint + "\n")
+    assert command["handler_fn"](parser.parse_args(["doctor", "--no-poll"])) == 1
+    assert capsys.readouterr() == (f"fail  config         {hint}\n", "")
 
 
 @pytest.mark.parametrize("tool", ["terminal", "write_file", "execute_code", "browser_navigate", "delegate_task"])

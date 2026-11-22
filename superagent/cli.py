@@ -16,7 +16,7 @@ from pathlib import Path
 from .agents import ATTENTION_STATES, HOOK_SCRIPT, SessionState, settings_block
 from .brief import BriefSettings, build_brief
 from .briefwriter import BriefWriter, Pack, build_pack
-from .config import CONFIG_FILENAME, DB_FILENAME, load_config
+from .config import CONFIG_FILENAME, DB_FILENAME, ConfigError, NotSetUpError, ensure_set_up, load_config
 from .connectors import ConnectorError
 from .digest import build_digest, send_digest
 from .doctor import Status, diagnose
@@ -121,8 +121,9 @@ def setup_parser(parser: argparse.ArgumentParser) -> None:
 
 
 def run_panel(args: argparse.Namespace, home: Path) -> int:
+    config = load_config(home)
     if args.json:
-        print(json.dumps(snapshot(home, load_config(home)), indent=1))
+        print(json.dumps(snapshot(home, config), indent=1))
         return 0
     try:
         allowed_hosts(args.port, args.allow_host)
@@ -151,6 +152,36 @@ def run(
     writer: BriefWriter | None = None,
     inside_hermes: bool = False,
 ) -> int:
+    try:
+        return run_command(
+            args,
+            default_home=default_home,
+            judge=judge,
+            assessor=assessor,
+            writer=writer,
+            inside_hermes=inside_hermes,
+        )
+    except NotSetUpError as error:
+        print(error.hint(cli_name(inside_hermes)), file=sys.stderr)
+        return 2
+    except ConfigError as error:
+        print(error, file=sys.stderr)
+        return 1
+
+
+def cli_name(inside_hermes: bool) -> str:
+    return "hermes superagent" if inside_hermes else "superagent"
+
+
+def run_command(
+    args: argparse.Namespace,
+    *,
+    default_home: Callable[[], Path] | None,
+    judge: DriftJudge | None,
+    assessor: Assessor | None,
+    writer: BriefWriter | None,
+    inside_hermes: bool,
+) -> int:
     if args.superagent_command == "report":
         print(
             json.dumps(
@@ -173,7 +204,7 @@ def run(
     if args.superagent_command == "panel":
         return run_panel(args, home)
     if args.superagent_command == "doctor":
-        checks = diagnose(home, poll=not args.no_poll)
+        checks = diagnose(home, poll=not args.no_poll, cli=cli_name(inside_hermes))
         if args.json:
             print(json.dumps([asdict(check) for check in checks], indent=1))
         else:
@@ -181,6 +212,7 @@ def run(
                 print(f"{check.status.value:<5} {check.name:<14} {check.detail}")
         return 1 if any(check.status is Status.FAIL for check in checks) else 0
     if args.superagent_command == "ledger":
+        ensure_set_up(home)
         return run_ledger(args, Ledger(home / DB_FILENAME))
     runtime = open_runtime(home)
     if args.superagent_command == "digest":
