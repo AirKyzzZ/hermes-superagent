@@ -90,7 +90,7 @@ every = "90s"
 channel = "discord:AGENTS_CHANNEL_ID"
 ```
 
-`mac` and `pc` are ssh host aliases from `~/.ssh/config`. For the PC, point the alias at WSL, where Claude Code runs, as in [Sessions on other machines](#sessions-on-other-machines). Each host needs `python3`, and needs `git` if you want the board to show branches.
+`mac` and `pc` are ssh host aliases from `~/.ssh/config`, set up in [Sessions on other machines](#sessions-on-other-machines) with the full blocks. Each host needs Python 3, and needs `git` if you want the board to show branches.
 
 The `github` connector reads issues and pull requests assigned to you, asking for your review, or mentioning you, through the `gh` login of the user that runs the timer. `gh auth status` has to pass for that user, under the timer too: a token kept in a desktop keyring may need `DBUS_SESSION_BUS_ADDRESS`, which the connector passes through when it's set. If the account belongs to an organisation with SSO, authorize the token for it, or that organisation's items fail the poll.
 
@@ -200,7 +200,7 @@ Claude Code's settings watcher normally picks up the new hooks in sessions that 
 
 ### Sessions on other machines
 
-The VPS reads every other machine over ssh through the tailnet: each poll runs `ssh <alias> <python> -` with the probe on stdin, and a relaunch sends its script the same way. Each machine needs an ssh server the VPS can log in to without a prompt, a `python3`, and the hook. Below, `mac` is the Mac's tailnet name, `pc-wsl` the WSL node on the PC, and `you` the user on each. Use the names `tailscale status` shows, in `~/.ssh/config` on the VPS only.
+The VPS reads every other machine over ssh through the tailnet: each poll runs `ssh <alias> <python> -` with the probe on stdin, and a relaunch sends its script the same way. Each machine needs an ssh server the VPS can log in to without a prompt, Python 3, and the hook. Below, `mac` and `pc` are the machines' tailnet names and `you` the user on each. Use the names `tailscale status` shows, in `~/.ssh/config` on the VPS only.
 
 **The Mac.** Tailscale SSH only runs on a Mac with the open source `tailscaled`, not with the Tailscale app, so use macOS's own sshd over the tailnet. In System Settings > General > Sharing, turn on Remote Login for your user only, then check the Python the VPS will use. The VPS's key gets added from the VPS below.
 
@@ -210,31 +210,24 @@ The VPS reads every other machine over ssh through the tailnet: each poll runs `
 
 A non-interactive ssh session on macOS gets `PATH=/usr/bin:/bin:/usr/sbin:/sbin`, so `python3` is the Command Line Tools' `/usr/bin/python3` (3.9 is fine) and nothing from Homebrew or cmux is found. Hence `python` and `cmux` as full paths in the block below. The probe never calls cmux, but a relaunch does, and cmux's default Socket Control Mode, "cmux processes only", refuses an ssh session. With `relaunch = true`, set cmux Settings > Automation > Socket Control Mode to "Automation mode", which accepts any process running as your user. To get branches for repos under `~/Documents`, `~/Desktop` or `~/Downloads`, tick "Allow full disk access for remote users" behind the (i) next to Remote Login.
 
-**The PC.** Claude Code and tmux run in WSL, so the probe and a relaunch have to run there too. Three ways to get in:
+**The PC.** Claude Code runs on Windows itself. Tailscale SSH doesn't serve on Windows, so use Windows's own OpenSSH server over the tailnet. In an admin PowerShell on the PC:
 
-- Tailscale inside WSL, with Tailscale SSH. WSL becomes its own tailnet node and is reached like any Linux box, with no sshd, no port forwarding and no Windows shell in between. This is the one to use.
-- sshd inside WSL. WSL's default NAT network hides it from the tailnet, so it also needs a Windows port proxy and firewall rule, or mirrored networking, and a way to start sshd.
-- Windows OpenSSH with a `wsl.exe -e` prefix, covered at the end of this section. It adds Windows's sshd and its admin key file, and every poll crosses `cmd.exe` and `wsl.exe`, which CI can't test.
-
-In a WSL terminal on the PC, with systemd on (the first line checks it) and Tailscale installed from the Linux steps on [tailscale.com/download/linux](https://tailscale.com/download/linux):
-
-```bash
-grep -A1 '^\[boot\]' /etc/wsl.conf    # must show systemd=true
-sudo tailscale up --ssh --hostname pc-wsl --accept-dns=false
-python3 --version && tmux -V
+```powershell
+Add-WindowsCapability -Online -Name OpenSSH.Server~~~~0.0.1.0
+Set-Service sshd -StartupType Automatic; Start-Service sshd
+python --version; git --version
 ```
 
-If `systemd=true` is missing, add it under `[boot]` in `/etc/wsl.conf`, run `wsl --shutdown` from Windows and reopen WSL. `--accept-dns=false` leaves WSL's own DNS setup alone. The cost of this route: the PC gets a second node, and that node is offline whenever WSL isn't running.
+For an account in the Administrators group, the default on a personal PC, sshd ignores `~\.ssh\authorized_keys` and reads `C:\ProgramData\ssh\administrators_authorized_keys`, which only Administrators and SYSTEM may be able to read. `ssh-copy-id` can't write it, since it runs a Unix shell on the far side. Paste the VPS's `~/.ssh/superagent.pub` line in from the same PowerShell; the `icacls` line uses SIDs so it works whatever the Windows language:
 
-Tailscale SSH follows the `ssh` rules of the tailnet policy. The default rule uses `check`, which asks for a browser login every so often, and a timer can't do that. With the VPS and the PC both logged in as you, an `accept` rule does it:
-
-```json
-"ssh": [{"action": "accept", "src": ["autogroup:member"], "dst": ["autogroup:self"], "users": ["autogroup:nonroot"]}]
+```powershell
+Add-Content -Encoding ascii C:\ProgramData\ssh\administrators_authorized_keys 'ssh-ed25519 AAAA... superagent'
+icacls C:\ProgramData\ssh\administrators_authorized_keys /inheritance:r /grant '*S-1-5-32-544:F' /grant '*S-1-5-18:F'
 ```
 
-If the VPS is tagged, tag the WSL node too and name both tags in the rule.
+Windows's sshd runs commands through `cmd.exe`, which is why only `python -` goes on the command line. Set `python = "python"`: a python.org install has no `python3.exe`, and that name falls through to the Microsoft Store stub. Two things don't work on Windows. The probe can't tell whether a Windows `claude` process is still running, so a session closed without `/exit` keeps its last state until it ages off the board after 7 days. And relaunch needs tmux or cmux, so leave `relaunch` off for the PC.
 
-**The VPS.** One key with no passphrase for the Mac, and an alias per machine. Tailscale SSH needs no key. `ssh-copy-id` asks for the Mac password, so run that line yourself in a terminal, not through an agent.
+**The VPS.** One key with no passphrase for both machines, and an alias for each. `ssh-copy-id` asks for the Mac password, so run that line yourself in a terminal, not through an agent. Print the key with `cat ~/.ssh/superagent.pub` for the PC step above.
 
 ```bash
 ssh-keygen -t ed25519 -N '' -f ~/.ssh/superagent -C superagent
@@ -245,19 +238,22 @@ Host mac
   IdentityFile ~/.ssh/superagent
 
 Host pc
-  HostName pc-wsl
+  HostName pc
   User you
+  IdentityFile ~/.ssh/superagent
 EOF
 ssh-copy-id -o StrictHostKeyChecking=accept-new -i ~/.ssh/superagent.pub mac    # asks for your Mac password
 ssh -o StrictHostKeyChecking=accept-new mac /usr/bin/python3 --version
-ssh -o StrictHostKeyChecking=accept-new pc python3 --version
+ssh -o StrictHostKeyChecking=accept-new pc python --version
 ```
 
-Then install the hook on both, as above, and merge `hermes superagent agents --hook-settings` into `~/.claude/settings.json` on each, showing the owner the diff:
+Then install the hook on both. Claude Code on Windows runs hook commands in Git Bash, so the PC takes the same hooks block with `python` in place of `python3`. Merge each printed block into `~/.claude/settings.json` on its machine, `%USERPROFILE%\.claude\settings.json` on the PC, showing the owner the diff:
 
 ```bash
 hermes superagent agents --hook-script | ssh mac 'mkdir -p ~/.superagent && cat > ~/.superagent/hook.py'
-hermes superagent agents --hook-script | ssh pc 'mkdir -p ~/.superagent && cat > ~/.superagent/hook.py'
+hermes superagent agents --hook-script | ssh pc "python -c \"import pathlib, sys; d = pathlib.Path.home() / '.superagent'; d.mkdir(exist_ok=True); (d / 'hook.py').write_bytes(sys.stdin.buffer.read())\""
+hermes superagent agents --hook-settings                             # for the Mac
+hermes superagent agents --hook-settings | sed 's/python3 /python /'  # for the PC
 ```
 
 The connector blocks:
@@ -274,31 +270,25 @@ channel = "discord:AGENTS_CHANNEL_ID"
 [connectors.agents-pc]
 type = "agents"
 host = ["ssh", "-o", "BatchMode=yes", "-o", "ConnectTimeout=10", "pc"]
+python = "python"
 every = "90s"
 channel = "discord:AGENTS_CHANNEL_ID"
 ```
-
-In WSL, `tmux` is on the ssh session's `PATH` and its socket is the one the hook recorded, so `relaunch = true` needs nothing more there.
 
 **Check it.** `hermes superagent --home ~/superagent doctor` polls each machine once:
 
 | `doctor` says | Fix |
 | --- | --- |
 | `ssh exited 255, its code for a failed connection or login, try ...` | Run the command it prints. The machine is asleep or off, Remote Login or Tailscale is down, the key was refused, or the host key isn't saved yet |
-| `the host couldn't find python3 (exit 127)` | Set `python` to the full path, `/usr/bin/python3` on a Mac |
+| `the host couldn't find python3 (exit 127)` | Set `python` to the full path, `/usr/bin/python3` on a Mac. On Windows, set `python = "python"` |
 | `the probe did not print JSON ..., its output starts with ...` | A shell startup file on that machine prints text, make it quiet for non-interactive shells |
 | `no Claude Code hook has written to ...` | The hook or its settings aren't there yet, or no session has had an event since |
 | `took longer than 30s` | Add `-o ConnectTimeout=10` to `host`, so an unreachable machine fails fast |
 
 A machine that's asleep or off fails its polls like any other source: after three in a row it goes to the alerts channel and the brief, until a poll works again.
 
-**Windows OpenSSH instead.** If Tailscale can't run inside WSL, Windows's own sshd can start the probe there with `host = ["ssh", "-o", "BatchMode=yes", "-o", "ConnectTimeout=10", "pc", "wsl.exe", "-e"]` and `python = "/usr/bin/python3"`. The plugin keeps everything but `wsl.exe -e /usr/bin/python3 -` off the command line, so `cmd.exe` has nothing to mangle. What this depends on is `wsl.exe` passing the end of stdin through to Linux, which hasn't been tried on a real PC. Check it first; the first command must print `1` and return:
 
-```bash
-echo 'print(1)' | ssh pc wsl.exe -e /usr/bin/python3 -
-ssh pc wsl.exe -e mkdir -p /home/you/.superagent
-hermes superagent agents --hook-script | ssh pc wsl.exe -e tee /home/you/.superagent/hook.py > /dev/null
-```
+**Claude Code in WSL instead.** WSL is then a Linux machine of its own: install Tailscale inside it from [tailscale.com/download/linux](https://tailscale.com/download/linux), run `sudo tailscale up --ssh`, and set it up like any Linux host, with `python3` and tmux relaunch. Tailscale SSH follows the tailnet policy's `ssh` rules, and the default `check` action asks for a browser login every so often, which a timer can't do, so give the VPS an `accept` rule to that node.
 
 ## 4. Check it
 

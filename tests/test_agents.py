@@ -250,23 +250,19 @@ def test_the_cli_prints_the_hook_and_its_settings(capsys: pytest.CaptureFixture[
 
 
 FAKE_SSH = """#!{python}
-import shlex, subprocess, sys
+import subprocess, sys
 args = sys.argv[1:]
 while args[0] == "-o":
     args = args[2:]
 command = " ".join(args[1:])
 with open({log!r}, "a") as log:
     log.write(command + "\\n")
-argv = shlex.split(command)[2:] if command.startswith("wsl.exe -e ") else ["/bin/sh", "-c", command]
-sys.exit(subprocess.run(argv, env={{"HOME": {home!r}, "PATH": "/usr/bin:/bin"}}).returncode)
+sys.exit(subprocess.run(["/bin/sh", "-c", command], env={{"HOME": {home!r}, "PATH": "/usr/bin:/bin"}}).returncode)
 """
 
 
-@pytest.mark.parametrize(
-    ("options", "remote"), [(["-o", "BatchMode=yes", "mac"], []), (["pc"], ["wsl.exe", "-e"])], ids=["mac", "wsl"]
-)
 def test_a_remote_host_reads_its_own_home_and_gets_only_python_on_its_command_line(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, options: list[str], remote: list[str]
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     monkeypatch.delenv("SUPERAGENT_SESSIONS_DIR", raising=False)
     far = tmp_path / "far"
@@ -277,12 +273,12 @@ def test_a_remote_host_reads_its_own_home_and_gets_only_python_on_its_command_li
     ssh, log = tmp_path / "ssh", tmp_path / "ssh.log"
     ssh.write_text(FAKE_SSH.format(python=sys.executable, log=str(log), home=str(far)))
     ssh.chmod(0o755)
-    connector = build_connector(agents_spec(host=[str(ssh), *options, *remote], python=sys.executable))
+    connector = build_connector(agents_spec(host=[str(ssh), "-o", "BatchMode=yes", "mac"], python=sys.executable))
     poll = connector.poll("")
     [item] = poll.items
     assert poll.complete and item.external_id == "far-away-1" and item.excerpt == "Ship it?"
     assert connector.act("far-away-1", "nudge", repr(since))[:2] == ("held", "its claude process isn't running")
-    assert log.read_text().splitlines() == [" ".join([*remote, sys.executable, "-"])] * 2
+    assert log.read_text().splitlines() == [f"{sys.executable} -"] * 2
 
 
 @pytest.mark.parametrize("extra", [{"host": "ssh mac"}, {"timeout": 0}, {"stall_after": "soon"}, {"python": ""}])
