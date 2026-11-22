@@ -109,8 +109,8 @@ def setup_parser(parser: argparse.ArgumentParser) -> None:
         "--allow-host",
         action="append",
         default=[],
-        metavar="NAME",
-        help="also answer to this Host, such as a tailscale serve name on your tailnet",
+        metavar="NAME[:PORT]",
+        help="also answer to this Host on any port, or only on PORT, such as your tailscale serve name",
     )
     panel.add_argument("--new-token", action="store_true", help="replace the saved token, so old links stop working")
     panel.add_argument("--read-only", action="store_true", help="hide the buttons and refuse every action")
