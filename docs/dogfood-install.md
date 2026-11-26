@@ -564,7 +564,7 @@ systemctl --user restart superagent-panel.service
 hermes superagent --home ~/superagent doctor
 ```
 
-The tick starts a fresh process each time, so its next run has the new code. The panel keeps serving the old code until it restarts. Don't restart the gateway, whatever `update` prints. `update` runs the same scan as the install: if it stops at `CAUTION`, read the `HIGH` lines as section 1 says, and when they pass run `hermes plugins update --force hermes-superagent`. The hook on each machine is a copy, so repeat section 3's first command when a release changes `superagent/agents/hook.py`. If a machine's hooks block runs `python3 ~/.superagent/hook.py` without `|| true` after it, merge the block `agents --hook-settings` prints now over it: without it, a missing `hook.py` makes Python exit 2, which Claude Code reads as blocking every prompt, tool call and stop.
+The tick starts a fresh process each time, so its next run has the new code. The panel keeps serving the old code until it restarts. Don't restart the gateway, whatever `update` prints. `update` runs the same scan as the install: if it stops at `CAUTION`, read the `HIGH` lines as section 1 says, and when they pass run `hermes plugins update --force hermes-superagent`. The hook on each machine is a copy, so repeat section 3's first command when a release changes `superagent/agents/hook.py`. If a machine's hooks block runs `~/.superagent/hook.py` without `|| true` after it, with `python3` or with `python` on the PC, merge the block `agents --hook-settings` prints now over it, through section 3's `sed` for the PC: without it, a missing `hook.py` makes Python exit 2, which Claude Code reads as blocking every prompt, tool call and stop.
 
 ## Undo
 
