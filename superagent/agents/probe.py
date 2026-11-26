@@ -103,7 +103,11 @@ def branch(cwd: str, cache: dict[str, str], deadline: float) -> str:
     if cwd and time.monotonic() < deadline and os.path.isdir(cwd):
         try:
             result = subprocess.run(
-                ["git", "-C", cwd, "rev-parse", "--abbrev-ref", "HEAD"], capture_output=True, text=True, timeout=3
+                ["git", "-C", cwd, "rev-parse", "--abbrev-ref", "HEAD"],
+                capture_output=True,
+                encoding="utf-8",
+                errors="replace",
+                timeout=3,
             ).stdout.strip()
         except (OSError, subprocess.SubprocessError):
             result = ""
