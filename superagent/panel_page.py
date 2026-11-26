@@ -30,6 +30,7 @@ h1 { font-size: 14px; margin: 0; }
   background: radial-gradient(circle at 30% 30%, var(--accent) 0 2px, transparent 2.5px) 0 0/6px 6px,
   var(--accent-deep); }
 .tick { color: var(--muted); font-family: var(--mono); font-size: 11.5px; }
+.tick.you { color: var(--you); } .tick.bad { color: var(--bad); }
 .live { width: 7px; height: 7px; border-radius: 50%; background: var(--good); }
 .live.off { background: var(--bad); }
 .spacer { flex: 1; }
@@ -196,6 +197,7 @@ const KINDS = {escalation: "Escalated", blocked: "Worker blocked", session: "Cla
 const TONES = {running: "run", starting: "run", queued: "idle", parked: "you", working: "run", background: "run",
   waiting: "you", stuck: "bad", limited: "bad", gone: "bad", idle: "idle", ended: "idle"};
 const tone = (value) => Object.hasOwn(TONES, value) ? TONES[value] : "idle";
+const TICK_TONES = {warn: "you", fail: "bad"};
 
 function hue(name) {
   let h = 0;
@@ -356,13 +358,15 @@ function itemRows(items, now) {
 
 function header(s, you) {
   const now = s.generated_at;
-  const finished = typeof s.tick.finished === "number" ? s.tick.finished : null;
+  const finished = typeof s.tick.finished === "number" && s.tick.status === "ok" ? s.tick.finished : null;
+  const tickTone = Object.hasOwn(TICK_TONES, s.tick.status) ? TICK_TONES[s.tick.status] : "";
+  const tickText = finished ? `last tick ${ago(finished, now)} ago` : s.tick.text || "no tick yet";
   const pills = s.missing ? "" : `<div class="pills"><span class="pill you"><b>${esc(you)}</b> need you</span>
     <span class="pill"><b>${esc(s.flow.workers.running)}</b> workers</span>
     <span class="pill"><b>${esc(s.sessions.filter((x) => x.state === "working").length)}</b> sessions working</span>
     </div>`;
   return `<header><div class="mark" aria-hidden="true"></div><h1>superagent</h1><span class="live"></span>
-    <span class="tick">${finished ? `last tick ${esc(ago(finished, now))} ago` : "no tick yet"}</span>
+    <span class="tick ${esc(tickTone)}">${esc(tickText)}</span>
     <span class="spacer"></span>${pills}</header>${s.problem ? `<div class="banner">${esc(s.problem)}</div>` : ""}
     ${notice()}`;
 }

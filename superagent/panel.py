@@ -19,6 +19,7 @@ from zoneinfo import ZoneInfo
 from .agents import ATTENTION_STATES, cwd_name, redact
 from .config import DB_FILENAME, WORKDIRS_DIRNAME, Config, load_config
 from .connectors import CONNECTOR_NAME, ConnectorSpec
+from .doctor import tick_check
 from .ledger import Item, ItemState, LedgerError, item_from_row, source_state_from_row
 from .panel_page import PAGE, SCRIPT
 from .polling import FAILURES_BEFORE_WARNING, source_health
@@ -69,7 +70,9 @@ def snapshot(home: Path, config: Config, now: float | None = None) -> dict[str, 
     zone = ZoneInfo(config.brief_timezone)
     local = datetime.fromtimestamp(moment, zone)
     day_start = local.replace(hour=0, minute=0, second=0, microsecond=0).timestamp()
-    base: dict[str, object] = {"generated_at": moment, "tick": last_tick(home), "problem": config.problem}
+    health = tick_check(home, config.tick_deadline_seconds, moment)
+    tick = {**last_tick(home), "status": health.status.value, "text": health.detail}
+    base: dict[str, object] = {"generated_at": moment, "tick": tick, "problem": config.problem}
     path = home / DB_FILENAME
     if not path.is_file():
         return {**base, "missing": f"no {DB_FILENAME} in {home} yet, run a tick first"}
