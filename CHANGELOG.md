@@ -24,6 +24,7 @@ Notable changes to hermes-superagent. The format follows [Keep a Changelog](http
 - A config value of the wrong type, such as `argv = 1` or `pass_strangers = "false"`, is refused like any other bad edit, so the plugin keeps running on the last good config instead of crashing or reading `"false"` as true.
 - Unknown keys in `[briefs]` are refused, like everywhere else.
 - `briefs --compare` finds a GitLab task's checkout under its `gitlab:group/project` key, as a real brief does.
+- A connector whose `timeout` doesn't fit in the tick's poll budget, half of `[tick] deadline_seconds`, now fails its poll with that reason, so it's alerted after three ticks like any failing source. Before, it was skipped on every tick without a word, and `doctor`, which ignores the budget, said it was fine.
 - `hermes superagent setup` sends through Hermes when Hermes was installed with its own installer, whose launcher hides its name. Before, `--alerts` was refused there and nothing was set to deliver messages.
 - `doctor` says "1 minute ago", and setup's hint for the Claude Code hook speaks to you rather than to an agent.
 - Stopping a worker also stops its descendants that left its process group, such as a `setsid` dev server, while their parent chain leads back to the worker, and it never reads other processes' environments. Before, they survived a stop or a restart. A process that left the group and lost its parent first, such as a double-forked daemon, still isn't found.

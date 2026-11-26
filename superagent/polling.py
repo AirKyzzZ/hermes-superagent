@@ -47,10 +47,19 @@ def poll_sources(
         state = states[spec.name]
         due = state.last_attempt is None or time.time() - state.last_attempt >= spec.every_seconds
         connector = connectors[spec.name]
-        if not due or deadline - time.monotonic() < connector.timeout:
+        never_fits = connector.timeout >= budget_seconds
+        if not due or (not never_fits and deadline - time.monotonic() < connector.timeout):
             continue
         try:
-            poll_one(ledger, spec, connector, state, deadline, notify)
+            if never_fits:
+                ledger.begin_poll(spec.name)
+                ledger.poll_failed(
+                    spec.name,
+                    f"its timeout of {connector.timeout:.0f}s is over the tick's poll budget of {budget_seconds:.0f}s, "
+                    "half of [tick] deadline_seconds, so it never runs: lower its timeout or raise the deadline",
+                )
+            else:
+                poll_one(ledger, spec, connector, state, deadline, notify)
         except Exception:
             logger.exception("polling %s failed outside the connector", spec.name)
     warnings: list[SourceWarning] = []
