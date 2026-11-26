@@ -20,7 +20,6 @@ Notable changes to hermes-superagent. The format follows [Keep a Changelog](http
 
 ### Fixed
 
-- `superagent agents --hook-script` and `--hook-settings` work without `--home`, as setup's next steps and `doctor`'s hint print them. Before, outside Hermes they exited 2 with `--home is required`, and the printed `> ~/.superagent/hook.py` left an empty hook that never recorded anything.
 - The panel answers behind a proxy on another port, such as `tailscale serve --https=8443` when 443 is taken: a bare `--allow-host` name is answered on any port, `name:port` only on that port, a refused request's `421` names the `Host` it saw, and actions come from any `Origin` the panel answers to.
 - A config value of the wrong type, such as `argv = 1` or `pass_strangers = "false"`, is refused like any other bad edit, so the plugin keeps running on the last good config instead of crashing or reading `"false"` as true.
 - Unknown keys in `[briefs]` are refused, like everywhere else.
@@ -33,6 +32,7 @@ Notable changes to hermes-superagent. The format follows [Keep a Changelog](http
 - An `agents` host that ssh can't reach or log in to now says so in `doctor` and in poll errors, with the command to try by hand, instead of "the probe exited 255". A missing `python3` and output that isn't JSON, such as a shell banner, are named too.
 - A session on a Windows host is named after its folder on the board and in the panel, not its whole `C:\` path.
 - An `agents` host whose errors aren't UTF-8, such as Windows in its own code page, now shows them instead of a decoding error.
+- `superagent agents --hook-script` and `--hook-settings` work without `--home`, as setup's next steps and `doctor`'s hint print them. Before, outside Hermes they exited 2 with `--home is required`, and the printed `> ~/.superagent/hook.py` left an empty hook that never recorded anything.
 
 ## [0.1.0] - 2026-11-10
 
