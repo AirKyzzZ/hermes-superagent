@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import os
 import runpy
+import shlex
 import subprocess
 import sys
 import time
@@ -270,6 +271,35 @@ def test_the_cli_prints_the_hook_and_its_settings(capsys: pytest.CaptureFixture[
     assert set(settings["hooks"]) == set(HOOK_EVENTS)
     assert main(["--home", str(tmp_path), "agents", "--hook-script"]) == 0
     assert capsys.readouterr().out == HOOK_SCRIPT.read_text()
+
+
+@pytest.mark.skipif(os.name == "nt", reason="Claude Code runs hook commands through a POSIX shell")
+def test_a_missing_hook_script_never_blocks_claude_code(capsys: pytest.CaptureFixture[str], tmp_path: Path) -> None:
+    assert main(["--home", str(tmp_path), "agents", "--hook-settings"]) == 0
+    hooks = json.loads(capsys.readouterr().out)["hooks"]
+    commands = {entry["hooks"][0]["command"] for event in HOOK_EVENTS for entry in hooks[event]}
+    assert len(commands) == 1
+    command = commands.pop().replace("python3 ", shlex.quote(sys.executable) + " ")
+    home = tmp_path / "machine"
+    home.mkdir()
+
+    def run() -> int:
+        return subprocess.run(
+            ["/bin/sh", "-c", command],
+            input=json.dumps({"session_id": "s", "hook_event_name": "UserPromptSubmit"}),
+            capture_output=True,
+            text=True,
+            env={key: value for key, value in os.environ.items() if key != "SUPERAGENT_SESSIONS_DIR"}
+            | {"HOME": str(home)},
+            timeout=30,
+            check=False,
+        ).returncode
+
+    assert run() == 0
+    (home / ".superagent").mkdir()
+    (home / ".superagent" / "hook.py").write_text(HOOK_SCRIPT.read_text())
+    assert run() == 0
+    assert (home / ".superagent" / "sessions" / "s.jsonl").read_text().count("UserPromptSubmit") == 1
 
 
 FAKE_SSH = """#!{python}
