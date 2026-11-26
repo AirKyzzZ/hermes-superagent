@@ -86,7 +86,7 @@ def busy_home(home: Path) -> Config:
     router.store.end_assignment(assignment)
     router.store.end_ticket(ticket)
     waiting = {"state": "waiting", "cwd": "/srv/code/api", "branch": "main"}
-    ledger.record("vps", SourceItem("s1", "api session", meta=waiting))
+    ledger.record("vps", SourceItem("s1", "api session", excerpt="Merge it now or wait for review?", meta=waiting))
     ledger.record("vps", SourceItem("s2", "web session", meta={"state": "working", "cwd": "C:\\Users\\you\\code\\web"}))
     ledger.begin_poll("tasks")
     for _ in range(3):
@@ -107,7 +107,21 @@ def test_what_needs_you_comes_first_and_in_order(tmp_path: Path) -> None:
     assert attention[0]["quote"] == "budgets spent"
     assert attention[1]["quote"] == "Postgres or SQLite?"
     assert attention[2]["title"] == "api · main"
+    assert attention[2]["quote"] == "Merge it now or wait for review?"
     assert "3 failed polls" in str(attention[3]["detail"])
+
+
+def test_a_session_card_quotes_its_text_redacted_or_else_its_error(tmp_path: Path) -> None:
+    _, _, ledger, config = build(tmp_path)
+    asked = "Push with Bearer abcdefghijklmnopqrstuvwxyz? " + "more " * 80
+    ledger.record("vps", SourceItem("s1", "api", excerpt=asked, meta={"state": "waiting", "cwd": "/code/api"}))
+    ledger.record("vps", SourceItem("s2", "web", meta={"state": "limited", "cwd": "/code/web", "error": "rate_limit"}))
+    attention = snapshot(tmp_path, config)["attention"]
+    assert isinstance(attention, list)
+    quotes = {card["title"]: str(card["quote"]) for card in attention if card["kind"] == "session"}
+    assert quotes["web"] == "rate_limit"
+    assert quotes["api"].startswith("Push with Bearer [redacted]? more")
+    assert "abcdefghijklmnop" not in quotes["api"] and len(quotes["api"]) <= 280
 
 
 def test_workers_flow_and_what_runs_now(tmp_path: Path) -> None:

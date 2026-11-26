@@ -317,7 +317,7 @@ def _sessions(specs: Sequence[ConnectorSpec], items: Sequence[Item]) -> list[dic
                 "branch": _text(item.meta.get("branch", ""), 80),
                 "state": item.meta.get("state", ""),
                 "since": item.last_changed,
-                "detail": _text(item.meta.get("error", "")) if boards[item.connector].notify_detail else "",
+                "detail": _text(item.excerpt or item.meta.get("error", "")),
             }
         )
     return sessions
