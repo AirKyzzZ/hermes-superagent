@@ -142,7 +142,9 @@ def _outbox(runtime: Runtime) -> Check:
     failing = runtime.store.failed_send_count()
     waiting = runtime.store.undelivered_count()
     if failing:
-        detail = f"{failing} of {waiting} waiting messages failed to send, see superagent outbox"
+        last = next((m.last_error for m in reversed(runtime.store.pending_outbox()) if m.last_error), "")
+        detail = f"{failing} of {waiting} waiting messages failed to send{', last: ' + last if last else ''}"
+        detail += ", see superagent outbox"
         return Check("outbox", Status.FAIL, detail)
     return Check("outbox", Status.OK, f"{waiting} waiting")
 

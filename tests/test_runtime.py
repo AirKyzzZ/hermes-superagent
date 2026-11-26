@@ -312,3 +312,31 @@ def test_an_error_keeps_its_alert_key_when_only_its_ids_change() -> None:
     second = "watchdog: drift judge unavailable: Error code: 529 - {'request_id': 'req_011CVzR4kd'}"
     assert _alert_key(first) == _alert_key(second)
     assert _alert_key(first) != _alert_key("watchdog: drift judge returned nothing usable")
+
+
+def test_a_failed_send_and_heartbeat_say_what_the_command_printed(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    from superagent.cli import main
+    from superagent.doctor import diagnose
+
+    refuse = "import sys; sys.stderr.write('x' * 500 + ' unknown channel ' + sys.argv[1]); raise SystemExit(3)"
+    ping = "import sys; sys.stderr.write('ping refused'); raise SystemExit(22)"
+    config = CONFIG.replace('"raise SystemExit(1)"', json.dumps(refuse)) + (
+        f"[heartbeat]\nargv = {json.dumps([sys.executable, '-c', ping, 'https://hc-ping.example/secret-check'])}\n"
+    )
+    home = home_with_config(tmp_path, config)
+    runtime = open_runtime(home)
+    runtime.store.queue_message("tk-1", "discord:9", "the private body")
+    errors = tick(runtime).errors
+    assert any("not delivered yet" in error for error in errors)
+    assert main(["--home", str(home), "outbox"]) == 0
+    [listed] = json.loads(capsys.readouterr().out)
+    assert listed["last_error"].startswith("python") and "exited 3: xxx" in listed["last_error"]
+    assert listed["last_error"].endswith("xxx unknown channel discord:9")
+    assert "the private body" not in listed["last_error"]
+    [outbox] = [check for check in diagnose(home, poll=False) if check.name == "outbox"]
+    assert "unknown channel discord:9" in outbox.detail
+    runtime.store.drop_message(listed["seq"], "test")
+    [heartbeat] = [error for error in tick(open_runtime(home)).errors if error.startswith("heartbeat")]
+    assert heartbeat.endswith("exited 22: ping refused") and "secret-check" not in heartbeat

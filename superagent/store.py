@@ -93,6 +93,7 @@ _MIGRATIONS = (
     "ALTER TABLE watchdog_events ADD COLUMN judged TEXT NOT NULL DEFAULT ''",
     "ALTER TABLE tickets ADD COLUMN queued_at REAL",
     "ALTER TABLE tickets ADD COLUMN project TEXT NOT NULL DEFAULT ''",
+    "ALTER TABLE outbox ADD COLUMN last_error TEXT NOT NULL DEFAULT ''",
 )
 SEND_RETRY_BASE_SECONDS = 60.0
 SEND_RETRY_CAP_SECONDS = 1800.0
@@ -111,6 +112,7 @@ class OutboxMessage:
     text: str
     attempts: int
     due: bool
+    last_error: str = ""
 
 
 def split_message(text: str, limit: int = MESSAGE_LIMIT) -> list[str]:
@@ -618,7 +620,7 @@ class Store:
         now = time.time()
         with self._connect() as connection:
             rows = connection.execute(
-                "SELECT seq, ticket_id, channel, text, attempts, next_attempt_at FROM outbox "
+                "SELECT seq, ticket_id, channel, text, attempts, next_attempt_at, last_error FROM outbox "
                 "WHERE sent_at IS NULL AND failed_at IS NULL ORDER BY seq"
             ).fetchall()
         return [
@@ -629,6 +631,7 @@ class Store:
                 row["text"],
                 row["attempts"],
                 row["next_attempt_at"] is None or row["next_attempt_at"] <= now,
+                row["last_error"],
             )
             for row in rows
         ]
@@ -696,9 +699,11 @@ class Store:
             )
             return cursor.rowcount
 
-    def record_send_failure(self, seq: int) -> float:
+    def record_send_failure(self, seq: int, error: str = "") -> float:
         with self._connect() as connection:
-            connection.execute("UPDATE outbox SET attempts = attempts + 1 WHERE seq = ?", (seq,))
+            connection.execute(
+                "UPDATE outbox SET attempts = attempts + 1, last_error = ? WHERE seq = ?", (error[-400:], seq)
+            )
             attempts = connection.execute("SELECT attempts FROM outbox WHERE seq = ?", (seq,)).fetchone()["attempts"]
             delay = (
                 SEND_FIRST_RETRY_SECONDS
