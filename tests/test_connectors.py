@@ -419,6 +419,19 @@ def test_one_slow_source_cannot_push_the_others_past_the_budget(tmp_path: Path) 
     assert slow.cursors == [] and quick.cursors == [""]
 
 
+@pytest.mark.parametrize("timeout", [60.0, 90.0])
+def test_a_source_whose_timeout_never_fits_the_budget_fails_loudly(tmp_path: Path, timeout: float) -> None:
+    ledger = Ledger(tmp_path / "s.db")
+    slow = ScriptedConnector([snapshot("a")] * 4)
+    specs = [ConnectorSpec("slow", "command", every_seconds=0)]
+    poll_sources(ledger, specs, {"slow": slow}, 300)
+    slow.timeout = timeout
+    warnings = [poll_sources(ledger, specs, {"slow": slow}, 60) for _ in range(3)][-1]
+    assert slow.cursors == [""]
+    assert any(f"timeout of {timeout:.0f}s is over the tick's poll budget of 60s" in w.text for w in warnings)
+    assert [item.external_id for item in ledger.items(connector="slow")] == ["a"]
+
+
 def test_the_least_recently_polled_source_goes_first(tmp_path: Path) -> None:
     ledger = Ledger(tmp_path / "s.db")
     order: list[str] = []
