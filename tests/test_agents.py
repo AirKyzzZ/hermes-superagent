@@ -264,19 +264,19 @@ notify_detail = true
     assert "is waiting: Merge [your PR] (https:\u200b//evil\u200b.com/pr)? (it-" in sent.read_text(encoding="utf-8")
 
 
+def test_the_hook_and_its_settings_print_without_a_home(capsys: pytest.CaptureFixture[str]) -> None:
+    assert main(["agents", "--hook-script"]) == 0
+    assert capsys.readouterr().out == HOOK_SCRIPT.read_text()
+    assert main(["agents", "--hook-settings"]) == 0
+    assert set(json.loads(capsys.readouterr().out)["hooks"]) == set(HOOK_EVENTS)
+
+
 def test_the_cli_prints_the_hook_and_its_settings(capsys: pytest.CaptureFixture[str], tmp_path: Path) -> None:
     assert main(["--home", str(tmp_path), "agents", "--hook-settings"]) == 0
     settings = json.loads(capsys.readouterr().out)
     assert set(settings["hooks"]) == set(HOOK_EVENTS)
     assert main(["--home", str(tmp_path), "agents", "--hook-script"]) == 0
     assert capsys.readouterr().out == HOOK_SCRIPT.read_text()
-
-
-def test_the_hook_and_its_settings_print_without_a_home(capsys: pytest.CaptureFixture[str]) -> None:
-    assert main(["agents", "--hook-script"]) == 0
-    assert capsys.readouterr().out == HOOK_SCRIPT.read_text()
-    assert main(["agents", "--hook-settings"]) == 0
-    assert set(json.loads(capsys.readouterr().out)["hooks"]) == set(HOOK_EVENTS)
 
 
 FAKE_SSH = """#!{python}
