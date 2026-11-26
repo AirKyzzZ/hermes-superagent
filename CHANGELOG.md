@@ -15,9 +15,9 @@ Notable changes to hermes-superagent. The format follows [Keep a Changelog](http
 
 ### Changed
 
-- The panel's header judges the tick the way `doctor` does: amber before the first tick, red once the last one finished more than 15 minutes ago or one ran past its deadline without finishing, and "a tick has been running for ..." while one runs. Before, it read "no tick yet" during every tick and after one was killed, and never flagged a timer that had stopped.
 - The router's prompt is delegation-first: its context is kept for talking and deciding, anything with more than one step goes to a worker, and each goal is written as a complete brief in English. The worker brief now says who relays for whom, then lists goal, context, what done means, constraints and how to report. `[worker] on_behalf_of` sets the name both use.
 - Links in text a model or a stranger wrote, such as a worker's report, an escalation, a session's question, a worker brief or an item's title, reach chat unclickable. Every `](` becomes `] (`, so a masked link shows its address, tags such as `<a href>` are broken so Telegram can't render them, and an address after a scheme such as `https:` or `mailto:` gets a zero-width space after the colon and before each dot of its host, so the app neither links nor previews it. A copied address needs those characters removed. A bare domain such as `example.com` is left as it is, and some apps still link it.
+- The panel's header judges the tick the way `doctor` does: amber before the first tick, red once the last one finished more than 15 minutes ago or one ran past its deadline without finishing, and "a tick has been running for ..." while one runs. Before, it read "no tick yet" during every tick and after one was killed, and never flagged a timer that had stopped.
 
 ### Fixed
 
