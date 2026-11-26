@@ -44,7 +44,7 @@ def diagnose(home: Path, *, poll: bool = True, cli: str = "superagent") -> list[
         _config(runtime),
         _outbound(runtime),
         _command("heartbeat", runtime.config.heartbeat_argv, "not set, so nothing outside notices a stopped timer"),
-        _tick(runtime, now),
+        tick_check(runtime.home, runtime.config.tick_deadline_seconds, now),
         _alerts(runtime),
         _outbox(runtime),
     ]
@@ -109,8 +109,8 @@ def _minutes(seconds: float) -> str:
     return "1 minute" if count == 1 else f"{count} minutes"
 
 
-def _tick(runtime: Runtime, now: float) -> Check:
-    record = last_tick(runtime.home)
+def tick_check(home: Path, deadline: float, now: float) -> Check:
+    record = last_tick(home)
     finished, started = record.get("finished"), record.get("started")
     if isinstance(finished, (int, float)):
         ago = _minutes(now - finished)
@@ -119,11 +119,11 @@ def _tick(runtime: Runtime, now: float) -> Check:
         return Check("tick", Status.OK, f"the last tick finished {ago} ago")
     if isinstance(started, (int, float)):
         ago = _minutes(now - started)
-        if now - started > runtime.config.tick_deadline_seconds:
+        if now - started > deadline:
             return Check("tick", Status.FAIL, f"the tick started {ago} ago never finished")
         return Check("tick", Status.OK, f"a tick has been running for {ago}")
     try:
-        configured = (runtime.home / CONFIG_FILENAME).stat().st_mtime
+        configured = (home / CONFIG_FILENAME).stat().st_mtime
     except OSError:
         configured = now
     status = Status.FAIL if now - configured > TICK_QUIET_SECONDS else Status.WARN
