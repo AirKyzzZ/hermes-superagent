@@ -32,6 +32,7 @@ Notable changes to hermes-superagent. The format follows [Keep a Changelog](http
 - An `agents` host that ssh can't reach or log in to now says so in `doctor` and in poll errors, with the command to try by hand, instead of "the probe exited 255". A missing `python3` and output that isn't JSON, such as a shell banner, are named too.
 - A session on a Windows host is named after its folder on the board and in the panel, not its whole `C:\` path.
 - An `agents` host whose errors aren't UTF-8, such as Windows in its own code page, now shows them instead of a decoding error.
+- `superagent agents --hook-script` and `--hook-settings` work without `--home`, as setup's next steps and `doctor`'s hint print them. Before, outside Hermes they exited 2 with `--home is required`, and the printed `> ~/.superagent/hook.py` left an empty hook that never recorded anything.
 
 ## [0.1.0] - 2026-11-10
 
