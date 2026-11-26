@@ -71,6 +71,34 @@ def test_the_hook_never_fails_and_never_writes_garbage(sessions: Path, payload: 
     assert not sessions.exists() or not any(sessions.iterdir())
 
 
+def test_the_hook_reads_utf8_whatever_the_console_code_page(sessions: Path) -> None:
+    said = "Prêt à fusionner ? 📁 ✅"
+    done = subprocess.run(
+        [sys.executable, str(HOOK_SCRIPT)],
+        input=json.dumps(event("Stop", last_assistant_message=said), ensure_ascii=False).encode("utf-8"),
+        capture_output=True,
+        env={**os.environ, "PYTHONIOENCODING": "cp1252", "PYTHONUTF8": "0"},
+        timeout=30,
+        check=False,
+    )
+    assert done.returncode == 0
+    [line] = lines(sessions)
+    assert line["event"] == "Stop" and line["text"] == said
+
+
+@pytest.mark.skipif(os.name == "nt", reason="the fake git is a shell script")
+def test_a_branch_name_the_probe_cant_decode_never_sinks_the_host(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    fake = tmp_path / "bin" / "git"
+    fake.parent.mkdir()
+    fake.write_text("#!/bin/sh\nprintf 'caf\\303\\201-\\377\\n'\n")
+    fake.chmod(0o755)
+    monkeypatch.setenv("PATH", f"{fake.parent}{os.pathsep}{os.environ['PATH']}")
+    probe = runpy.run_path(str(PROBE_SCRIPT))
+    assert probe["branch"](str(tmp_path), {}, time.monotonic() + 10) == "caf\u00c1-\ufffd"
+
+
 def test_the_hook_keeps_the_question_being_asked(sessions: Path) -> None:
     hook(
         event(
