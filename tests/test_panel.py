@@ -111,25 +111,6 @@ def test_what_needs_you_comes_first_and_in_order(tmp_path: Path) -> None:
     assert "3 failed polls" in str(attention[3]["detail"])
 
 
-@pytest.mark.parametrize(
-    ("record", "status", "says"),
-    [
-        ({"pid": 1, "started": 1000.0, "finished": 1030.0}, "ok", "the last tick finished 2 minutes ago"),
-        ({"pid": 1, "started": 1000.0 - 1200, "finished": 1000.0 - 1170}, "fail", "is the timer running?"),
-        ({"pid": 1, "started": 1100.0}, "ok", "a tick has been running for 1 minute"),
-        ({"pid": 1, "started": 1000.0 - 900}, "fail", "never finished"),
-    ],
-)
-def test_the_header_says_whether_the_tick_is_alive(
-    tmp_path: Path, record: dict[str, float], status: str, says: str
-) -> None:
-    config = busy_home(tmp_path)
-    (tmp_path / TICK_LOCK_FILENAME).write_text(json.dumps(record), encoding="utf-8")
-    tick = snapshot(tmp_path, config, now=1150.0)["tick"]
-    assert isinstance(tick, dict)
-    assert tick["status"] == status and says in str(tick["text"])
-
-
 def test_workers_flow_and_what_runs_now(tmp_path: Path) -> None:
     shot = snapshot(tmp_path, busy_home(tmp_path))
     workers = shot["workers"]
@@ -644,3 +625,22 @@ def test_read_only_hides_the_buttons_and_refuses_every_action(tmp_path: Path, mo
     monkeypatch.setattr("superagent.cli.serve", lambda *args: calls.append(args))
     assert panel_cli(tmp_path, "--read-only") == 0
     assert calls[0][-1] is True
+
+
+@pytest.mark.parametrize(
+    ("record", "status", "says"),
+    [
+        ({"pid": 1, "started": 1000.0, "finished": 1030.0}, "ok", "the last tick finished 2 minutes ago"),
+        ({"pid": 1, "started": 1000.0 - 1200, "finished": 1000.0 - 1170}, "fail", "is the timer running?"),
+        ({"pid": 1, "started": 1100.0}, "ok", "a tick has been running for 1 minute"),
+        ({"pid": 1, "started": 1000.0 - 900}, "fail", "never finished"),
+    ],
+)
+def test_the_header_says_whether_the_tick_is_alive(
+    tmp_path: Path, record: dict[str, float], status: str, says: str
+) -> None:
+    config = busy_home(tmp_path)
+    (tmp_path / TICK_LOCK_FILENAME).write_text(json.dumps(record), encoding="utf-8")
+    tick = snapshot(tmp_path, config, now=1150.0)["tick"]
+    assert isinstance(tick, dict)
+    assert tick["status"] == status and says in str(tick["text"])
