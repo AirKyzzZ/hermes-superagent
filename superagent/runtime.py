@@ -7,7 +7,7 @@ import os
 import re
 import subprocess
 import time
-from collections.abc import Mapping
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, replace
 from datetime import datetime, timedelta
 from pathlib import Path
@@ -70,13 +70,27 @@ def open_runtime(home: Path) -> Runtime:
     )
 
 
+class CommandFailed(RuntimeError):
+    pass
+
+
+def _run_quietly(argv: Sequence[str]) -> None:
+    name = Path(argv[0]).name
+    try:
+        done = subprocess.run(argv, timeout=_SEND_TIMEOUT_SECONDS, capture_output=True, check=False)
+    except subprocess.TimeoutExpired:
+        raise CommandFailed(f"{name} timed out after {_SEND_TIMEOUT_SECONDS}s") from None
+    if done.returncode:
+        said = " ".join((done.stderr or done.stdout).decode("utf-8", "replace").split())
+        raise CommandFailed(f"{name} exited {done.returncode}: {said[-300:] or 'no output'}")
+
+
 def argv_sender(argv: tuple[str, ...]) -> Sender | None:
     if not argv:
         return None
 
     def send(channel: str, text: str) -> None:
-        rendered = [part.replace("{channel}", channel).replace("{text}", text) for part in argv]
-        subprocess.run(rendered, check=True, timeout=_SEND_TIMEOUT_SECONDS, capture_output=True)
+        _run_quietly([part.replace("{channel}", channel).replace("{text}", text) for part in argv])
 
     return send
 
@@ -244,10 +258,8 @@ def _run_phases(runtime: Runtime, judge: DriftJudge | None, assessor: Assessor |
         errors.append(f"alerts: {error}")
     if not errors and runtime.config.heartbeat_argv:
         try:
-            subprocess.run(
-                runtime.config.heartbeat_argv, check=True, timeout=_SEND_TIMEOUT_SECONDS, capture_output=True
-            )
-        except (subprocess.SubprocessError, OSError) as error:
+            _run_quietly(runtime.config.heartbeat_argv)
+        except (CommandFailed, OSError) as error:
             errors.append(f"heartbeat: {error}")
     texts = tuple(warning.text for warning in warnings)
     return TickResult(tuple(tickets), tuple(checks), tuple(delivered), tuple(errors), warnings=texts)

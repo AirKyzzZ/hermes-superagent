@@ -261,7 +261,14 @@ def run_command(
             print(json.dumps({"dropped": args.drop, "reason": args.reason}))
             return 0
         messages = [
-            {"seq": m.seq, "ticket": m.ticket_id, "channel": m.channel, "attempts": m.attempts, "text": m.text[:200]}
+            {
+                "seq": m.seq,
+                "ticket": m.ticket_id,
+                "channel": m.channel,
+                "attempts": m.attempts,
+                "last_error": m.last_error,
+                "text": m.text[:200],
+            }
             for m in runtime.store.pending_outbox()
         ]
         print(json.dumps(messages, indent=1))

@@ -22,6 +22,7 @@ Notable changes to hermes-superagent. The format follows [Keep a Changelog](http
 
 - The panel answers behind a proxy on another port, such as `tailscale serve --https=8443` when 443 is taken: a bare `--allow-host` name is answered on any port, `name:port` only on that port, a refused request's `421` names the `Host` it saw, and actions come from any `Origin` the panel answers to.
 - A config value of the wrong type, such as `argv = 1` or `pass_strangers = "false"`, is refused like any other bad edit, so the plugin keeps running on the last good config instead of crashing or reading `"false"` as true.
+- A send or heartbeat command that fails is reported as `hermes exited 1: <the end of what it printed>`. Before, its output was dropped and the error, logged on every retry, quoted the whole command line, with the message text and the heartbeat's ping URL, and the URL could reach the alerts channel. `superagent outbox` shows each message's last error and `doctor` the latest one.
 - Unknown keys in `[briefs]` are refused, like everywhere else.
 - `briefs --compare` finds a GitLab task's checkout under its `gitlab:group/project` key, as a real brief does.
 - `hermes superagent setup` sends through Hermes when Hermes was installed with its own installer, whose launcher hides its name. Before, `--alerts` was refused there and nothing was set to deliver messages.

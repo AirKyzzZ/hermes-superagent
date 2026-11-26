@@ -214,7 +214,7 @@ class Router:
             try:
                 send(message.channel, message.text)
             except Exception as error:
-                self.store.record_send_failure(message.seq)
+                self.store.record_send_failure(message.seq, str(error))
                 logger.warning("send to %s failed, retrying later: %s", message.channel, error)
                 return False
         self.store.mark_sent(message.seq)
