@@ -49,7 +49,7 @@ fields = { id = "id", title = "name", url = "link", status = "state" }
 confirm_argv = ["my-tool", "show", "{id}", "--json"]
 ```
 
-Set `total` or `limit` if the tool reports them, or a cut list reads as complete. `superagent doctor` polls it once without recording anything. Every key is described in the [configuration table](README.md#configuration). If it works for you, share the block in a [connector issue](https://github.com/AirKyzzZ/hermes-superagent/issues/new?template=connector.yml) so others can use it too.
+Set `total` or `limit` if the tool reports them, or a cut list reads as complete. `superagent --home ~/superagent doctor` polls it once without recording anything. Every key is described in the [configuration table](README.md#configuration). If it works for you, share the block in a [connector issue](https://github.com/AirKyzzZ/hermes-superagent/issues/new?template=connector.yml) so others can use it too.
 
 A built-in type is worth writing when a block can't express what the tool needs, such as pagination, a total to check against, or a lookup to confirm that one item closed. It's one file in [`superagent/connectors/`](superagent/connectors/):
 

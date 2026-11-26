@@ -40,7 +40,7 @@ hermes superagent --home ~/superagent setup --alerts discord:ALERTS_CHANNEL_ID \
   --brief discord:BRIEF_CHANNEL_ID --agents-channel discord:AGENTS_CHANNEL_ID
 ```
 
-Then add the heartbeat and the other machines by hand, so the file looks like this. Leave out any machine you don't have.
+Then add the `briefs` channel, the heartbeat and the other machines by hand, and point the `todoist` block's `channel` at the tasks channel, since setup points it at alerts, so the file looks like this. Leave out any machine you don't have.
 
 ```toml
 [outbound]
