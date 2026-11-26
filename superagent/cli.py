@@ -189,16 +189,16 @@ def run_command(
             )
         )
         return 0
-    home = args.home.expanduser() if args.home else (default_home() if default_home else None)
-    if home is None:
-        print("--home is required outside Hermes", file=sys.stderr)
-        return 2
     if args.superagent_command == "agents" and (args.hook_script or args.hook_settings):
         if args.hook_script:
             print(HOOK_SCRIPT.read_text(encoding="utf-8"), end="")
         else:
             print(json.dumps(settings_block(), indent=2))
         return 0
+    home = args.home.expanduser() if args.home else (default_home() if default_home else None)
+    if home is None:
+        print("--home is required outside Hermes", file=sys.stderr)
+        return 2
     if args.superagent_command == "setup":
         return run_setup(args, home, inside_hermes=inside_hermes)
     if args.superagent_command == "panel":
