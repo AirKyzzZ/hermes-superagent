@@ -1,18 +1,20 @@
 # Maintainer agent roadmap
 
-The working plan of the agent that maintains this repo between the owner's reviews. It's ranked by what gets a stranger from "found it" to "running it", then by what keeps it running once they do. [ROADMAP.md](ROADMAP.md) stays the public, contributor-facing list. Last reviewed 2026-11-17.
+The working plan of the agent that maintains this repo between the owner's reviews. It's ranked by what gets a stranger from "found it" to "running it", then by what keeps it running once they do. [ROADMAP.md](ROADMAP.md) stays the public, contributor-facing list. Last reviewed 2026-11-26.
 
 ## What the signals say
 
 - **6 stars, 2 forks, no issues yet.** People look, few talk. Nobody has reported an install failure, which more likely means few have tried the Hermes path than that it works for everyone.
 - **One fork runs it for real.** It's 54 commits ahead and they're all generic fixes or features a production user needed: a cap on running workers with a queue, `{ticket}` in the worker command, stopping a worker's whole process tree, plain-text relays with links stripped, role checks on the tools, a database reopened after a version reset. That's the clearest list of what the next serious user hits. Each item below is written fresh here, none of it is copied.
 - **The catalog entry merged on 2026-11-11, pinned at `83544d7` (v0.1.0).** Anyone who installs by name gets v0.1.0, without the fixes in #72 and #73. #73 matters most: `setup` couldn't find a Hermes installed with its own installer, which is the documented way to install Hermes.
-- **Hermes shipped v0.23.1 (2026-11-10) and v0.23.2 (2026-11-16).** CI tests 0.22.7 and 0.23.0 only. 0.23.2 rolls up about 2,000 PRs, including module moves with shims, profile rename fixes and new plugin API (`ctx.register_idle_task`, `ctx.redact_text()`, an `on_session_open` hook). The curated notes come with v0.24.0, so the new API waits for them.
-- **The README still says "not in the catalog"** in the comparison table, and the install line uses the GitHub path rather than the catalog name.
+- **Hermes shipped v0.23.1 (2026-11-10) and v0.23.2 (2026-11-16).** CI tests 0.22.7, 0.23.0 and 0.23.2. 0.23.2 rolls up about 2,000 PRs, including module moves with shims, profile rename fixes and new plugin API (`ctx.register_idle_task`, `ctx.redact_text()`, an `on_session_open` hook). The curated notes come with v0.24.0, so the new API waits for them.
+- **The README installs from GitHub**, not by catalog name, because the catalog entry still pins v0.1.0.
 
 ## Progress
 
-- **2026-11-17:** the owner asked for a visual side panel and a delegation-first router on the same day, so they jumped to the top. In PRs: CI on 0.23.2 (#76), the worker cap (#77), the side panel (#78), delegation-first prompts (#79), projects and worker conversations in the panel (#80), and a saved token with `tailscale serve` support (#81).
+- **2026-11-17:** the owner asked for a visual side panel and a delegation-first router on the same day, so they jumped to the top. In PRs: CI on 0.23.2 (#76), the worker cap (#77), the side panel (#83), delegation-first prompts (#84), projects and worker conversations in the panel (#80), and a saved token with `tailscale serve` support (#81).
+- **2026-11-17 to 11-22:** merged the markdown connector (#87), stopping a worker's whole process tree (#88, #89), panel actions (#93), unclickable links in relayed text (#99), and the Mac and Windows agents hosts with ssh errors explained (#97). Ranked items 1, 3, 4, 5, 8 and 9 are done.
+- **2026-11-26:** a setup audit asked by the owner. In PRs: a missing hook no longer blocks Claude Code (#101), the hook prints without `--home` (#102), the Windows hook and probe read UTF-8 (#103), the panel quotes what a waiting session asks (#104) and flags a stopped tick (#105), and failed sends say why (#106).
 
 ## Ranked
 
@@ -35,7 +37,7 @@ The working plan of the agent that maintains this repo between the owner's revie
 
 | Step | State |
 | --- | --- |
-| Read-only panel on localhost: what needs you, flow, workers, sessions, ledger, sources, feed | #78 |
+| Read-only panel on localhost: what needs you, flow, workers, sessions, ledger, sources, feed | #83 |
 | Projects as cards, a drawer per project, each worker's conversation | #80 |
 | Saved token, `--allow-host` for `tailscale serve` | #81 |
 | Actions from the panel: answer a blocked worker, cancel, accept a held snapshot, snooze | next |

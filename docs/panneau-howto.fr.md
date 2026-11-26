@@ -151,7 +151,8 @@ Sans rôle posé dans le profil, il n'y a ni router ni workers. Le panneau montr
 
 | Ce que tu vois | Ce qu'il faut faire |
 | --- | --- |
-| `superagent.toml: [Errno 2] No such file or directory`, ou « no superagent.toml » | La config n'existe pas encore : lance `setup`, étape 1 |
+| « no superagent.toml … run setup first » | La config n'existe pas encore : lance `setup`, étape 1 |
+| `superagent.toml: [Errno 2] No such file or directory … Running on the last good config` | La config a été supprimée, le plugin tourne sur sa dernière copie valide : remets-la avec `cp ~/superagent/.superagent.last-good.toml ~/superagent/superagent.toml` (`setup` refuse de tourner dans ce cas) |
 | `421` ou « this panel doesn't answer to … » | Le `Host` cité entre guillemets n'est pas accepté : passe son nom à `--allow-host`, avec `:port` seulement pour n'accepter que ce port |
 | « Wrong or missing token » | Il manque le `#JETON` à la fin de l'URL, ou le jeton a été changé |
 | « run a tick to update it » | La base date d'une version plus ancienne, un `tick` la met à jour |
