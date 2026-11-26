@@ -20,6 +20,7 @@ Notable changes to hermes-superagent. The format follows [Keep a Changelog](http
 
 ### Fixed
 
+- The hooks block `agents --hook-settings` prints ends its command with `|| true`. Before, a missing `~/.superagent/hook.py`, deleted or never copied, made Python exit 2, which Claude Code reads as blocking, so every prompt, tool call and stop on that machine was refused. Merge the new block over the old one on each machine.
 - The panel answers behind a proxy on another port, such as `tailscale serve --https=8443` when 443 is taken: a bare `--allow-host` name is answered on any port, `name:port` only on that port, a refused request's `421` names the `Host` it saw, and actions come from any `Origin` the panel answers to.
 - A config value of the wrong type, such as `argv = 1` or `pass_strangers = "false"`, is refused like any other bad edit, so the plugin keeps running on the last good config instead of crashing or reading `"false"` as true.
 - Unknown keys in `[briefs]` are refused, like everywhere else.

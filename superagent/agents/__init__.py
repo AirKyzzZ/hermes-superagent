@@ -159,5 +159,5 @@ def classify(
     return view(SessionState.WORKING)
 
 
-def settings_block(command: str = "python3 ~/.superagent/hook.py") -> dict[str, object]:
+def settings_block(command: str = "python3 ~/.superagent/hook.py || true") -> dict[str, object]:
     return {"hooks": {event: [{"hooks": [{"type": "command", "command": command}]}] for event in HOOK_EVENTS}}
